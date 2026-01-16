@@ -1,0 +1,154 @@
+menu "Board configuration"
+
+    comment "Common buses"
+    config BOARD_I2C_SDA
+        int "I2C SDA GPIO"
+        default 15
+        range -1 48
+        help
+            GPIO number for I2C SDA. Use -1 for not connected.
+
+    config BOARD_I2C_SCL
+        int "I2C SCL GPIO"
+        default 6
+        range -1 48
+        help
+            GPIO number for I2C SCL. Use -1 for not connected.
+
+    comment "LCD / Backlight"
+    config BOARD_LCD_BL
+        int "LCD backlight GPIO"
+        default 5
+        range -1 48
+        help
+            GPIO number for LCD backlight enable. Use -1 for not connected.
+
+    config BOARD_LCD_RST
+        int "LCD reset GPIO"
+        default 41
+        range -1 48
+        help
+            GPIO number for LCD reset. Use -1 for not connected.
+
+    comment "LCD 3-wire SPI control (for GC9503 command interface)"
+    config BOARD_LCD_SPI_CS
+        int "LCD SPI CS GPIO"
+        default 38
+        range -1 48
+
+    config BOARD_LCD_SPI_SCL
+        int "LCD SPI SCL GPIO"
+        default 45
+        range -1 48
+
+    config BOARD_LCD_SPI_SDA
+        int "LCD SPI SDA (MOSI) GPIO"
+        default 48
+        range -1 48
+
+    comment "LCD RGB interface"
+    config BOARD_LCD_RGB_PCLK
+        int "LCD RGB PCLK GPIO"
+        default 39
+        range -1 48
+
+    config BOARD_LCD_RGB_DE
+        int "LCD RGB DE GPIO"
+        default 40
+        range -1 48
+
+    config BOARD_LCD_RGB_HSYNC
+        int "LCD RGB HSYNC GPIO"
+        default 42
+        range -1 48
+
+    config BOARD_LCD_RGB_VSYNC
+        int "LCD RGB VSYNC GPIO"
+        default 41
+        range -1 48
+
+    comment "LCD RGB data pins (RGB565, 16-bit)"
+    config BOARD_LCD_RGB_D0
+        int "LCD RGB D0 GPIO"
+        default 45
+        range -1 48
+    config BOARD_LCD_RGB_D1
+        int "LCD RGB D1 GPIO"
+        default 48
+        range -1 48
+    config BOARD_LCD_RGB_D2
+        int "LCD RGB D2 GPIO"
+        default 47
+        range -1 48
+    config BOARD_LCD_RGB_D3
+        int "LCD RGB D3 GPIO"
+        default 0
+        range -1 48
+    config BOARD_LCD_RGB_D4
+        int "LCD RGB D4 GPIO"
+        default 21
+        range -1 48
+    config BOARD_LCD_RGB_D5
+        int "LCD RGB D5 GPIO"
+        default 14
+        range -1 48
+    config BOARD_LCD_RGB_D6
+        int "LCD RGB D6 GPIO"
+        default 13
+        range -1 48
+    config BOARD_LCD_RGB_D7
+        int "LCD RGB D7 GPIO"
+        default 12
+        range -1 48
+    config BOARD_LCD_RGB_D8
+        int "LCD RGB D8 GPIO"
+        default 11
+        range -1 48
+    config BOARD_LCD_RGB_D9
+        int "LCD RGB D9 GPIO"
+        default 16
+        range -1 48
+    config BOARD_LCD_RGB_D10
+        int "LCD RGB D10 GPIO"
+        default 17
+        range -1 48
+    config BOARD_LCD_RGB_D11
+        int "LCD RGB D11 GPIO"
+        default 18
+        range -1 48
+    config BOARD_LCD_RGB_D12
+        int "LCD RGB D12 GPIO"
+        default 8
+        range -1 48
+    config BOARD_LCD_RGB_D13
+        int "LCD RGB D13 GPIO"
+        default 3
+        range -1 48
+    config BOARD_LCD_RGB_D14
+        int "LCD RGB D14 GPIO"
+        default 46
+        range -1 48
+    config BOARD_LCD_RGB_D15
+        int "LCD RGB D15 GPIO"
+        default 10
+        range -1 48
+
+    comment "LCD timings"
+    config BOARD_LCD_HRES
+        int "LCD horizontal resolution"
+        default 480
+        range 1 2048
+
+    config BOARD_LCD_VRES
+        int "LCD vertical resolution"
+        default 480
+        range 1 2048
+
+    config BOARD_LCD_PCLK_HZ
+        int "Pixel clock (Hz)"
+        default 16000000
+        range 1000000 80000000
+        help
+            Pixel clock for RGB panel. Typical values 10-20 MHz for 480x480.
+
+endmenu

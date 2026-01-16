@@ -1,0 +1,23 @@
+# top-most EditorConfig file
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+indent_style = space
+indent_size = 4
+
+# Python: PEP 8 recommends 4 spaces
+[*.py]
+indent_size = 4
+max_line_length = 200
+
+[*.{c,cpp,h,hpp}]
+indent_size = 4
+
+# Makefiles always require tabs
+[Makefile]
+indent_style = tab
