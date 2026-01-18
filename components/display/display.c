@@ -152,13 +152,13 @@ lv_display_t* display_init(void) {
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
     timing.pclk_hz = BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
-    timing.flags.de_idle_high = 0; // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
-    timing.hsync_pulse_width = 10;
-    timing.hsync_back_porch = 40;
-    timing.hsync_front_porch = 8;
-    timing.vsync_pulse_width = 10;
-    timing.vsync_back_porch = 40;
-    timing.vsync_front_porch = 8;
+    timing.flags.de_idle_high = 0;  // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
+    timing.hsync_pulse_width = 80;  //  10    80
+    timing.hsync_back_porch = 80;   //  40    80
+    timing.hsync_front_porch = 40;  //   8    40
+    timing.vsync_pulse_width = 80;  //  10    80
+    timing.vsync_back_porch = 80;   //  40    80
+    timing.vsync_front_porch = 40;  //   8    40
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
@@ -202,7 +202,7 @@ lv_display_t* display_init(void) {
                 .fb_in_psram = 1,
                 .double_fb = 0,
                 .no_fb = 0,
-                .bb_invalidate_cache = 0,
+                .bb_invalidate_cache = 1,
             },
     };
 

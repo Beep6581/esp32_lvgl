@@ -1,0 +1,22 @@
+menu "UI"
+
+choice UI_DEMO_MODE
+    prompt "UI demo mode"
+    default UI_DEMO_MOVING_BOX
+
+config UI_DEMO_MOVING_BOX
+    bool "Moving box"
+
+config UI_DEMO_COLOR_BARS
+    bool "Color bars + Hello world label"
+
+endchoice
+
+config UI_METRICS
+    bool "Log UI/LVGL metrics once per second"
+    default n
+    help
+        Logs LVGL tick delta and animation steps per second.
+
+endmenu
+
