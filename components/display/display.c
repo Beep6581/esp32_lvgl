@@ -167,7 +167,7 @@ lv_display_t* display_init(void) {
         .data_width = DISPLAY_RGB_DATA_WIDTH,
         .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,
         .num_fbs = 2,
-        .bounce_buffer_size_px = BOARD_LCD_HRES * 40,
+        .bounce_buffer_size_px = BOARD_LCD_HRES * 30,
         //.psram_trans_align   = 64,
         //.sram_trans_align    = 0,
         .dma_burst_size = 64, // https://github.com/espressif/esp-bsp/blob/master/components/lcd/esp_lcd_gc9503/README.md

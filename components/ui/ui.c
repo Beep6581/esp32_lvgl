@@ -128,7 +128,7 @@ static void anim_cb(lv_timer_t *t)
 {
     (void)t;
 
-    s_ui.x += 5;
+    s_ui.x += 2;
     if (s_ui.x > (s_ui.w - 40)) {
         s_ui.x = 0;
     }
@@ -152,7 +152,7 @@ static void demo_moving_box_create(lv_obj_t *root)
     lv_obj_set_style_bg_opa(s_ui.box, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(s_ui.box, lv_color_hex(0x00FF00), 0);
 
-    s_ui.timer = lv_timer_create(anim_cb, 30, NULL);
+    s_ui.timer = lv_timer_create(anim_cb, 16, NULL);
 }
 
 void ui_init(lv_display_t *disp)
