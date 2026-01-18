@@ -59,7 +59,9 @@ static void create_touch_cross(lv_display_t* disp) {
 
 void app_main(void) {
     lv_display_t* disp = display_init();
-    ui_init(disp);
+    if (disp != NULL) {
+        ui_init(disp);
+    }
 
     //    create_touch_cross(disp);
 

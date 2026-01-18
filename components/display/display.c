@@ -26,6 +26,12 @@
 #define DISPLAY_BITS_PER_PIXEL 16
 #define DISPLAY_RGB_DATA_WIDTH 16
 
+#define RGB565_WHITE 0xFFFF
+#define RGB565_BLACK 0x0000
+#define RGB565_RED 0xF800
+#define RGB565_GREEN 0x07E0
+#define RGB565_BLUE 0x001F
+
 static const char* TAG = "display";
 
 /* Based on:
@@ -92,7 +98,8 @@ static const gc9503_lcd_init_cmd_t gc9503v_480_init[] = {
     {0xd6, (uint8_t[]){0x00, 0x00, 0x00, 0x04, 0x00, 0x12, 0x00, 0x18, 0x00, 0x21, 0x00, 0x2a, 0x00, 0x35, 0x00, 0x47, 0x00, 0x56, 0x00, 0x90, 0x00, 0xe5, 0x01, 0x68, 0x01, 0xd5,
                        0x01, 0xd7, 0x02, 0x36, 0x02, 0xa6, 0x02, 0xee, 0x03, 0x48, 0x03, 0xa0, 0x03, 0xba, 0x03, 0xc5, 0x03, 0xd0, 0x03, 0xe0, 0x03, 0xea, 0x03, 0xfa, 0x03, 0xff},
      52, 0},
-    {0x3a, (uint8_t[]){0x50}, 1, 0}, // RGB Interface Format DISPLAY_BITS_PER_PIXEL 16-bit
+    //{0xb1, (uint8_t[]){0x10}, 1, 0}, // DISPLAY_CTL, datasheet says default 0x10 (BGR CFA), else 0x30 (RGB CFA). Handled by esp_lcd_panel_dev_config_t
+    //{0x3a, (uint8_t[]){0x50}, 1, 0}, // RGB Interface Format DISPLAY_BITS_PER_PIXEL 16-bit. Handled by esp_lcd_panel_dev_config_t
     {0x51, (uint8_t[]){0x7F}, 1, 0}, // Write Display Brightness, default 0x7F
     {0xB0, (uint8_t[]){0x00}, 1, 0}, // RGB Interface Signals Control, DE mode, rising edge, polarity high. Sync and pulse bytes ignored in DE mode.
     {0x11, (uint8_t[]){0x00}, 1, 120},
@@ -102,6 +109,10 @@ static const gc9503_lcd_init_cmd_t gc9503v_480_init[] = {
 static const size_t gc9503v_480_init_count = sizeof(gc9503v_480_init) / sizeof(gc9503v_480_init[0]);
 
 static void backlight_init_off(void) {
+    if (BOARD_LCD_BL_GPIO == GPIO_NUM_NC) {
+        return;
+    }
+
     gpio_config_t bl = {0};
     bl.pin_bit_mask = 1ULL << BOARD_LCD_BL_GPIO;
     bl.mode = GPIO_MODE_OUTPUT;
@@ -109,6 +120,7 @@ static void backlight_init_off(void) {
     bl.pull_down_en = GPIO_PULLDOWN_DISABLE;
     bl.intr_type = GPIO_INTR_DISABLE;
     ESP_ERROR_CHECK(gpio_config(&bl));
+
     ESP_ERROR_CHECK(gpio_set_level(BOARD_LCD_BL_GPIO, 0));
 }
 
@@ -140,7 +152,7 @@ lv_display_t* display_init(void) {
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
     timing.pclk_hz = BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
-    timing.flags.de_idle_high = 0;      // default: 1
+    timing.flags.de_idle_high = 0; // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
     timing.hsync_pulse_width = 10;
     timing.hsync_back_porch = 40;
     timing.hsync_front_porch = 8;
@@ -150,7 +162,7 @@ lv_display_t* display_init(void) {
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
-        //.timings = GC9503_480_480_PANEL_60HZ_RGB_TIMING(),
+        //.timings = GC9503_480_480_PANEL_60HZ_RGB_TIMING(), // With this, display works but sometimes not vertically centered
         .timings = timing,
         .data_width = DISPLAY_RGB_DATA_WIDTH,
         .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,
@@ -205,8 +217,8 @@ lv_display_t* display_init(void) {
             },
     };
 
-    const esp_lcd_panel_dev_config_t panel_config = {.reset_gpio_num = BOARD_LCD_RST_GPIO,       // Set to -1 if not use
-                                                     .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR, // Implemented by LCD command `B1h`
+    const esp_lcd_panel_dev_config_t panel_config = {.reset_gpio_num = BOARD_LCD_RST_GPIO,       // Set to -1 if not used
+                                                     .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB, // Implemented by LCD command `B1h`
                                                      .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,   // Implemented by LCD command `3Ah` (16/18/24)
                                                      .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
                                                      .vendor_config = &vendor_config,
@@ -215,10 +227,19 @@ lv_display_t* display_init(void) {
     esp_lcd_panel_handle_t panel_handle = NULL;
 
     ESP_ERROR_CHECK(esp_lcd_new_panel_gc9503(io_handle, &panel_config, &panel_handle));
-    // ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+
+    // WT32S3-86S: LCD_RST is coupled to RGB_VSYNC (GPIO41) through RC/diode network.
+    // Treating GPIO41 as a normal reset pin and pulsing it breaks bring-up.
+    // Therefore do NOT call esp_lcd_panel_reset() or manual reset pulse here.
+    //ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
-    ESP_ERROR_CHECK(gpio_set_level(BOARD_LCD_BL_GPIO, 1));
+    if (BOARD_LCD_BL_GPIO != GPIO_NUM_NC) {
+        ESP_ERROR_CHECK(gpio_set_level(BOARD_LCD_BL_GPIO, 1));
+    }
+
+    // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true)); // Don't call this function if auto_del_panel_io is set to 0 and disp_gpio_num is set to -1
 
     /*
         esp_lcd_panel_io_i2c_config_t touch_io_i2c_cfg = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
@@ -245,15 +266,28 @@ lv_display_t* display_init(void) {
         esp_lcd_touch_read_data(touch);
     */
 
-    /*
-     * Draw white square in top-left corner to test LCD. Completely unrelated to LVGL.
+/*
+    // Non-LVGL test.
+    // Draw diagonal line and colored squares.
+    ESP_LOGI(TAG, "Test shapes");
+    uint16_t px = RGB565_RED;
+    for (int i = 0; i < 480; ++i) {
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, i, i, i + 1, i + 1, &px));
+    }
     enum { W=50, H=50 };
     static uint16_t block[W*H];
-    for (int i=0; i<W*H; ++i) block[i]=0xFFFF;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, W, H, block));
-    */
-
-    // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true)); // Don't call this function if auto_del_panel_io is set to 0 and disp_gpio_num is set to -1
+    for (int i=0; i<W*H; ++i) block[i]=RGB565_WHITE;
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*0, 0, W*1, H, block));
+    for (int i=0; i<W*H; ++i) block[i]=RGB565_BLACK;
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*1, 0, W*2, H, block));
+    for (int i=0; i<W*H; ++i) block[i]=RGB565_RED;
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*2, 0, W*3, H, block));
+    for (int i=0; i<W*H; ++i) block[i]=RGB565_GREEN;
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*3, 0, W*4, H, block));
+    for (int i=0; i<W*H; ++i) block[i]=RGB565_BLUE;
+    esp_lcd_panel_io_handle_tP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*4, 0, W*5, H, block));
+    //return NULL;
+*/
 
     const lvgl_port_display_cfg_t display_config = {
         .io_handle = io_handle,
@@ -290,5 +324,8 @@ lv_display_t* display_init(void) {
 
     lv_display_t* disp = lvgl_port_add_disp_rgb(&display_config, &rgb_cfg);
     lv_display_set_default(disp);
+
+    ESP_LOGI(TAG, "LVGL display registered, disp=%p", disp);
+
     return disp;
 }
