@@ -69,6 +69,8 @@ static lv_obj_t *ui_create_root(lv_display_t *disp)
     lv_obj_set_style_border_width(root, 0, 0);
     lv_obj_set_style_pad_all(root, 0, 0);
     lv_obj_set_layout(root, LV_LAYOUT_NONE);
+    lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(root, lv_color_hex(0x262626), 0);
 
     // Save in state
     s_ui.disp = disp;
@@ -151,6 +153,9 @@ static void demo_moving_box_create(lv_obj_t *root)
     lv_obj_set_pos(s_ui.box, 0, (s_ui.h / 2) - 20);
     lv_obj_set_style_bg_opa(s_ui.box, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(s_ui.box, lv_color_hex(0x00FF00), 0);
+    lv_obj_set_style_radius(s_ui.box, 0, 0);
+    lv_obj_set_style_border_width(s_ui.box, 0, 0);
+    lv_obj_set_style_shadow_width(s_ui.box, 0, 0);
 
     s_ui.timer = lv_timer_create(anim_cb, 16, NULL);
 }
