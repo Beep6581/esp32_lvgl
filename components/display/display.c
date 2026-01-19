@@ -150,24 +150,48 @@ lv_display_t* display_init(void) {
 
     ESP_LOGI(TAG, "Install GC9503 panel driver");
 
-    esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
-    timing.pclk_hz = 16 * 1000 * 1000; // BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
-    timing.flags.de_idle_high = 0;     // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
-    timing.hsync_pulse_width = 40;     //  10    80
-    timing.hsync_back_porch = 10;      //  40    80
-    timing.hsync_front_porch = 10;     //   8    40
-    timing.vsync_pulse_width = 40;     //  10    80
-    timing.vsync_back_porch = 10;      //  40    80
-    timing.vsync_front_porch = 10;     //   8    40
+    esp_lcd_rgb_timing_t timing1 = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
+    timing1.pclk_hz = 20 * 1000 * 1000; // BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
+    timing1.flags.de_idle_high = 0;     // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
+    timing1.hsync_pulse_width = 40;
+    timing1.hsync_back_porch = 10;
+    timing1.hsync_front_porch = 10;
+    timing1.vsync_pulse_width = 40;
+    timing1.vsync_back_porch = 10;
+    timing1.vsync_front_porch = 10;
+
+    esp_lcd_rgb_timing_t timing2 = timing1;
+    timing2.hsync_pulse_width = 5;
+    timing2.hsync_back_porch = 20;
+    timing2.hsync_front_porch = 4;
+    timing2.vsync_pulse_width = 5;
+    timing2.vsync_back_porch = 20;
+    timing2.vsync_front_porch = 4;
+
+    esp_lcd_rgb_timing_t timing3 = timing1;
+    timing3.hsync_pulse_width = 10;
+    timing3.hsync_back_porch = 40;
+    timing3.hsync_front_porch = 8;
+    timing3.vsync_pulse_width = 10;
+    timing3.vsync_back_porch = 40;
+    timing3.vsync_front_porch = 8;
+
+    esp_lcd_rgb_timing_t timing4 = timing1;
+    timing4.hsync_pulse_width = 80;
+    timing4.hsync_back_porch = 80;
+    timing4.hsync_front_porch = 40;
+    timing4.vsync_pulse_width = 80;
+    timing4.vsync_back_porch = 80;
+    timing4.vsync_front_porch = 40;
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
         //.timings = GC9503_480_480_PANEL_60HZ_RGB_TIMING(), // With this, display works but sometimes not vertically centered
-        .timings = timing,
+        .timings = timing3,
         .data_width = DISPLAY_RGB_DATA_WIDTH,
         .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,
         .num_fbs = 2,
-        .bounce_buffer_size_px = BOARD_LCD_HRES * 4,
+        .bounce_buffer_size_px = BOARD_LCD_HRES * 40,
         //.psram_trans_align   = 64,
         //.sram_trans_align    = 0,
         .dma_burst_size = 64, // https://github.com/espressif/esp-bsp/blob/master/components/lcd/esp_lcd_gc9503/README.md
@@ -200,9 +224,9 @@ lv_display_t* display_init(void) {
                 .disp_active_low = 0,
                 .refresh_on_demand = 0,
                 .fb_in_psram = 1,
-                .double_fb = 0,
+                .double_fb = 1,
                 .no_fb = 0,
-                .bb_invalidate_cache = 0,
+                .bb_invalidate_cache = 1,
             },
     };
 
@@ -293,9 +317,9 @@ lv_display_t* display_init(void) {
         .io_handle = io_handle,
         .panel_handle = panel_handle,
         //.control_handle = control_handle,
-        .buffer_size = BOARD_LCD_HRES * 4,
+        .buffer_size = BOARD_LCD_HRES * 40,
         .double_buffer = true,
-        .trans_size = BOARD_LCD_HRES * 4,
+        .trans_size = BOARD_LCD_HRES * 40,
         .hres = BOARD_LCD_HRES,
         .vres = BOARD_LCD_VRES,
         .monochrome = false,
