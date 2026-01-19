@@ -151,14 +151,14 @@ lv_display_t* display_init(void) {
     ESP_LOGI(TAG, "Install GC9503 panel driver");
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
-    timing.pclk_hz = 16 * 1000 * 1000; //BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
-    timing.flags.de_idle_high = 0;  // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
-    timing.hsync_pulse_width = 80;  //  10    80
-    timing.hsync_back_porch = 20;   //  40    80
-    timing.hsync_front_porch = 20;  //   8    40
-    timing.vsync_pulse_width = 80;  //  10    80
-    timing.vsync_back_porch = 20;   //  40    80
-    timing.vsync_front_porch = 20;  //   8    40
+    timing.pclk_hz = 16 * 1000 * 1000; // BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
+    timing.flags.de_idle_high = 0;     // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
+    timing.hsync_pulse_width = 40;     //  10    80
+    timing.hsync_back_porch = 10;      //  40    80
+    timing.hsync_front_porch = 10;     //   8    40
+    timing.vsync_pulse_width = 40;     //  10    80
+    timing.vsync_back_porch = 10;      //  40    80
+    timing.vsync_front_porch = 10;     //   8    40
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
@@ -231,7 +231,7 @@ lv_display_t* display_init(void) {
     // WT32S3-86S: LCD_RST is coupled to RGB_VSYNC (GPIO41) through RC/diode network.
     // Treating GPIO41 as a normal reset pin and pulsing it breaks bring-up.
     // Therefore do NOT call esp_lcd_panel_reset() or manual reset pulse here.
-    //ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
+    // ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
 
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
@@ -266,28 +266,28 @@ lv_display_t* display_init(void) {
         esp_lcd_touch_read_data(touch);
     */
 
-/*
-    // Non-LVGL test.
-    // Draw diagonal line and colored squares.
-    ESP_LOGI(TAG, "Test shapes");
-    uint16_t px = RGB565_RED;
-    for (int i = 0; i < 480; ++i) {
-        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, i, i, i + 1, i + 1, &px));
-    }
-    enum { W=50, H=50 };
-    static uint16_t block[W*H];
-    for (int i=0; i<W*H; ++i) block[i]=RGB565_WHITE;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*0, 0, W*1, H, block));
-    for (int i=0; i<W*H; ++i) block[i]=RGB565_BLACK;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*1, 0, W*2, H, block));
-    for (int i=0; i<W*H; ++i) block[i]=RGB565_RED;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*2, 0, W*3, H, block));
-    for (int i=0; i<W*H; ++i) block[i]=RGB565_GREEN;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*3, 0, W*4, H, block));
-    for (int i=0; i<W*H; ++i) block[i]=RGB565_BLUE;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*4, 0, W*5, H, block));
-    //return NULL;
-*/
+    /*
+        // Non-LVGL test.
+        // Draw diagonal line and colored squares.
+        ESP_LOGI(TAG, "Test shapes");
+        uint16_t px = RGB565_RED;
+        for (int i = 0; i < 480; ++i) {
+            ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, i, i, i + 1, i + 1, &px));
+        }
+        enum { W=50, H=50 };
+        static uint16_t block[W*H];
+        for (int i=0; i<W*H; ++i) block[i]=RGB565_WHITE;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*0, 0, W*1, H, block));
+        for (int i=0; i<W*H; ++i) block[i]=RGB565_BLACK;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*1, 0, W*2, H, block));
+        for (int i=0; i<W*H; ++i) block[i]=RGB565_RED;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*2, 0, W*3, H, block));
+        for (int i=0; i<W*H; ++i) block[i]=RGB565_GREEN;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*3, 0, W*4, H, block));
+        for (int i=0; i<W*H; ++i) block[i]=RGB565_BLUE;
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*4, 0, W*5, H, block));
+        //return NULL;
+    */
 
     const lvgl_port_display_cfg_t display_config = {
         .io_handle = io_handle,
