@@ -151,14 +151,14 @@ lv_display_t* display_init(void) {
     ESP_LOGI(TAG, "Install GC9503 panel driver");
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
-    timing.pclk_hz = BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
+    timing.pclk_hz = 16 * 1000 * 1000; //BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
     timing.flags.de_idle_high = 0;  // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
     timing.hsync_pulse_width = 80;  //  10    80
-    timing.hsync_back_porch = 80;   //  40    80
-    timing.hsync_front_porch = 40;  //   8    40
+    timing.hsync_back_porch = 20;   //  40    80
+    timing.hsync_front_porch = 20;  //   8    40
     timing.vsync_pulse_width = 80;  //  10    80
-    timing.vsync_back_porch = 80;   //  40    80
-    timing.vsync_front_porch = 40;  //   8    40
+    timing.vsync_back_porch = 20;   //  40    80
+    timing.vsync_front_porch = 20;  //   8    40
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
@@ -167,7 +167,7 @@ lv_display_t* display_init(void) {
         .data_width = DISPLAY_RGB_DATA_WIDTH,
         .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,
         .num_fbs = 2,
-        .bounce_buffer_size_px = BOARD_LCD_HRES * 30,
+        .bounce_buffer_size_px = BOARD_LCD_HRES * 4,
         //.psram_trans_align   = 64,
         //.sram_trans_align    = 0,
         .dma_burst_size = 64, // https://github.com/espressif/esp-bsp/blob/master/components/lcd/esp_lcd_gc9503/README.md
@@ -202,7 +202,7 @@ lv_display_t* display_init(void) {
                 .fb_in_psram = 1,
                 .double_fb = 0,
                 .no_fb = 0,
-                .bb_invalidate_cache = 1,
+                .bb_invalidate_cache = 0,
             },
     };
 
@@ -285,7 +285,7 @@ lv_display_t* display_init(void) {
     for (int i=0; i<W*H; ++i) block[i]=RGB565_GREEN;
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*3, 0, W*4, H, block));
     for (int i=0; i<W*H; ++i) block[i]=RGB565_BLUE;
-    esp_lcd_panel_io_handle_tP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*4, 0, W*5, H, block));
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W*4, 0, W*5, H, block));
     //return NULL;
 */
 
@@ -293,9 +293,9 @@ lv_display_t* display_init(void) {
         .io_handle = io_handle,
         .panel_handle = panel_handle,
         //.control_handle = control_handle,
-        .buffer_size = BOARD_LCD_HRES * BOARD_LCD_VRES,
+        .buffer_size = BOARD_LCD_HRES * 4,
         .double_buffer = true,
-        .trans_size = 64,
+        .trans_size = BOARD_LCD_HRES * 4,
         .hres = BOARD_LCD_HRES,
         .vres = BOARD_LCD_VRES,
         .monochrome = false,
@@ -308,18 +308,18 @@ lv_display_t* display_init(void) {
         .color_format = LV_COLOR_FORMAT_RGB565,
         .flags =
             {
-                .buff_dma = 1,
+                .buff_dma = 0,
                 .buff_spiram = 1,
                 .sw_rotate = 0,
                 .swap_bytes = 0,
-                .full_refresh = 0,
-                .direct_mode = 0,
+                .full_refresh = 1,
+                .direct_mode = 1,
             },
     };
 
     lvgl_port_display_rgb_cfg_t rgb_cfg = {.flags = {
                                                .bb_mode = 1,
-                                               .avoid_tearing = 0,
+                                               .avoid_tearing = 1,
                                            }};
 
     lv_display_t* disp = lvgl_port_add_disp_rgb(&display_config, &rgb_cfg);
