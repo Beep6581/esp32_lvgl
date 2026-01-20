@@ -10,6 +10,9 @@
 
 #include "driver/gpio.h"
 
+#include "fb_text.h"
+#include "glyph_5x7.h"
+
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -23,14 +26,16 @@
 #include "esp_lcd_panel_io_additions.h"
 // #include "esp_lcd_touch_ft5x06.h"
 
-#define DISPLAY_BITS_PER_PIXEL 16
-#define DISPLAY_RGB_DATA_WIDTH 16
-
-#define RGB565_WHITE 0xFFFF
-#define RGB565_BLACK 0x0000
-#define RGB565_RED 0xF800
-#define RGB565_GREEN 0x07E0
-#define RGB565_BLUE 0x001F
+#define RGB565_MAGENTAMID ((uint16_t)0x780F)
+#define RGB565_MAGENTA ((uint16_t)0xF81F)
+#define RGB565_WHITE ((uint16_t)0xFFFF)
+#define RGB565_BLACK ((uint16_t)0x0000)
+#define RGB565_RED ((uint16_t)0xF800)
+#define RGB565_REDMID ((uint16_t)0x7800)
+#define RGB565_GREEN ((uint16_t)0x07E0)
+#define RGB565_GREENMID ((uint16_t)0x03E0)
+#define RGB565_BLUE ((uint16_t)0x001F)
+#define RGB565_BLUEMID ((uint16_t)0x000F)
 
 static const char* TAG = "display";
 
@@ -99,8 +104,8 @@ static const gc9503_lcd_init_cmd_t gc9503v_480_init[] = {
                        0x01, 0xd7, 0x02, 0x36, 0x02, 0xa6, 0x02, 0xee, 0x03, 0x48, 0x03, 0xa0, 0x03, 0xba, 0x03, 0xc5, 0x03, 0xd0, 0x03, 0xe0, 0x03, 0xea, 0x03, 0xfa, 0x03, 0xff},
      52, 0},
     //{0xb1, (uint8_t[]){0x10}, 1, 0}, // DISPLAY_CTL, datasheet says default 0x10 (BGR CFA), else 0x30 (RGB CFA). Handled by esp_lcd_panel_dev_config_t
-    //{0x3a, (uint8_t[]){0x50}, 1, 0}, // RGB Interface Format DISPLAY_BITS_PER_PIXEL 16-bit. Handled by esp_lcd_panel_dev_config_t
-    {0x51, (uint8_t[]){0x7F}, 1, 0}, // Write Display Brightness, default 0x7F
+    //{0x3a, (uint8_t[]){0x66}, 1, 0}, // RGB Interface Format. Use 110 18-bit (0x66), because 101 16-bit (0x50) ignores MSB R and B.
+    {0x51, (uint8_t[]){0x7F}, 1, 0}, // Write Display Brightness. Default 0x3A or 0x51
     {0xB0, (uint8_t[]){0x00}, 1, 0}, // RGB Interface Signals Control, DE mode, rising edge, polarity high. Sync and pulse bytes ignored in DE mode.
     {0x11, (uint8_t[]){0x00}, 1, 120},
     {0x29, (uint8_t[]){0x00}, 1, 20},
@@ -149,49 +154,72 @@ void lcd_bitwalk_test(esp_lcd_panel_handle_t panel_handle, int w, int h) {
     uint16_t* fb1 = (uint16_t*)fb1_void;
     uint16_t* fb2 = (uint16_t*)fb2_void;
 
+    char label[17];
+
     ESP_LOGI(TAG, "Cleared to white, starting bit-walk in 1s...");
     fill_screen_u16(fb1, w, h, RGB565_WHITE);
     fill_screen_u16(fb2, w, h, RGB565_WHITE);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    ESP_LOGI(TAG, "Mid-red  0x7800");
-    fill_screen_u16(fb1, w, h, 0x7800);
-    fill_screen_u16(fb2, w, h, 0x7800);
+    uint16_t color;
+    color = RGB565_REDMID;
+    ESP_LOGI(TAG, "Mid-red  0x%04X", color);
+    fill_screen_u16(fb1, w, h, color);
+    fill_screen_u16(fb2, w, h, color);
+    // snprintf(label, sizeof(label), "0x%04X", (unsigned)color);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    ESP_LOGI(TAG, "Full-red 0xF800");
+    color = RGB565_RED;
+    ESP_LOGI(TAG, "Full-red 0x%04X", color);
     fill_screen_u16(fb1, w, h, 0xF800);
     fill_screen_u16(fb2, w, h, 0xF800);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    ESP_LOGI(TAG, "Mid-grn  0x03E0");
+    color = RGB565_GREENMID;
+    ESP_LOGI(TAG, "Mid-grn  0x%04X", color);
     fill_screen_u16(fb1, w, h, 0x03E0);
     fill_screen_u16(fb2, w, h, 0x03E0);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    ESP_LOGI(TAG, "Full-grn 0x07E0");
+    color = RGB565_GREEN;
+    ESP_LOGI(TAG, "Full-grn 0x%04X", color);
     fill_screen_u16(fb1, w, h, 0x07E0);
     fill_screen_u16(fb2, w, h, 0x07E0);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    ESP_LOGI(TAG, "Mid-blu  0x000F");
+    color = RGB565_BLUEMID;
+    ESP_LOGI(TAG, "Mid-blu  0x%04X", color);
     fill_screen_u16(fb1, w, h, 0x000F);
     fill_screen_u16(fb2, w, h, 0x000F);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    ESP_LOGI(TAG, "Full-blu 0x001F");
+    color = RGB565_BLUE;
+    ESP_LOGI(TAG, "Full-blu 0x%04X", color);
     fill_screen_u16(fb1, w, h, 0x001F);
     fill_screen_u16(fb2, w, h, 0x001F);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    for (int bit = 0; bit < 16; bit++) {
-        uint16_t pixel = (uint16_t)(1u << bit);
-        char bin[17]; // human-readable string
-        u16_to_binary_string(pixel, bin);
-        ESP_LOGI(TAG, "bit=%2d  pixel=0x%04X  binary=%s", bit, pixel, bin);
+    for (int bit = 0; bit < 16; bit++) {        // bit=12
+        uint16_t pixel = (uint16_t)(1u << bit); // pixel=4096
+        u16_to_binary_string(pixel, label);     // label=0001000000000000
+        ESP_LOGI(TAG, "bit=%2d  pixel=0x%04X  binary=%s", bit, pixel, label);
         fill_screen_u16(fb1, w, h, pixel);
         fill_screen_u16(fb2, w, h, pixel);
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        u16_to_binary_string(pixel, label);
+        fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -235,8 +263,8 @@ lv_display_t* display_init(void) {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
         //.timings = GC9503_480_480_PANEL_60HZ_RGB_TIMING(), // With this, display works but sometimes not vertically centered
         .timings = timing,
-        .data_width = DISPLAY_RGB_DATA_WIDTH,
-        .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,
+        .data_width = 16,
+        .bits_per_pixel = 16,
         .num_fbs = 2,
         .bounce_buffer_size_px = BOARD_LCD_HRES * 30,
         //.psram_trans_align   = 64,
@@ -290,7 +318,7 @@ lv_display_t* display_init(void) {
 
     const esp_lcd_panel_dev_config_t panel_config = {.reset_gpio_num = BOARD_LCD_RST_GPIO,       // Set to -1 if not used
                                                      .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_RGB, // Implemented by LCD command `B1h`
-                                                     .bits_per_pixel = DISPLAY_BITS_PER_PIXEL,   // Implemented by LCD command `3Ah` (16/18/24)
+                                                     .bits_per_pixel = 18,                       // Implemented by LCD command `3Ah` (16/18/24). Use 18-bit, because 16-bit ignores MSB R and B.
                                                      .data_endian = LCD_RGB_DATA_ENDIAN_BIG,
                                                      .vendor_config = &vendor_config,
                                                      .flags = {.reset_active_high = 0}};
@@ -338,7 +366,7 @@ lv_display_t* display_init(void) {
     */
 
     // Non-LVGL test.
-    lcd_bitwalk_test(panel_handle, BOARD_LCD_VRES, BOARD_LCD_HRES);
+    lcd_bitwalk_test(panel_handle, BOARD_LCD_HRES, BOARD_LCD_VRES);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
     // Draw diagonal line and colored squares.
