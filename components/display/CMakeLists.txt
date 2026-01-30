@@ -1,5 +1,5 @@
 idf_component_register(
-    SRCS "display.c" "fb_text.c" "glyph_5x7.c" "fonts/glcdfont_5x7.c"
+    SRCS "display.c" "bitwalk.c" "fb_text.c" "glyph_5x7.c" "fonts/glcdfont_5x7.c"
     INCLUDE_DIRS "include"
     REQUIRES
         board
