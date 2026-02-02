@@ -2,7 +2,10 @@ menu "UI"
 
 choice UI_DEMO_MODE
     prompt "UI demo mode"
-    default UI_DEMO_MOVING_BOX
+    default UI_DEMO_NONE
+
+config UI_DEMO_NONE
+    bool "None"
 
 config UI_DEMO_MOVING_BOX
     bool "Moving box"

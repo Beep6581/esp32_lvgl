@@ -1,3 +1,5 @@
+#include "ntc_adc.h"
+
 #include "ui.h"
 
 #include "esp_log.h"
@@ -47,6 +49,22 @@ static void ui_metrics_task(void* arg) {
 }
 #endif
 
+static lv_obj_t *s_ntc_lbl;
+static lv_timer_t *s_ntc_timer;
+
+static void ntc_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+
+    int raw = 0;
+    esp_err_t err = ntc_adc_read_raw(&raw);
+    if (err == ESP_OK) {
+        lv_label_set_text_fmt(s_ntc_lbl, "ADC raw: %d", raw);
+    } else {
+        lv_label_set_text_fmt(s_ntc_lbl, "ADC read error: %s", esp_err_to_name(err));
+    }
+}
+
 static lv_obj_t* ui_create_root(lv_display_t* disp) {
     int w = lv_display_get_horizontal_resolution(disp);
     int h = lv_display_get_vertical_resolution(disp);
@@ -82,6 +100,12 @@ static lv_obj_t* ui_create_root(lv_display_t* disp) {
 }
 
 static void ui_destroy(void) {
+    if (s_ntc_timer) {
+        lv_timer_del(s_ntc_timer);
+        s_ntc_timer = NULL;
+    }
+    s_ntc_lbl = NULL;
+
     // Stop animation first (timers can reference UI objects)
     if (s_ui.timer) {
         lv_timer_del(s_ui.timer);
@@ -178,6 +202,15 @@ void ui_init(lv_display_t* disp) {
         xTaskCreate(ui_metrics_task, "ui_metrics", 3072, NULL, 1, &s_metrics_task);
     }
 #endif
+
+    ESP_ERROR_CHECK(ntc_adc_init());
+
+    s_ntc_lbl = lv_label_create(root);
+    lv_obj_set_style_text_color(s_ntc_lbl, lv_color_hex(0x00FF00), 0);
+    lv_label_set_text(s_ntc_lbl, "ADC raw: ...");
+    lv_obj_align(s_ntc_lbl, LV_ALIGN_TOP_LEFT, 8, 8);
+
+    s_ntc_timer = lv_timer_create(ntc_timer_cb, 200, NULL);  // 5 Hz update
 
     lvgl_port_unlock();
 }
