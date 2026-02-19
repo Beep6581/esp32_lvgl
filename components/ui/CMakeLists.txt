@@ -4,5 +4,5 @@ idf_component_register(
     REQUIRES
         lvgl__lvgl
         espressif__esp_lvgl_port
-        sensors_ntc
+        air_quality
 )

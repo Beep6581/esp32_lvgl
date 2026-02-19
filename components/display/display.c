@@ -6,12 +6,20 @@
 
 #include "board.h"
 
+#include "display.h"
+
+#include "driver/gpio.h"
+
+#include "esp_err.h"
 #include "esp_log.h"
 
 #include "esp_lvgl_port.h"
+#include "esp_lvgl_port_disp.h"
 
 #include "esp_lcd_gc9503.h"
 #include "esp_lcd_panel_io_additions.h"
+#include "esp_lcd_panel_ops.h"
+#include "esp_lcd_panel_rgb.h"
 // #include "esp_lcd_panel_io.h"
 // #include "esp_lcd_touch_ft5x06.h"
 

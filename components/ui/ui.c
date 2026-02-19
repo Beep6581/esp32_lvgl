@@ -1,216 +1,80 @@
-#include "ntc_adc.h"
-
 #include "ui.h"
+
+#include "air_quality.h"
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
 
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-
 static const char* TAG = "ui";
 
-typedef struct {
-    lv_display_t* disp;
+static lv_obj_t* s_lbl_title;
+static lv_obj_t* s_lbl_values;
+static lv_obj_t* s_lbl_status;
+static lv_timer_t* s_timer;
 
-    lv_obj_t* scr;  // active screen for this display (theme-owned)
-    lv_obj_t* root; // the full-screen container
-
-    lv_obj_t* box;     // moving box demo object
-    lv_timer_t* timer; // moving box timer
-
-    int w, h;
-    int x;
-} ui_state_t;
-
-static ui_state_t s_ui;
-
-#if CONFIG_UI_METRICS
-static TaskHandle_t s_metrics_task;
-static volatile uint32_t s_anim_steps;
-
-static void ui_metrics_task(void* arg) {
-    (void)arg;
-    uint32_t last = lv_tick_get();
-
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(1000));
-
-        uint32_t now = lv_tick_get();
-        uint32_t dt = now - last;
-        last = now;
-
-        uint32_t steps = s_anim_steps;
-        s_anim_steps = 0;
-
-        ESP_LOGI(TAG, "LVGL tick +%u ms, anim steps=%u/s", (unsigned)dt, (unsigned)steps);
-    }
-}
-#endif
-
-static lv_obj_t *s_ntc_lbl;
-static lv_timer_t *s_ntc_timer;
-
-static void ntc_timer_cb(lv_timer_t *t)
-{
+static void ui_timer_cb(lv_timer_t* t) {
     (void)t;
 
-    int raw = 0;
-    esp_err_t err = ntc_adc_read_raw(&raw);
-    if (err == ESP_OK) {
-        lv_label_set_text_fmt(s_ntc_lbl, "ADC raw: %d", raw);
-    } else {
-        lv_label_set_text_fmt(s_ntc_lbl, "ADC read error: %s", esp_err_to_name(err));
-    }
-}
+    air_quality_data_t d = air_quality_get_latest();
+    uint32_t now = (uint32_t)esp_log_timestamp();
 
-static lv_obj_t* ui_create_root(lv_display_t* disp) {
-    int w = lv_display_get_horizontal_resolution(disp);
-    int h = lv_display_get_vertical_resolution(disp);
-
-    lv_obj_t* scr = lv_display_get_screen_active(disp);
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Delete only our content, not theme styling
-    lv_obj_clean(scr);
-
-    lv_obj_t* root = lv_obj_create(scr);
-    lv_obj_set_size(root, w, h);
-    lv_obj_set_pos(root, 0, 0);
-    lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
-
-    // Root is a transparent, layout-free surface.
-    lv_obj_set_style_bg_opa(root, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(root, 0, 0);
-    lv_obj_set_style_radius(root, 0, 0);
-    lv_obj_set_style_pad_all(root, 0, 0);
-    lv_obj_set_layout(root, LV_LAYOUT_NONE);
-    lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(root, lv_color_hex(0x262626), 0);
-
-    // Save in state
-    s_ui.disp = disp;
-    s_ui.scr = scr;
-    s_ui.root = root;
-    s_ui.w = w;
-    s_ui.h = h;
-
-    return root;
-}
-
-static void ui_destroy(void) {
-    if (s_ntc_timer) {
-        lv_timer_del(s_ntc_timer);
-        s_ntc_timer = NULL;
-    }
-    s_ntc_lbl = NULL;
-
-    // Stop animation first (timers can reference UI objects)
-    if (s_ui.timer) {
-        lv_timer_del(s_ui.timer);
-        s_ui.timer = NULL;
+    if (!d.has_co2 && !d.has_rht) {
+        lv_label_set_text(s_lbl_values, "CO2: ...\nT: ...\nRH: ...");
+        lv_label_set_text_fmt(s_lbl_status, "SCD4x addr: 0x%02X  (waiting for first sample)",
+                              (unsigned)air_quality_get_scd4x_addr());
+        return;
     }
 
-    // Delete root container (deletes all children: bars/labels/box/etc)
-    if (s_ui.root) {
-        lv_obj_del(s_ui.root);
-        s_ui.root = NULL;
+    // Temperature / RH are milli-units.
+    double t_c = (double)d.temperature_m_deg_c / 1000.0;
+    double rh = (double)d.humidity_m_percent_rh / 1000.0;
+
+    lv_label_set_text_fmt(s_lbl_values,
+                          "CO2: %u ppm\nT: %0.2f C\nRH: %0.2f %%",
+                          (unsigned)d.co2_ppm, t_c, rh);
+
+    uint32_t age_ms = 0;
+    if (d.last_co2_ms != 0 && now >= d.last_co2_ms) {
+        age_ms = now - d.last_co2_ms;
     }
 
-    // Clear other pointers (children of root)
-    s_ui.box = NULL;
-    s_ui.scr = NULL;
-    s_ui.disp = NULL;
-    s_ui.w = 0;
-    s_ui.h = 0;
-    s_ui.x = 0;
-}
-
-static void demo_color_bars_create(lv_obj_t* root) {
-    static const uint32_t colors[] = {0xFFFFFF, 0x000000, 0xFF0000, 0x00FF00, 0x0000FF};
-    int bar_w = s_ui.w / 5;
-
-    for (int i = 0; i < 5; ++i) {
-        lv_obj_t* r = lv_obj_create(root);
-        lv_obj_remove_style_all(r);
-        lv_obj_set_size(r, bar_w, s_ui.h);
-        lv_obj_set_pos(r, i * bar_w, 0);
-        lv_obj_set_style_bg_opa(r, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_color(r, lv_color_hex(colors[i]), 0);
-        lv_obj_move_background(r);
-    }
-
-    lv_obj_t* lbl = lv_label_create(root);
-    lv_label_set_text(lbl, "Hello world!");
-    lv_obj_set_style_text_color(lbl, lv_color_hex(0xFF00FF), 0);
-    lv_obj_center(lbl);
-}
-
-static void anim_cb(lv_timer_t* t) {
-    (void)t;
-
-    s_ui.x += 2;
-    if (s_ui.x > (s_ui.w - 40)) {
-        s_ui.x = 0;
-    }
-
-    if (s_ui.box) {
-        lv_obj_set_pos(s_ui.box, s_ui.x, (s_ui.h / 2) - 20);
-    }
-
-#if CONFIG_UI_METRICS
-    s_anim_steps++;
-#endif
-}
-
-static void demo_moving_box_create(lv_obj_t* root) {
-    s_ui.x = 0;
-
-    s_ui.box = lv_obj_create(root);
-    lv_obj_set_size(s_ui.box, 40, 40);
-    lv_obj_set_pos(s_ui.box, 0, (s_ui.h / 2) - 20);
-    lv_obj_set_style_bg_opa(s_ui.box, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(s_ui.box, lv_color_hex(0x00FF00), 0);
-    lv_obj_set_style_radius(s_ui.box, 0, 0);
-    lv_obj_set_style_border_width(s_ui.box, 0, 0);
-    lv_obj_set_style_shadow_width(s_ui.box, 0, 0);
-
-    s_ui.timer = lv_timer_create(anim_cb, 16, NULL);
+    lv_label_set_text_fmt(s_lbl_status,
+                          "SCD4x addr: 0x%02X  last update: %u.%us ago",
+                          (unsigned)air_quality_get_scd4x_addr(),
+                          (unsigned)(age_ms / 1000), (unsigned)((age_ms % 1000) / 100));
 }
 
 void ui_init(lv_display_t* disp) {
-    ESP_LOGI(TAG, "ui_init called, disp=%p", disp);
+    ESP_LOGI(TAG, "ui_init called");
 
     lvgl_port_lock(0);
 
-    // Destroy previous UI if ui_init() is called again
-    ui_destroy();
+    lv_obj_t* scr = lv_disp_get_scr_act(disp);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(0x101010), 0);
+    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clean(scr);
 
-    lv_obj_t* root = ui_create_root(disp);
+    s_lbl_title = lv_label_create(scr);
+    lv_label_set_text(s_lbl_title, "Air quality (SCD41)");
+    lv_obj_set_style_text_color(s_lbl_title, lv_color_hex(0xFFFFFF), 0);
+    lv_obj_align(s_lbl_title, LV_ALIGN_TOP_LEFT, 8, 8);
 
-#if CONFIG_UI_DEMO_COLOR_BARS
-    demo_color_bars_create(root);
-#endif
+    s_lbl_values = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_lbl_values, lv_color_hex(0x00FF00), 0);
+    lv_label_set_text(s_lbl_values, "CO2: ...\nT: ...\nRH: ...");
+    lv_obj_align(s_lbl_values, LV_ALIGN_TOP_LEFT, 8, 40);
 
-#if CONFIG_UI_DEMO_MOVING_BOX
-    demo_moving_box_create(root);
-#endif
+    s_lbl_status = lv_label_create(scr);
+    lv_obj_set_style_text_color(s_lbl_status, lv_color_hex(0xAAAAAA), 0);
+    lv_label_set_text(s_lbl_status, "SCD4x addr: ...");
+    lv_obj_align(s_lbl_status, LV_ALIGN_BOTTOM_LEFT, 8, -8);
 
-#if CONFIG_UI_METRICS
-    if (s_metrics_task == NULL) {
-        xTaskCreate(ui_metrics_task, "ui_metrics", 3072, NULL, 1, &s_metrics_task);
+    if (s_timer) {
+        lv_timer_del(s_timer);
+        s_timer = NULL;
     }
-#endif
-
-    ESP_ERROR_CHECK(ntc_adc_init());
-
-    s_ntc_lbl = lv_label_create(root);
-    lv_obj_set_style_text_color(s_ntc_lbl, lv_color_hex(0x00FF00), 0);
-    lv_label_set_text(s_ntc_lbl, "ADC raw: ...");
-    lv_obj_align(s_ntc_lbl, LV_ALIGN_TOP_LEFT, 8, 8);
-
-    s_ntc_timer = lv_timer_create(ntc_timer_cb, 200, NULL);  // 5 Hz update
+    s_timer = lv_timer_create(ui_timer_cb, 1000, NULL);
 
     lvgl_port_unlock();
 }
