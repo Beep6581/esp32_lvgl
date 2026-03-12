@@ -25,7 +25,6 @@ static const char* TAG = "main";
 void app_main(void) {
     ESP_ERROR_CHECK(i2c_bus_init());
 
-    // Start sensor task (runs independently of the UI).
     ESP_ERROR_CHECK(air_quality_start());
 
     lv_display_t* disp = display_init();
