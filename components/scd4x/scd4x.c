@@ -2,6 +2,7 @@
 
 #include "scd4x_i2c.h"
 #include "sensirion_common.h"
+#include "sensirion_i2c.h"
 #include "sensirion_i2c_hal.h"
 
 #include "esp_log.h"
@@ -14,7 +15,20 @@ static const char* TAG = "scd4x";
 static uint8_t s_addr = 0;
 
 static esp_err_t scd4x_ret_to_esp_err(int16_t ret) {
-    return (ret == NO_ERROR) ? ESP_OK : ESP_FAIL;
+    switch (ret) {
+    case NO_ERROR:
+        return ESP_OK;
+    case I2C_NACK_ERROR:
+        return ESP_ERR_NOT_FOUND;
+    case I2C_BUS_ERROR:
+        return ESP_ERR_INVALID_STATE;
+    case BYTE_NUM_ERROR:
+        return ESP_ERR_INVALID_SIZE;
+    case CRC_ERROR:
+    case NOT_IMPLEMENTED_ERROR:
+    default:
+        return ESP_FAIL;
+    }
 }
 
 esp_err_t scd4x_esp_init(uint8_t addr_7bit) {
@@ -56,6 +70,19 @@ esp_err_t scd4x_esp_get_serial(uint16_t serial[3]) {
 
 esp_err_t scd4x_esp_set_asc_enabled(bool enabled) {
     return scd4x_ret_to_esp_err(scd4x_set_automatic_self_calibration_enabled(enabled ? 1 : 0));
+}
+
+esp_err_t scd4x_esp_get_asc_enabled(bool* enabled) {
+    if (enabled == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    uint16_t asc = 0;
+    const int16_t ret = scd4x_get_automatic_self_calibration_enabled(&asc);
+    if (ret != NO_ERROR) {
+        return ESP_FAIL;
+    }
+    *enabled = (asc != 0);
+    return ESP_OK;
 }
 
 esp_err_t scd4x_esp_start_periodic(void) {

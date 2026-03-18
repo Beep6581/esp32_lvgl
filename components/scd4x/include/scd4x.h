@@ -30,6 +30,9 @@ esp_err_t scd4x_esp_get_serial(uint16_t serial[3]);
 /** Enable/disable automatic self calibration (ASC). */
 esp_err_t scd4x_esp_set_asc_enabled(bool enabled);
 
+/** Get whether automatic self calibration (ASC) is enabled. */
+esp_err_t scd4x_esp_get_asc_enabled(bool* enabled);
+
 /** Start/stop periodic measurement mode. */
 esp_err_t scd4x_esp_start_periodic(void);
 esp_err_t scd4x_esp_stop_periodic(void);

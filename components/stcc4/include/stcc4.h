@@ -10,6 +10,11 @@ extern "C" {
 #endif
 
 typedef struct {
+    uint32_t product_id;
+    uint16_t serial_words[4];
+} stcc4_identity_t;
+
+typedef struct {
     bool has_co2;
     bool has_rht;
 
@@ -30,6 +35,9 @@ esp_err_t stcc4_init(uint8_t addr_7bit);
 
 /** Returns the current STCC4 7-bit address (0 if not initialized). */
 uint8_t stcc4_addr(void);
+
+/** Read product ID + serial number. Must be called while the sensor is idle. */
+esp_err_t stcc4_get_identity(stcc4_identity_t* out_identity);
 
 /**
  * Start continuous measurement.
