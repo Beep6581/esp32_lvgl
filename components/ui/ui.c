@@ -112,9 +112,9 @@ void ui_init(lv_display_t* disp) {
 
     lvgl_port_lock(0);
 
-    lv_obj_t* scr = lv_disp_get_scr_act(disp);
+    lv_obj_t* scr = lv_display_get_screen_active(disp);
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x101010), 0);
-    lv_obj_clear_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_clean(scr);
 
     s_lbl_title = lv_label_create(scr);
@@ -132,15 +132,15 @@ void ui_init(lv_display_t* disp) {
     // Empty line after title -> start table a bit lower.
     lv_obj_align(s_table, LV_ALIGN_TOP_LEFT, 8, 40);
 
-    lv_table_set_col_cnt(s_table, 5);
-    lv_table_set_row_cnt(s_table, 4);
+    lv_table_set_column_count(s_table, 5);
+    lv_table_set_row_count(s_table, 4);
 
     // Column widths (tweak later if you want).
-    lv_table_set_col_width(s_table, 0, 90); // Sensor
-    lv_table_set_col_width(s_table, 1, 110); // Detected
-    lv_table_set_col_width(s_table, 2, 90); // CO2
-    lv_table_set_col_width(s_table, 3, 80); // T
-    lv_table_set_col_width(s_table, 4, 80); // RH
+    lv_table_set_column_width(s_table, 0, 90); // Sensor
+    lv_table_set_column_width(s_table, 1, 110); // Detected
+    lv_table_set_column_width(s_table, 2, 90); // CO2
+    lv_table_set_column_width(s_table, 3, 80); // T
+    lv_table_set_column_width(s_table, 4, 80); // RH
 
     // Header
     table_set_str(0, 0, "Sensor");

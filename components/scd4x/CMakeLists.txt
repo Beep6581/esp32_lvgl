@@ -9,5 +9,5 @@ idf_component_register(
         "include"
         "vendor/embedded-i2c-scd4x"
     REQUIRES
-        i2c_bus driver freertos
+        i2c_bus freertos esp_driver_i2c
 )

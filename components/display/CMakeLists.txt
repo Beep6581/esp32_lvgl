@@ -3,7 +3,7 @@ idf_component_register(
     INCLUDE_DIRS "include"
     REQUIRES
         board
-        driver
+        esp_driver_gpio
         esp_lcd
         lvgl__lvgl
         espressif__esp_lvgl_port

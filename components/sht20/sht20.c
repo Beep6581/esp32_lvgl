@@ -31,6 +31,10 @@ static const char* TAG = "sht20";
 static i2c_master_bus_handle_t s_bus = NULL;
 static uint8_t s_addr = 0;
 
+static esp_err_t sht20_i2c_normalize_err(esp_err_t err) {
+    return (err == ESP_ERR_INVALID_RESPONSE) ? ESP_ERR_NOT_FOUND : err;
+}
+
 static uint8_t sht20_crc8(const uint8_t* data, size_t len) {
     uint8_t crc = 0x00;
     for (size_t i = 0; i < len; i++) {
@@ -73,7 +77,7 @@ static esp_err_t sht20_transmit(const uint8_t* tx, size_t tx_len) {
         return err;
     }
 
-    err = i2c_master_transmit(dev, tx, tx_len, SHT20_I2C_TIMEOUT_MS);
+    err = sht20_i2c_normalize_err(i2c_master_transmit(dev, tx, tx_len, SHT20_I2C_TIMEOUT_MS));
     i2c_temp_device_remove(dev);
     return err;
 }
@@ -85,7 +89,7 @@ static esp_err_t sht20_receive(uint8_t* rx, size_t rx_len) {
         return err;
     }
 
-    err = i2c_master_receive(dev, rx, rx_len, SHT20_I2C_TIMEOUT_MS);
+    err = sht20_i2c_normalize_err(i2c_master_receive(dev, rx, rx_len, SHT20_I2C_TIMEOUT_MS));
     i2c_temp_device_remove(dev);
     return err;
 }

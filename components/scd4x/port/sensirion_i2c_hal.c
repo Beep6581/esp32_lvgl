@@ -44,8 +44,9 @@ static int8_t map_esp_err_to_sensirion(esp_err_t err) {
         return NO_ERROR;
     }
 
-    // ESP-IDF uses ESP_ERR_NOT_FOUND for NACK in i2c_master_probe().
-    if (err == ESP_ERR_NOT_FOUND) {
+    // ESP-IDF v6 returns ESP_ERR_INVALID_RESPONSE for NACK in master transactions.
+    // i2c_master_probe() still reports a missing device as ESP_ERR_NOT_FOUND.
+    if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_RESPONSE) {
         return I2C_NACK_ERROR;
     }
 

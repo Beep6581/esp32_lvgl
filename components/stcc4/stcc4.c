@@ -15,7 +15,7 @@
 
 static const char* TAG = "stcc4";
 
-#define STCC4_I2C_SCL_HZ          1000000
+#define STCC4_I2C_SCL_HZ          400000
 #define STCC4_I2C_TIMEOUT_MS      100
 
 // Command words (MSB first) from STCC4 datasheet.
@@ -29,6 +29,15 @@ static const char* TAG = "stcc4";
 static i2c_master_bus_handle_t s_bus = NULL;
 static i2c_master_dev_handle_t s_dev = NULL;
 static uint8_t s_addr = 0;
+
+static esp_err_t stcc4_i2c_normalize_err(esp_err_t err) {
+    return (err == ESP_ERR_INVALID_RESPONSE) ? ESP_ERR_NOT_FOUND : err;
+}
+
+static bool stcc4_i2c_err_is_not_ready(esp_err_t err) {
+    err = stcc4_i2c_normalize_err(err);
+    return err == ESP_ERR_TIMEOUT || err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_STATE;
+}
 
 static uint8_t stcc4_crc8(const uint8_t* data, size_t len) {
     // CRC-8, polynomial 0x31, init 0xFF
@@ -68,7 +77,7 @@ static esp_err_t stcc4_write_cmd_u16(uint16_t cmd) {
     buf[0] = (uint8_t)((cmd >> 8) & 0xFF);
     buf[1] = (uint8_t)(cmd & 0xFF);
 
-    return i2c_master_transmit(dev, buf, sizeof(buf), STCC4_I2C_TIMEOUT_MS);
+    return stcc4_i2c_normalize_err(i2c_master_transmit(dev, buf, sizeof(buf), STCC4_I2C_TIMEOUT_MS));
 }
 
 static esp_err_t stcc4_read_bytes(uint8_t* out, size_t out_len) {
@@ -82,7 +91,7 @@ static esp_err_t stcc4_read_bytes(uint8_t* out, size_t out_len) {
         return err;
     }
 
-    return i2c_master_receive(dev, out, out_len, STCC4_I2C_TIMEOUT_MS);
+    return stcc4_i2c_normalize_err(i2c_master_receive(dev, out, out_len, STCC4_I2C_TIMEOUT_MS));
 }
 
 static uint16_t be_u16(const uint8_t* b) {
@@ -234,7 +243,7 @@ esp_err_t stcc4_read_measurement(stcc4_sample_t* out) {
             break;
         }
 
-        if (err == ESP_ERR_TIMEOUT || err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_STATE) {
+        if (stcc4_i2c_err_is_not_ready(err)) {
             if (attempt == 0) {
                 vTaskDelay(pdMS_TO_TICKS(150));
                 continue;
@@ -294,7 +303,7 @@ esp_err_t stcc4_set_rht_compensation(int32_t temperature_m_deg_c,
         return err;
     }
 
-    err = i2c_master_transmit(dev, buf, sizeof(buf), STCC4_I2C_TIMEOUT_MS);
+    err = stcc4_i2c_normalize_err(i2c_master_transmit(dev, buf, sizeof(buf), STCC4_I2C_TIMEOUT_MS));
     esp_rom_delay_us(1000);
     return err;
 }

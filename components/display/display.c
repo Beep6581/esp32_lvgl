@@ -1,7 +1,7 @@
 /*
  * Minimal LVGL setup for ZX3D95CE01S-TR-4848
- * ESP-IDF: 5.5
- * LVGL: 9.3
+ * ESP-IDF: 6.0
+ * LVGL: 9.5.0
  */
 
 #include "board.h"
@@ -158,12 +158,11 @@ lv_display_t* display_init(void) {
         //.timings = GC9503_480_480_PANEL_60HZ_RGB_TIMING(), // With this, display works but sometimes not vertically centered
         .timings = timing,
         .data_width = 16,
-        .bits_per_pixel = 16,
+        .in_color_format = LCD_COLOR_FMT_RGB565,
+        .out_color_format = LCD_COLOR_FMT_RGB565,
         .num_fbs = 2,
         .bounce_buffer_size_px = BOARD_LCD_HRES * 30,
-        //.psram_trans_align   = 64,
-        //.sram_trans_align    = 0,
-        .dma_burst_size = 64, // https://github.com/espressif/esp-bsp/blob/master/components/lcd/esp_lcd_gc9503/README.md
+        .dma_burst_size = 64, // Replaces removed psram/sram trans-align fields in ESP-IDF 6.
         .hsync_gpio_num = BOARD_LCD_RGB_HSYNC_GPIO,
         .vsync_gpio_num = BOARD_LCD_RGB_VSYNC_GPIO,
         .de_gpio_num = BOARD_LCD_RGB_DE_GPIO,
