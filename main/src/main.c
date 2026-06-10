@@ -1,6 +1,7 @@
 #include "air_quality.h"
 #include "display.h"
 #include "i2c_bus.h"
+#include "touch.h"
 #include "ui.h"
 
 #include "esp_log.h"
@@ -34,4 +35,6 @@ void app_main(void) {
     }
 
     ui_init(disp);
+
+    ESP_ERROR_CHECK(touch_start());
 }

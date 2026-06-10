@@ -1,9 +1,11 @@
 #include "ui.h"
 
 #include "air_quality.h"
+#include "board.h"
 
 #include <stdio.h>
 #include <stddef.h>
+#include <stdint.h>
 
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
@@ -14,6 +16,20 @@ static const char* TAG = "ui";
 static lv_obj_t* s_lbl_title;
 static lv_obj_t* s_table;
 static lv_timer_t* s_timer;
+static lv_obj_t* s_crosshair;
+
+#define TOUCH_CROSSHAIR_SIZE 19
+#define TOUCH_CROSSHAIR_THICKNESS 3
+
+static uint16_t clamp_touch_coord(uint16_t val, uint16_t max_size) {
+    if (max_size == 0) {
+        return 0;
+    }
+    if (val >= max_size) {
+        return max_size - 1;
+    }
+    return val;
+}
 
 static void format_milli_1dp(char* out, size_t out_len, int32_t milli) {
     if (out == NULL || out_len == 0) {
@@ -107,6 +123,49 @@ static void ui_timer_cb(lv_timer_t* t) {
                   d.sht20_temperature_m_deg_c, d.sht20_humidity_m_percent_rh);
 }
 
+static void crosshair_create(lv_obj_t* parent) {
+    s_crosshair = lv_obj_create(parent);
+    lv_obj_set_size(s_crosshair, TOUCH_CROSSHAIR_SIZE, TOUCH_CROSSHAIR_SIZE);
+    lv_obj_remove_flag(s_crosshair, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(s_crosshair, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_crosshair, 0, 0);
+    lv_obj_set_style_pad_all(s_crosshair, 0, 0);
+    lv_obj_add_flag(s_crosshair, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t* h = lv_obj_create(s_crosshair);
+    lv_obj_set_size(h, TOUCH_CROSSHAIR_SIZE, TOUCH_CROSSHAIR_THICKNESS);
+    lv_obj_set_style_bg_color(h, lv_color_hex(0xFF4040), 0);
+    lv_obj_set_style_border_width(h, 0, 0);
+    lv_obj_set_style_radius(h, 0, 0);
+    lv_obj_remove_flag(h, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(h);
+
+    lv_obj_t* v = lv_obj_create(s_crosshair);
+    lv_obj_set_size(v, TOUCH_CROSSHAIR_THICKNESS, TOUCH_CROSSHAIR_SIZE);
+    lv_obj_set_style_bg_color(v, lv_color_hex(0xFF4040), 0);
+    lv_obj_set_style_border_width(v, 0, 0);
+    lv_obj_set_style_radius(v, 0, 0);
+    lv_obj_remove_flag(v, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_center(v);
+}
+
+void ui_touch_set_point(uint16_t x, uint16_t y) {
+    const uint16_t clamped_x = clamp_touch_coord(x, BOARD_LCD_HRES);
+    const uint16_t clamped_y = clamp_touch_coord(y, BOARD_LCD_VRES);
+
+    lvgl_port_lock(0);
+
+    if (s_crosshair != NULL) {
+        lv_obj_clear_flag(s_crosshair, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(s_crosshair);
+        lv_obj_set_pos(s_crosshair,
+                       (lv_coord_t)clamped_x - (TOUCH_CROSSHAIR_SIZE / 2),
+                       (lv_coord_t)clamped_y - (TOUCH_CROSSHAIR_SIZE / 2));
+    }
+
+    lvgl_port_unlock();
+}
+
 void ui_init(lv_display_t* disp) {
     ESP_LOGI(TAG, "ui_init called");
 
@@ -172,6 +231,8 @@ void ui_init(lv_display_t* disp) {
 
     // 1 Hz UI update
     s_timer = lv_timer_create(ui_timer_cb, 1000, NULL);
+
+    crosshair_create(scr);
 
     lvgl_port_unlock();
 }
