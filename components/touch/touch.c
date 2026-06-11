@@ -9,52 +9,59 @@
 #include "esp_lcd_touch.h"
 #include "esp_lcd_touch_ft5x06.h"
 #include "esp_log.h"
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "esp_lvgl_port.h"
+#include "lvgl.h"
 
 #define FT6336U_I2C_CLK_HZ (400000)
-#define TOUCH_POLL_PERIOD_MS (50)
-#define TOUCH_TASK_STACK_SIZE (4096)
-#define TOUCH_TASK_PRIORITY (5)
 
 static const char* TAG = "touch";
 
 static esp_lcd_panel_io_handle_t s_touch_io = NULL;
 static esp_lcd_touch_handle_t s_touch = NULL;
-static TaskHandle_t s_touch_task = NULL;
+static lv_indev_t* s_touch_indev = NULL;
+static uint16_t s_last_x = UINT16_MAX;
+static uint16_t s_last_y = UINT16_MAX;
+static bool s_was_pressed = false;
 
-static void touch_task(void* arg) {
-    (void)arg;
+static void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
+    (void)indev;
 
-    while (true) {
-        esp_err_t err = esp_lcd_touch_read_data(s_touch);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "esp_lcd_touch_read_data failed: %s", esp_err_to_name(err));
-            vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_PERIOD_MS));
-            continue;
-        }
+    esp_err_t err = esp_lcd_touch_read_data(s_touch);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_lcd_touch_read_data failed: %s", esp_err_to_name(err));
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
 
-        esp_lcd_touch_point_data_t point = {0};
-        uint8_t point_count = 0;
-        err = esp_lcd_touch_get_data(s_touch, &point, &point_count, 1);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "esp_lcd_touch_get_data failed: %s", esp_err_to_name(err));
-            vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_PERIOD_MS));
-            continue;
-        }
+    esp_lcd_touch_point_data_t point = {0};
+    uint8_t point_count = 0;
+    err = esp_lcd_touch_get_data(s_touch, &point, &point_count, 1);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "esp_lcd_touch_get_data failed: %s", esp_err_to_name(err));
+        data->state = LV_INDEV_STATE_RELEASED;
+        return;
+    }
 
-        if (point_count > 0) {
+    if (point_count > 0) {
+        data->point.x = point.x;
+        data->point.y = point.y;
+        data->state = LV_INDEV_STATE_PRESSED;
+
+        if (!s_was_pressed || point.x != s_last_x || point.y != s_last_y) {
             ESP_LOGI(TAG, "touch: x=%u y=%u", (unsigned)point.x, (unsigned)point.y);
             ui_touch_set_point(point.x, point.y);
+            s_last_x = point.x;
+            s_last_y = point.y;
         }
-
-        vTaskDelay(pdMS_TO_TICKS(TOUCH_POLL_PERIOD_MS));
+        s_was_pressed = true;
+    } else {
+        data->state = LV_INDEV_STATE_RELEASED;
+        s_was_pressed = false;
     }
 }
 
 esp_err_t touch_start(void) {
-    if (s_touch_task != NULL) {
+    if (s_touch_indev != NULL) {
         return ESP_OK;
     }
 
@@ -97,11 +104,23 @@ esp_err_t touch_start(void) {
         return err;
     }
 
-    BaseType_t task_ok = xTaskCreate(touch_task, "touch", TOUCH_TASK_STACK_SIZE, NULL,
-                                     TOUCH_TASK_PRIORITY, &s_touch_task);
-    if (task_ok != pdPASS) {
-        s_touch_task = NULL;
-        ESP_LOGE(TAG, "failed to create touch task");
+    lv_display_t* disp = lv_display_get_default();
+    if (disp == NULL) {
+        ESP_LOGE(TAG, "LVGL default display is not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    lvgl_port_lock(0);
+    s_touch_indev = lv_indev_create();
+    if (s_touch_indev != NULL) {
+        lv_indev_set_type(s_touch_indev, LV_INDEV_TYPE_POINTER);
+        lv_indev_set_display(s_touch_indev, disp);
+        lv_indev_set_read_cb(s_touch_indev, touch_read_cb);
+    }
+    lvgl_port_unlock();
+
+    if (s_touch_indev == NULL) {
+        ESP_LOGE(TAG, "failed to create LVGL touch input device");
         return ESP_ERR_NO_MEM;
     }
 
