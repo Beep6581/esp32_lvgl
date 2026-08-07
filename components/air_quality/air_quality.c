@@ -4,8 +4,8 @@
 
 #include "i2c_bus.h"
 #include "scd4x.h"
-#include "stcc4.h"
 #include "sht20.h"
+#include "stcc4.h"
 
 #include "esp_log.h"
 
@@ -36,6 +36,10 @@ static sensor_sm_t s_stcc4_sm = SENSOR_SM_PROBE;
 static sensor_sm_t s_sht20_sm = SENSOR_SM_PROBE;
 static uint32_t s_stcc4_wait_deadline_ms = 0;
 
+static uint32_t s_scd41_ready_fail_count = 0;
+static uint32_t s_scd41_read_fail_count = 0;
+static uint32_t s_scd41_last_sample_ms = 0;
+
 static void set_latest(const air_quality_data_t* d) {
     if (d == NULL) {
         return;
@@ -58,29 +62,15 @@ static void clear_latest(void) {
     set_latest(&d);
 }
 
-static void log_i2c_scan_once(void) {
-    uint8_t addrs[32] = {0};
-    size_t count = 0;
-
-    if (i2c_bus_scan(addrs, 32, &count) != ESP_OK) {
-        ESP_LOGW(TAG, "I2C scan failed");
-        return;
-    }
-
-    ESP_LOGI(TAG, "I2C scan: %u device(s) found", (unsigned)count);
-
-    const size_t n = (count > 32) ? 32 : count;
-    for (size_t i = 0; i < n; i++) {
-        ESP_LOGI(TAG, "  probe OK: 0x%02X", (unsigned)addrs[i]);
-    }
-}
-
 static bool i2c_addr_present(uint8_t addr_7bit) {
     return (i2c_bus_probe(addr_7bit, 50) == ESP_OK);
 }
 
 static void reset_scd41(air_quality_data_t* d) {
     s_scd41_sm = SENSOR_SM_PROBE;
+    s_scd41_ready_fail_count = 0;
+    s_scd41_read_fail_count = 0;
+    s_scd41_last_sample_ms = 0;
     if (d) {
         d->scd41_detected = false;
         d->scd41_asc_enabled = false;
@@ -111,7 +101,6 @@ static void reset_sht20(air_quality_data_t* d) {
 }
 
 static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
-    (void)now_ms;
     if (d == NULL) {
         return;
     }
@@ -141,9 +130,7 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
             break;
         }
 
-        ESP_LOGI(TAG, "SCD41 detected at 0x%02X serial=%04X-%04X-%04X",
-                 (unsigned)SCD41_ADDR,
-                 (unsigned)serial[0], (unsigned)serial[1], (unsigned)serial[2]);
+        ESP_LOGI(TAG, "SCD41 detected at 0x%02X serial=%04X-%04X-%04X", (unsigned)SCD41_ADDR, (unsigned)serial[0], (unsigned)serial[1], (unsigned)serial[2]);
         s_scd41_sm = SENSOR_SM_START;
         break;
     }
@@ -178,7 +165,18 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
         bool ready = false;
         const esp_err_t ready_err = scd4x_esp_get_data_ready(&ready);
         if (ready_err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 get_data_ready failed (%s)", esp_err_to_name(ready_err));
+            s_scd41_ready_fail_count++;
+            const uint32_t age_ms = (s_scd41_last_sample_ms == 0U) ? 0U : (now_ms - s_scd41_last_sample_ms);
+
+            ESP_LOGW(TAG, "SCD41 get_data_ready failed (%s), consecutive=%lu, last_sample_age_ms=%lu", esp_err_to_name(ready_err), (unsigned long)s_scd41_ready_fail_count, (unsigned long)age_ms);
+
+            if (s_scd41_ready_fail_count < 3U) {
+                break;
+            }
+
+            ESP_LOGW(TAG, "SCD41 restarting after %lu consecutive get_data_ready failures", (unsigned long)s_scd41_ready_fail_count);
+
+            s_scd41_ready_fail_count = 0;
             s_scd41_sm = SENSOR_SM_IDENTIFY;
             d->scd41_has_co2 = false;
             d->scd41_has_rht = false;
@@ -186,14 +184,28 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
             break;
         }
 
+        s_scd41_ready_fail_count = 0;
+
         if (!ready) {
+            if (s_scd41_last_sample_ms != 0U && (now_ms - s_scd41_last_sample_ms) > 15000U) {
+                ESP_LOGW(TAG, "SCD41 not ready for %lu ms", (unsigned long)(now_ms - s_scd41_last_sample_ms));
+            }
             break;
         }
 
         scd4x_sample_t s = {0};
         const esp_err_t read_err = scd4x_esp_read_measurement(&s);
         if (read_err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 read failed (%s)", esp_err_to_name(read_err));
+            s_scd41_read_fail_count++;
+            ESP_LOGW(TAG, "SCD41 read failed (%s), consecutive=%lu", esp_err_to_name(read_err), (unsigned long)s_scd41_read_fail_count);
+
+            if (s_scd41_read_fail_count < 3U) {
+                break;
+            }
+
+            ESP_LOGW(TAG, "SCD41 restarting after %lu consecutive read failures", (unsigned long)s_scd41_read_fail_count);
+
+            s_scd41_read_fail_count = 0;
             s_scd41_sm = SENSOR_SM_IDENTIFY;
             d->scd41_has_co2 = false;
             d->scd41_has_rht = false;
@@ -207,6 +219,11 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
         d->scd41_temperature_m_deg_c = s.temperature_m_deg_c;
         d->scd41_humidity_m_percent_rh = s.humidity_m_percent_rh;
         d->scd41_last_ms = now_ms;
+
+        s_scd41_ready_fail_count = 0;
+        s_scd41_read_fail_count = 0;
+        s_scd41_last_sample_ms = now_ms;
+
         break;
     }
 
@@ -243,20 +260,13 @@ static void run_stcc4_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
         stcc4_identity_t id = {0};
         const esp_err_t id_err = stcc4_get_identity(&id);
         if (id_err == ESP_OK) {
-            ESP_LOGI(TAG,
-                     "STCC4 detected at 0x%02X product_id=%08lX serial=%04X-%04X-%04X-%04X",
-                     (unsigned)STCC4_ADDR,
-                     (unsigned long)id.product_id,
-                     (unsigned)id.serial_words[0],
-                     (unsigned)id.serial_words[1],
-                     (unsigned)id.serial_words[2],
-                     (unsigned)id.serial_words[3]);
+            ESP_LOGI(TAG, "STCC4 detected at 0x%02X product_id=%08lX serial=%04X-%04X-%04X-%04X", (unsigned)STCC4_ADDR, (unsigned long)id.product_id, (unsigned)id.serial_words[0],
+                     (unsigned)id.serial_words[1], (unsigned)id.serial_words[2], (unsigned)id.serial_words[3]);
             s_stcc4_sm = SENSOR_SM_START;
             break;
         }
 
-        ESP_LOGW(TAG, "STCC4 get_product_id failed (%s), trying stop+retry",
-                 esp_err_to_name(id_err));
+        ESP_LOGW(TAG, "STCC4 get_product_id failed (%s), trying stop+retry", esp_err_to_name(id_err));
         const esp_err_t stop_err = stcc4_stop_continuous_measurement();
         if (stop_err != ESP_OK) {
             ESP_LOGW(TAG, "STCC4 stop continuous failed (%s)", esp_err_to_name(stop_err));
@@ -268,8 +278,7 @@ static void run_stcc4_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
     case SENSOR_SM_START: {
         const esp_err_t err = stcc4_start_continuous_measurement();
         if (err != ESP_OK) {
-            ESP_LOGW(TAG, "STCC4 start continuous failed (%s), trying stop+retry",
-                     esp_err_to_name(err));
+            ESP_LOGW(TAG, "STCC4 start continuous failed (%s), trying stop+retry", esp_err_to_name(err));
             const esp_err_t stop_err = stcc4_stop_continuous_measurement();
             if (stop_err != ESP_OK) {
                 ESP_LOGW(TAG, "STCC4 stop continuous failed (%s)", esp_err_to_name(stop_err));
@@ -355,20 +364,9 @@ static void run_sht20_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
             break;
         }
 
-        ESP_LOGI(TAG,
-                 "SHT20 detected at 0x%02X otp=%02X%02X%02X%02X%02X%02X%02X%02X metal=%04X-%04X-%04X",
-                 (unsigned)SHT20_ADDR,
-                 (unsigned)id.otp_bytes[0],
-                 (unsigned)id.otp_bytes[1],
-                 (unsigned)id.otp_bytes[2],
-                 (unsigned)id.otp_bytes[3],
-                 (unsigned)id.otp_bytes[4],
-                 (unsigned)id.otp_bytes[5],
-                 (unsigned)id.otp_bytes[6],
-                 (unsigned)id.otp_bytes[7],
-                 (unsigned)id.metal_rom_words[0],
-                 (unsigned)id.metal_rom_words[1],
-                 (unsigned)id.metal_rom_words[2]);
+        ESP_LOGI(TAG, "SHT20 detected at 0x%02X otp=%02X%02X%02X%02X%02X%02X%02X%02X metal=%04X-%04X-%04X", (unsigned)SHT20_ADDR, (unsigned)id.otp_bytes[0], (unsigned)id.otp_bytes[1],
+                 (unsigned)id.otp_bytes[2], (unsigned)id.otp_bytes[3], (unsigned)id.otp_bytes[4], (unsigned)id.otp_bytes[5], (unsigned)id.otp_bytes[6], (unsigned)id.otp_bytes[7],
+                 (unsigned)id.metal_rom_words[0], (unsigned)id.metal_rom_words[1], (unsigned)id.metal_rom_words[2]);
         ESP_LOGI(TAG, "Initialized SHT20 at 0x%02X", (unsigned)SHT20_ADDR);
         s_sht20_sm = SENSOR_SM_RUN;
         break;
@@ -410,24 +408,16 @@ static void air_quality_task(void* arg) {
     }
 
     clear_latest();
-    log_i2c_scan_once();
 
-    uint32_t last_scan_ms = 0;
+    const bool scd41_present = i2c_addr_present(SCD41_ADDR);
+    const bool stcc4_present = i2c_addr_present(STCC4_ADDR);
+    const bool sht20_present = i2c_addr_present(SHT20_ADDR);
+
+    ESP_LOGI(TAG, "Sensors present: SCD41=%d STCC4=%d SHT20=%d", scd41_present ? 1 : 0, stcc4_present ? 1 : 0, sht20_present ? 1 : 0);
 
     for (;;) {
         air_quality_data_t d = get_latest_no_lock();
         const uint32_t now_ms = (uint32_t)esp_log_timestamp();
-
-        const bool scd41_present = i2c_addr_present(SCD41_ADDR);
-        const bool stcc4_present = i2c_addr_present(STCC4_ADDR);
-        const bool sht20_present = i2c_addr_present(SHT20_ADDR);
-
-        if (!scd41_present && !stcc4_present && !sht20_present) {
-            if (last_scan_ms == 0 || (now_ms - last_scan_ms) > 5000) {
-                last_scan_ms = now_ms;
-                log_i2c_scan_once();
-            }
-        }
 
         run_scd41_sm(&d, scd41_present, now_ms);
         run_stcc4_sm(&d, stcc4_present, now_ms);
@@ -450,8 +440,7 @@ esp_err_t air_quality_start(void) {
         }
     }
 
-    const BaseType_t ok = xTaskCreate(air_quality_task, "air_quality", 4096, NULL,
-                                     tskIDLE_PRIORITY + 2, &s_task);
+    const BaseType_t ok = xTaskCreate(air_quality_task, "air_quality", 4096, NULL, tskIDLE_PRIORITY + 2, &s_task);
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
 }
 

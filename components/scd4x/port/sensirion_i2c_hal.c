@@ -7,6 +7,7 @@
 
 #include "driver/i2c_master.h"
 
+#include "esp_err.h"
 #include "esp_log.h"
 #include "esp_rom_sys.h" // esp_rom_delay_us
 
@@ -32,6 +33,8 @@ void sensirion_i2c_hal_init(void) {
     s_bus = i2c_bus_get_handle();
     if (s_bus == NULL) {
         ESP_LOGW(TAG, "i2c_bus not initialized yet");
+    } else {
+        ESP_LOGI(TAG, "SCD4x HAL ready: speed=%u Hz timeout=%u ms", (unsigned)SENSIRION_I2C_SCL_HZ, (unsigned)SENSIRION_I2C_TIMEOUT_MS);
     }
 }
 
@@ -88,11 +91,13 @@ int8_t sensirion_i2c_hal_read(uint8_t address, uint8_t* data, uint8_t count) {
     i2c_master_dev_handle_t dev = NULL;
     int8_t ret = i2c_temp_device_add(address, &dev);
     if (ret != NO_ERROR) {
+        ESP_LOGW(TAG, "add temp read device addr=0x%02X failed: %d", (unsigned)address, (int)ret);
         return ret;
     }
 
     const esp_err_t err = i2c_master_receive(dev, data, count, SENSIRION_I2C_TIMEOUT_MS);
     i2c_temp_device_remove(dev);
+
     return map_esp_err_to_sensirion(err);
 }
 
@@ -104,11 +109,13 @@ int8_t sensirion_i2c_hal_write(uint8_t address, const uint8_t* data, uint8_t cou
     i2c_master_dev_handle_t dev = NULL;
     int8_t ret = i2c_temp_device_add(address, &dev);
     if (ret != NO_ERROR) {
+        ESP_LOGW(TAG, "add temp write device addr=0x%02X failed: %d", (unsigned)address, (int)ret);
         return ret;
     }
 
     const esp_err_t err = i2c_master_transmit(dev, data, count, SENSIRION_I2C_TIMEOUT_MS);
     i2c_temp_device_remove(dev);
+
     return map_esp_err_to_sensirion(err);
 }
 
