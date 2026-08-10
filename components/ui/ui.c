@@ -4,9 +4,9 @@
 #include "board.h"
 
 #include <stdbool.h>
-#include <stdio.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "esp_heap_caps.h"
@@ -27,19 +27,19 @@ static const char* TAG = "ui";
 #define UI_COLOR_GRID 0x202020
 #define UI_COLOR_BORDER 0x303030
 #define UI_COLOR_TEXT 0xC0C0C0
-#define UI_COLOR_CO2 0x4DA3FF
-#define UI_COLOR_TEMP 0xFF6B4A
-#define UI_COLOR_RH 0x63D471
+#define UI_COLOR_CO2 0x63D471  // green
+#define UI_COLOR_TEMP 0xFF6B4A // red
+#define UI_COLOR_RH 0x4DA3FF   // blue
 
-#define UI_MARGIN_X 8
+#define UI_MARGIN_X 0
 #define PLOT_TOP_Y 56
 #define PLOT_WIDTH 448
 #define PLOT_HEIGHT 258
-#define STATS_TABLE_TOP_Y 338
+#define STATS_TABLE_TOP_Y 358
 #define STATS_TABLE_WIDTH PLOT_WIDTH
-#define STATS_TABLE_HEIGHT 68
-#define STATS_COL_PROPERTY_WIDTH 122
-#define STATS_COL_VALUE_WIDTH 108
+#define STATS_TABLE_HEIGHT 62
+#define STATS_COL_PROPERTY_WIDTH 92
+#define STATS_COL_VALUE_WIDTH 88
 
 typedef enum {
     SENSOR_SCD41 = 0,
@@ -140,8 +140,7 @@ static void format_duration_hms(char* out, size_t out_len, uint32_t ms) {
     const uint32_t minutes = seconds / 60U;
     seconds %= 60U;
 
-    snprintf(out, out_len, "%02lu:%02lu:%02lu",
-             (unsigned long)hours, (unsigned long)minutes, (unsigned long)seconds);
+    snprintf(out, out_len, "%02lu:%02lu:%02lu", (unsigned long)hours, (unsigned long)minutes, (unsigned long)seconds);
 }
 
 static void format_duration_hm(char* out, size_t out_len, uint32_t ms) {
@@ -227,8 +226,7 @@ static void selector_set_active(sensor_id_t sensor) {
 
     lv_buttonmatrix_clear_button_ctrl_all(s_sensor_selector, LV_BUTTONMATRIX_CTRL_CHECKED);
     lv_buttonmatrix_set_selected_button(s_sensor_selector, (uint32_t)sensor);
-    lv_buttonmatrix_set_button_ctrl(s_sensor_selector, (uint32_t)sensor,
-                                    LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_buttonmatrix_set_button_ctrl(s_sensor_selector, (uint32_t)sensor, LV_BUTTONMATRIX_CTRL_CHECKED);
 }
 
 static void table_set_str(uint16_t row, uint16_t col, const char* s) {
@@ -249,8 +247,7 @@ static void table_set_u16(uint16_t row, uint16_t col, bool present, uint16_t val
     table_set_str(row, col, buf);
 }
 
-static void table_set_rht(uint16_t row, uint16_t col_t, uint16_t col_rh,
-                          bool present, int32_t t_m, int32_t rh_m) {
+static void table_set_rht(uint16_t row, uint16_t col_t, uint16_t col_rh, bool present, int32_t t_m, int32_t rh_m) {
     if (!present) {
         table_set_str(row, col_t, "...");
         table_set_str(row, col_rh, "...");
@@ -276,18 +273,15 @@ static void table_update(const air_quality_data_t* d) {
         table_set_str(1, 1, "no");
     }
     table_set_u16(1, 2, d->scd41_detected && d->scd41_has_co2, d->scd41_co2_ppm);
-    table_set_rht(1, 3, 4, d->scd41_detected && d->scd41_has_rht,
-                  d->scd41_temperature_m_deg_c, d->scd41_humidity_m_percent_rh);
+    table_set_rht(1, 3, 4, d->scd41_detected && d->scd41_has_rht, d->scd41_temperature_m_deg_c, d->scd41_humidity_m_percent_rh);
 
     table_set_str(2, 1, d->stcc4_detected ? "yes" : "no");
     table_set_u16(2, 2, d->stcc4_detected && d->stcc4_has_co2, d->stcc4_co2_ppm);
-    table_set_rht(2, 3, 4, d->stcc4_detected && d->stcc4_has_rht,
-                  d->stcc4_temperature_m_deg_c, d->stcc4_humidity_m_percent_rh);
+    table_set_rht(2, 3, 4, d->stcc4_detected && d->stcc4_has_rht, d->stcc4_temperature_m_deg_c, d->stcc4_humidity_m_percent_rh);
 
     table_set_str(3, 1, d->sht20_detected ? "yes" : "no");
     table_set_str(3, 2, "--");
-    table_set_rht(3, 3, 4, d->sht20_detected && d->sht20_has_rht,
-                  d->sht20_temperature_m_deg_c, d->sht20_humidity_m_percent_rh);
+    table_set_rht(3, 3, 4, d->sht20_detected && d->sht20_has_rht, d->sht20_temperature_m_deg_c, d->sht20_humidity_m_percent_rh);
 }
 
 static bool plot_buffers_init(void) {
@@ -309,8 +303,7 @@ static bool plot_buffers_init(void) {
     }
 
     if (s_history == NULL || s_chart_co2 == NULL || s_chart_temp == NULL || s_chart_rh == NULL) {
-        ESP_LOGE(TAG, "plot buffer allocation failed (capacity=%lu)",
-                 (unsigned long)PLOT_HISTORY_CAPACITY);
+        ESP_LOGE(TAG, "plot buffer allocation failed (capacity=%lu)", (unsigned long)PLOT_HISTORY_CAPACITY);
         return false;
     }
 
@@ -320,10 +313,7 @@ static bool plot_buffers_init(void) {
         s_chart_rh[i] = LV_CHART_POINT_NONE;
     }
 
-    ESP_LOGI(TAG, "plot history ready: %lu samples (%lu hours at %lu ms)",
-             (unsigned long)PLOT_HISTORY_CAPACITY,
-             (unsigned long)PLOT_HISTORY_HOURS,
-             (unsigned long)PLOT_SAMPLE_PERIOD_MS);
+    ESP_LOGI(TAG, "plot history ready: %lu samples (%lu hours at %lu ms)", (unsigned long)PLOT_HISTORY_CAPACITY, (unsigned long)PLOT_HISTORY_HOURS, (unsigned long)PLOT_SAMPLE_PERIOD_MS);
     return true;
 }
 
@@ -389,8 +379,7 @@ static int32_t normalize_value(int32_t value, const series_stats_t* stats) {
     return (int32_t)((offset * PLOT_SCALE_MAX) / span);
 }
 
-static void format_stat_value(char* out, size_t out_len, const series_stats_t* stats,
-                              int32_t value, bool milli_1dp) {
+static void format_stat_value(char* out, size_t out_len, const series_stats_t* stats, int32_t value, bool milli_1dp) {
     if (out == NULL || out_len == 0 || stats == NULL || !stats->any) {
         return;
     }
@@ -402,8 +391,7 @@ static void format_stat_value(char* out, size_t out_len, const series_stats_t* s
     }
 }
 
-static void update_metric_row(uint16_t row, const char* name, const char* unit,
-                              const series_stats_t* stats, bool milli_1dp) {
+static void update_metric_row(uint16_t row, const char* name, const char* unit, const series_stats_t* stats, bool milli_1dp) {
     if (s_stats_table == NULL || name == NULL || unit == NULL || stats == NULL) {
         return;
     }
@@ -413,22 +401,26 @@ static void update_metric_row(uint16_t row, const char* name, const char* unit,
         lv_table_set_cell_value(s_stats_table, row, 1, "");
         lv_table_set_cell_value(s_stats_table, row, 2, "");
         lv_table_set_cell_value(s_stats_table, row, 3, "");
+        lv_table_set_cell_value(s_stats_table, row, 4, "");
         return;
     }
 
     char property[16] = {0};
+    char uom[16] = {0};
     char latest[16] = {0};
     char min[16] = {0};
     char max[16] = {0};
-    snprintf(property, sizeof(property), "%s %s", name, unit);
+    snprintf(property, sizeof(property), "%s", name);
+    snprintf(uom, sizeof(uom), "[%s]", unit);
     format_stat_value(latest, sizeof(latest), stats, stats->latest, milli_1dp);
     format_stat_value(min, sizeof(min), stats, stats->min, milli_1dp);
     format_stat_value(max, sizeof(max), stats, stats->max, milli_1dp);
 
     lv_table_set_cell_value(s_stats_table, row, 0, property);
-    lv_table_set_cell_value(s_stats_table, row, 1, latest);
-    lv_table_set_cell_value(s_stats_table, row, 2, min);
-    lv_table_set_cell_value(s_stats_table, row, 3, max);
+    lv_table_set_cell_value(s_stats_table, row, 1, uom);
+    lv_table_set_cell_value(s_stats_table, row, 2, latest);
+    lv_table_set_cell_value(s_stats_table, row, 3, min);
+    lv_table_set_cell_value(s_stats_table, row, 4, max);
 }
 
 static lv_color_t stats_row_color(uint32_t row) {
@@ -599,9 +591,7 @@ void ui_touch_set_point(uint16_t x, uint16_t y) {
     if (s_crosshair != NULL) {
         lv_obj_clear_flag(s_crosshair, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(s_crosshair);
-        lv_obj_set_pos(s_crosshair,
-                       (lv_coord_t)clamped_x - (TOUCH_CROSSHAIR_SIZE / 2),
-                       (lv_coord_t)clamped_y - (TOUCH_CROSSHAIR_SIZE / 2));
+        lv_obj_set_pos(s_crosshair, (lv_coord_t)clamped_x - (TOUCH_CROSSHAIR_SIZE / 2), (lv_coord_t)clamped_y - (TOUCH_CROSSHAIR_SIZE / 2));
     }
 
     lvgl_port_unlock();
@@ -613,17 +603,15 @@ static void plot_screen_create(lv_obj_t* parent) {
 
     s_sensor_selector = lv_buttonmatrix_create(parent);
     lv_buttonmatrix_set_map(s_sensor_selector, s_sensor_selector_map);
-    lv_buttonmatrix_set_button_ctrl_all(s_sensor_selector,
-                                        LV_BUTTONMATRIX_CTRL_CHECKABLE |
-                                            LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
-    lv_buttonmatrix_set_one_checked(s_sensor_selector, true);
-    lv_obj_set_size(s_sensor_selector, 274, 38);
-    lv_obj_align(s_sensor_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 8);
+    lv_buttonmatrix_set_button_ctrl_all(s_sensor_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+    // lv_buttonmatrix_set_one_checked(s_sensor_selector, true);
+    lv_obj_set_size(s_sensor_selector, 274, 34);
+    lv_obj_align(s_sensor_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 0);
     lv_obj_set_style_bg_color(s_sensor_selector, lv_color_hex(UI_COLOR_BG), 0);
     lv_obj_set_style_border_color(s_sensor_selector, lv_color_hex(UI_COLOR_BORDER), 0);
     lv_obj_set_style_border_width(s_sensor_selector, 0, 0);
     lv_obj_set_style_pad_all(s_sensor_selector, 0, 0);
-    lv_obj_set_style_text_font(s_sensor_selector, &lv_font_montserrat_12, LV_PART_ITEMS);
+    lv_obj_set_style_text_font(s_sensor_selector, &lv_font_montserrat_16, LV_PART_ITEMS);
     lv_obj_set_style_text_color(s_sensor_selector, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(s_sensor_selector, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
     lv_obj_set_style_bg_color(s_sensor_selector, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS | LV_STATE_CHECKED);
@@ -634,7 +622,7 @@ static void plot_screen_create(lv_obj_t* parent) {
 
     s_lbl_sensor = lv_label_create(parent);
     lv_obj_set_style_text_color(s_lbl_sensor, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_text_font(s_lbl_sensor, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_lbl_sensor, &lv_font_montserrat_16, 0);
     lv_obj_align(s_lbl_sensor, LV_ALIGN_TOP_RIGHT, -12, 18);
 
     s_chart = lv_chart_create(parent);
@@ -691,17 +679,19 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_obj_set_style_pad_left(s_stats_table, 2, LV_PART_ITEMS);
     lv_obj_set_style_pad_right(s_stats_table, 2, LV_PART_ITEMS);
     lv_obj_set_style_bg_color(s_stats_table, lv_color_hex(UI_COLOR_BG), LV_PART_ITEMS);
-    lv_obj_set_style_border_color(s_stats_table, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS);
-    lv_table_set_column_count(s_stats_table, 4);
+    lv_obj_set_style_border_color(s_stats_table, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
+    lv_table_set_column_count(s_stats_table, 5);
     lv_table_set_row_count(s_stats_table, 4);
     lv_table_set_column_width(s_stats_table, 0, STATS_COL_PROPERTY_WIDTH);
-    lv_table_set_column_width(s_stats_table, 1, STATS_COL_VALUE_WIDTH);
+    lv_table_set_column_width(s_stats_table, 1, STATS_COL_PROPERTY_WIDTH);
     lv_table_set_column_width(s_stats_table, 2, STATS_COL_VALUE_WIDTH);
     lv_table_set_column_width(s_stats_table, 3, STATS_COL_VALUE_WIDTH);
+    lv_table_set_column_width(s_stats_table, 4, STATS_COL_VALUE_WIDTH);
     lv_table_set_cell_value(s_stats_table, 0, 0, "");
-    lv_table_set_cell_value(s_stats_table, 0, 1, "Latest");
-    lv_table_set_cell_value(s_stats_table, 0, 2, "Min");
-    lv_table_set_cell_value(s_stats_table, 0, 3, "Max");
+    lv_table_set_cell_value(s_stats_table, 0, 1, "");
+    lv_table_set_cell_value(s_stats_table, 0, 2, "Latest");
+    lv_table_set_cell_value(s_stats_table, 0, 3, "Min");
+    lv_table_set_cell_value(s_stats_table, 0, 4, "Max");
     lv_obj_add_event_cb(s_stats_table, stats_table_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
     lv_obj_add_flag(s_stats_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 }
@@ -716,7 +706,7 @@ static void table_screen_create(lv_obj_t* parent) {
     lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 8);
 
     s_table = lv_table_create(parent);
-    lv_obj_set_style_text_font(s_table, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(s_table, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(s_table, lv_color_hex(UI_COLOR_TEXT), 0);
     lv_obj_set_style_bg_opa(s_table, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_color(s_table, lv_color_hex(0x404040), 0);
@@ -770,7 +760,7 @@ void ui_init(lv_display_t* disp) {
     lv_obj_set_style_bg_color(s_tabview, lv_color_hex(UI_COLOR_BG), 0);
     lv_obj_set_style_border_width(s_tabview, 0, 0);
     lv_tabview_set_tab_bar_position(s_tabview, LV_DIR_TOP);
-    lv_tabview_set_tab_bar_size(s_tabview, 36);
+    lv_tabview_set_tab_bar_size(s_tabview, 28);
 
     lv_obj_t* tab_bar = lv_tabview_get_tab_bar(s_tabview);
     lv_obj_set_style_bg_color(tab_bar, lv_color_hex(UI_COLOR_BG), 0);
