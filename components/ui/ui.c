@@ -34,7 +34,7 @@ static const char* TAG = "ui";
 #define UI_MARGIN_X 0
 #define PLOT_TOP_Y 56
 #define PLOT_WIDTH 448
-#define PLOT_HEIGHT 350
+#define PLOT_HEIGHT 378
 #define STATS_TABLE_WIDTH PLOT_WIDTH
 #define STATS_TABLE_HEIGHT 62
 #define STATS_COL_PROPERTY_WIDTH 92
@@ -644,20 +644,7 @@ void ui_init(lv_display_t* disp) {
     lv_obj_set_style_bg_color(s_tabview, lv_color_hex(UI_COLOR_BG), 0);
     lv_obj_set_style_border_width(s_tabview, 0, 0);
     lv_tabview_set_tab_bar_position(s_tabview, LV_DIR_TOP);
-    lv_tabview_set_tab_bar_size(s_tabview, 28);
-
-    lv_obj_t* tab_bar = lv_tabview_get_tab_bar(s_tabview);
-    lv_obj_set_style_bg_color(tab_bar, lv_color_hex(UI_COLOR_BG), 0);
-    lv_obj_set_style_border_width(tab_bar, 0, 0);
-    lv_obj_set_style_pad_all(tab_bar, 0, 0);
-    lv_obj_set_style_text_color(tab_bar, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_text_color(tab_bar, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(tab_bar, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(tab_bar, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_text_color(tab_bar, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_text_color(tab_bar, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS | LV_STATE_PRESSED);
-    lv_obj_add_event_cb(tab_bar, force_text_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
-    lv_obj_add_flag(tab_bar, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    lv_tabview_set_tab_bar_size(s_tabview, 0);
 
     lv_obj_t* plot_tab = lv_tabview_add_tab(s_tabview, "Plot");
     lv_obj_t* table_tab = lv_tabview_add_tab(s_tabview, "Table");
