@@ -80,7 +80,7 @@ static int32_t* s_chart_values[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUN
 static bool s_plot_buffers_ready;
 
 static plot_mode_t s_plot_mode = PLOT_MODE_TEMPERATURE;
-static bool s_source_selected[AIR_QUALITY_SOURCE_COUNT] = {true, true};
+static bool s_source_selected[AIR_QUALITY_SOURCE_COUNT];
 static uint32_t s_last_sample_ms;
 
 static const char* const s_metric_selector_map[] = {"T", "RH", "CO2", "ALL", ""};
@@ -584,6 +584,7 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_buttonmatrix_set_button_ctrl_all(s_source_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
     lv_buttonmatrix_set_one_checked(s_source_selector, false);
     for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        s_source_selected[source] = true;
         lv_buttonmatrix_set_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
     }
     lv_obj_set_size(s_source_selector, CONTROL_WIDTH, CONTROL_HEIGHT);
