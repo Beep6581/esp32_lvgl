@@ -34,8 +34,7 @@ static const char* TAG = "ui";
 #define UI_MARGIN_X 0
 #define PLOT_TOP_Y 56
 #define PLOT_WIDTH 448
-#define PLOT_HEIGHT 258
-#define STATS_TABLE_TOP_Y 358
+#define PLOT_HEIGHT 350
 #define STATS_TABLE_WIDTH PLOT_WIDTH
 #define STATS_TABLE_HEIGHT 62
 #define STATS_COL_PROPERTY_WIDTH 92
@@ -62,7 +61,6 @@ typedef struct {
 } plot_history_sample_t;
 
 static lv_obj_t* s_tabview;
-static lv_obj_t* s_table;
 static lv_timer_t* s_ui_timer;
 static lv_obj_t* s_crosshair;
 
@@ -213,57 +211,6 @@ static void selector_set_active(sensor_id_t sensor) {
     lv_buttonmatrix_clear_button_ctrl_all(s_sensor_selector, LV_BUTTONMATRIX_CTRL_CHECKED);
     lv_buttonmatrix_set_selected_button(s_sensor_selector, (uint32_t)sensor);
     lv_buttonmatrix_set_button_ctrl(s_sensor_selector, (uint32_t)sensor, LV_BUTTONMATRIX_CTRL_CHECKED);
-}
-
-static void table_set_str(uint16_t row, uint16_t col, const char* s) {
-    if (s_table == NULL) {
-        return;
-    }
-    lv_table_set_cell_value(s_table, row, col, (s != NULL) ? s : "");
-}
-
-static void table_set_u16(uint16_t row, uint16_t col, bool present, uint16_t val) {
-    if (!present) {
-        table_set_str(row, col, "...");
-        return;
-    }
-
-    char buf[16] = {0};
-    snprintf(buf, sizeof(buf), "%u", (unsigned)val);
-    table_set_str(row, col, buf);
-}
-
-static void table_set_rht(uint16_t row, uint16_t col_t, uint16_t col_rh, bool present, int32_t t_m, int32_t rh_m) {
-    if (!present) {
-        table_set_str(row, col_t, "...");
-        table_set_str(row, col_rh, "...");
-        return;
-    }
-
-    char t_buf[16] = {0};
-    char rh_buf[16] = {0};
-    format_milli_1dp(t_buf, sizeof(t_buf), t_m);
-    format_milli_1dp(rh_buf, sizeof(rh_buf), rh_m);
-    table_set_str(row, col_t, t_buf);
-    table_set_str(row, col_rh, rh_buf);
-}
-
-static void table_update(const air_quality_data_t* d) {
-    if (d == NULL) {
-        return;
-    }
-
-    if (d->scd41_detected) {
-        table_set_str(1, 1, d->scd41_asc_enabled ? "yes (ASC)" : "yes");
-    } else {
-        table_set_str(1, 1, "no");
-    }
-    table_set_u16(1, 2, d->scd41_detected && d->scd41_has_co2, d->scd41_co2_ppm);
-    table_set_rht(1, 3, 4, d->scd41_detected && d->scd41_has_rht, d->scd41_temperature_m_deg_c, d->scd41_humidity_m_percent_rh);
-
-    table_set_str(2, 1, d->sht20_detected ? "yes" : "no");
-    table_set_str(2, 2, "--");
-    table_set_rht(2, 3, 4, d->sht20_detected && d->sht20_has_rht, d->sht20_temperature_m_deg_c, d->sht20_humidity_m_percent_rh);
 }
 
 static bool plot_buffers_init(void) {
@@ -525,7 +472,6 @@ static void ui_timer_cb(lv_timer_t* t) {
     (void)t;
 
     air_quality_data_t d = air_quality_get_latest();
-    table_update(&d);
 
     const uint32_t now_ms = (uint32_t)esp_log_timestamp();
     if (s_last_sample_ms == 0U || (now_ms - s_last_sample_ms) >= PLOT_SAMPLE_PERIOD_MS) {
@@ -644,10 +590,15 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_obj_set_style_text_align(s_lbl_x_right, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(s_lbl_x_right, "--:--:--");
     lv_obj_align_to(s_lbl_x_right, s_chart, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
+}
+
+static void table_screen_create(lv_obj_t* parent) {
+    lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(parent, lv_color_hex(UI_COLOR_BG), 0);
 
     s_stats_table = lv_table_create(parent);
     lv_obj_set_size(s_stats_table, STATS_TABLE_WIDTH, STATS_TABLE_HEIGHT);
-    lv_obj_align(s_stats_table, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, STATS_TABLE_TOP_Y);
+    lv_obj_align(s_stats_table, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 0);
     lv_obj_remove_flag(s_stats_table, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_text_font(s_stats_table, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(s_stats_table, lv_color_hex(UI_COLOR_TEXT), 0);
@@ -676,50 +627,6 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_table_set_cell_value(s_stats_table, 0, 4, "Max");
     lv_obj_add_event_cb(s_stats_table, stats_table_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
     lv_obj_add_flag(s_stats_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
-}
-
-static void table_screen_create(lv_obj_t* parent) {
-    lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(parent, lv_color_hex(UI_COLOR_BG), 0);
-
-    lv_obj_t* lbl_title = lv_label_create(parent);
-    lv_label_set_text(lbl_title, "Air quality");
-    lv_obj_set_style_text_color(lbl_title, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 8);
-
-    s_table = lv_table_create(parent);
-    lv_obj_set_style_text_font(s_table, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(s_table, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_bg_opa(s_table, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_color(s_table, lv_color_hex(0x404040), 0);
-    lv_obj_set_style_border_width(s_table, 1, 0);
-    lv_obj_align(s_table, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 40);
-
-    lv_table_set_column_count(s_table, 5);
-    lv_table_set_row_count(s_table, 3);
-    lv_table_set_column_width(s_table, 0, 90);
-    lv_table_set_column_width(s_table, 1, 110);
-    lv_table_set_column_width(s_table, 2, 90);
-    lv_table_set_column_width(s_table, 3, 80);
-    lv_table_set_column_width(s_table, 4, 80);
-
-    table_set_str(0, 0, "Sensor");
-    table_set_str(0, 1, "Detected");
-    table_set_str(0, 2, "CO2");
-    table_set_str(0, 3, "T");
-    table_set_str(0, 4, "RH");
-
-    table_set_str(1, 0, "SCD41");
-    table_set_str(2, 0, "SHT20");
-
-    table_set_str(1, 1, "no");
-    table_set_str(2, 1, "no");
-    table_set_str(1, 2, "...");
-    table_set_str(2, 2, "--");
-    table_set_str(1, 3, "...");
-    table_set_str(1, 4, "...");
-    table_set_str(2, 3, "...");
-    table_set_str(2, 4, "...");
 }
 
 void ui_init(lv_display_t* disp) {
@@ -760,7 +667,6 @@ void ui_init(lv_display_t* disp) {
 
     air_quality_data_t d = air_quality_get_latest();
     s_selected_sensor = default_sensor_for_data(&d);
-    table_update(&d);
     chart_redraw();
 
     s_ui_timer = lv_timer_create(ui_timer_cb, 1000, NULL);
