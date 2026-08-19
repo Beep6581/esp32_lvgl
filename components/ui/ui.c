@@ -22,70 +22,73 @@ static const char* TAG = "ui";
 #define PLOT_SAMPLE_PERIOD_MS (10 * 1000U)
 #define PLOT_HISTORY_HOURS (24U)
 #define PLOT_HISTORY_CAPACITY ((PLOT_HISTORY_HOURS * 60U * 60U * 1000U) / PLOT_SAMPLE_PERIOD_MS)
-#define PLOT_SCALE_MAX 1000
+
 #define UI_COLOR_BG 0x101010
 #define UI_COLOR_GRID 0x202020
 #define UI_COLOR_BORDER 0x303030
 #define UI_COLOR_TEXT 0xC0C0C0
-#define UI_COLOR_CO2 0x63D471  // green
-#define UI_COLOR_TEMP 0xFF6B4A // red
-#define UI_COLOR_RH 0x4DA3FF   // blue
+#define UI_COLOR_SCD41 0x63D471
+#define UI_COLOR_SHT20 0x4DA3FF
 
 #define UI_MARGIN_X 0
-#define PLOT_TOP_Y 56
-#define PLOT_WIDTH 448
-#define PLOT_HEIGHT 378
-#define STATS_TABLE_WIDTH PLOT_WIDTH
-#define STATS_TABLE_HEIGHT 62
-#define STATS_COL_PROPERTY_WIDTH 92
-#define STATS_COL_VALUE_WIDTH 88
+#define CONTROL_WIDTH 448
+#define CONTROL_HEIGHT 34
+#define METRIC_SELECTOR_TOP_Y 0
+#define SOURCE_SELECTOR_TOP_Y 38
+#define CHART_TOP_Y 78
+#define CHART_WIDTH 448
+#define CHART_SINGLE_HEIGHT 356
+#define CHART_ALL_HEIGHT 112
+#define CHART_ALL_GAP 6
+
+#define TABLE_WIDTH 448
+#define TABLE_COL_SOURCE_WIDTH 92
+#define TABLE_COL_VALUE_WIDTH 72
+#define TABLE_COL_STATUS_WIDTH 140
 
 typedef enum {
-    SENSOR_SCD41 = 0,
-    SENSOR_SHT20,
-    SENSOR_COUNT,
-} sensor_id_t;
+    PLOT_MODE_TEMPERATURE = AIR_QUALITY_METRIC_TEMPERATURE,
+    PLOT_MODE_HUMIDITY = AIR_QUALITY_METRIC_HUMIDITY,
+    PLOT_MODE_CO2 = AIR_QUALITY_METRIC_CO2,
+    PLOT_MODE_ALL = AIR_QUALITY_METRIC_COUNT,
+    PLOT_MODE_COUNT,
+} plot_mode_t;
 
 typedef struct {
-    bool detected;
-    bool has_co2;
-    bool has_rht;
-    int32_t co2_ppm;
-    int32_t temperature_m_deg_c;
-    int32_t humidity_m_percent_rh;
-} sensor_history_sample_t;
-
-typedef struct {
-    uint32_t ms;
-    sensor_history_sample_t sensor[SENSOR_COUNT];
-} plot_history_sample_t;
+    bool any;
+    int32_t min;
+    int32_t max;
+} value_range_t;
 
 static lv_obj_t* s_tabview;
 static lv_timer_t* s_ui_timer;
 static lv_obj_t* s_crosshair;
 
-static lv_obj_t* s_sensor_selector;
-static lv_obj_t* s_chart;
-static lv_chart_series_t* s_ser_co2;
-static lv_chart_series_t* s_ser_temp;
-static lv_chart_series_t* s_ser_rh;
-static lv_obj_t* s_lbl_sensor;
+static lv_obj_t* s_metric_selector;
+static lv_obj_t* s_source_selector;
+static lv_obj_t* s_chart[AIR_QUALITY_METRIC_COUNT];
+static lv_obj_t* s_chart_title[AIR_QUALITY_METRIC_COUNT];
+static lv_chart_series_t* s_series[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
 static lv_obj_t* s_lbl_x_left;
 static lv_obj_t* s_lbl_x_right;
-static lv_obj_t* s_stats_table;
+static lv_obj_t* s_comparison_table;
 
-static plot_history_sample_t* s_history;
+static air_quality_snapshot_t* s_history;
 static uint32_t s_history_count;
 static uint32_t s_history_next;
-static int32_t* s_chart_co2;
-static int32_t* s_chart_temp;
-static int32_t* s_chart_rh;
+static int32_t* s_chart_values[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
+static bool s_plot_buffers_ready;
 
-static sensor_id_t s_selected_sensor = SENSOR_SCD41;
-static bool s_user_selected_sensor;
+static plot_mode_t s_plot_mode = PLOT_MODE_TEMPERATURE;
+static bool s_source_selected[AIR_QUALITY_SOURCE_COUNT] = {true, true};
 static uint32_t s_last_sample_ms;
 
-static const char* const s_sensor_selector_map[] = {"SCD41", "SHT20", ""};
+static const char* const s_metric_selector_map[] = {"T", "RH", "CO2", "ALL", ""};
+static const char* const s_source_selector_map[] = {"SCD41", "SHT20", ""};
+static const char* const s_source_name[AIR_QUALITY_SOURCE_COUNT] = {"SCD41", "SHT20"};
+static const char* const s_metric_name[AIR_QUALITY_METRIC_COUNT] = {"T", "RH", "CO2"};
+static const char* const s_metric_unit[AIR_QUALITY_METRIC_COUNT] = {"C", "%", "ppm"};
+static const uint32_t s_source_color[AIR_QUALITY_SOURCE_COUNT] = {UI_COLOR_SCD41, UI_COLOR_SHT20};
 
 static uint16_t clamp_touch_coord(uint16_t val, uint16_t max_size) {
     if (max_size == 0) {
@@ -110,14 +113,14 @@ static void format_milli_1dp(char* out, size_t out_len, int32_t milli) {
         return;
     }
 
-    int32_t tenths = 0;
+    int32_t tenths;
     if (milli >= 0) {
         tenths = (milli + 50) / 100;
     } else {
         tenths = (milli - 50) / 100;
     }
 
-    int32_t whole = tenths / 10;
+    const int32_t whole = tenths / 10;
     int32_t frac = tenths % 10;
     if (frac < 0) {
         frac = -frac;
@@ -152,96 +155,49 @@ static void format_duration_hm(char* out, size_t out_len, uint32_t ms) {
     snprintf(out, out_len, "%02lu:%02lu", (unsigned long)hours, (unsigned long)minutes);
 }
 
-static const char* sensor_name(sensor_id_t sensor) {
-    switch (sensor) {
-    case SENSOR_SCD41:
-        return "SCD41";
-    case SENSOR_SHT20:
-        return "SHT20";
-    default:
-        return "?";
+static void format_metric_value(char* out, size_t out_len, air_quality_metric_t metric, int32_t value) {
+    if (metric == AIR_QUALITY_METRIC_CO2) {
+        snprintf(out, out_len, "%ld", (long)value);
+    } else {
+        format_milli_1dp(out, out_len, value);
     }
-}
-
-static sensor_history_sample_t sample_for_sensor(const air_quality_data_t* d, sensor_id_t sensor) {
-    sensor_history_sample_t s = {0};
-    if (d == NULL) {
-        return s;
-    }
-
-    switch (sensor) {
-    case SENSOR_SCD41:
-        s.detected = d->scd41_detected;
-        s.has_co2 = d->scd41_has_co2;
-        s.has_rht = d->scd41_has_rht;
-        s.co2_ppm = d->scd41_co2_ppm;
-        s.temperature_m_deg_c = d->scd41_temperature_m_deg_c;
-        s.humidity_m_percent_rh = d->scd41_humidity_m_percent_rh;
-        break;
-    case SENSOR_SHT20:
-        s.detected = d->sht20_detected;
-        s.has_co2 = false;
-        s.has_rht = d->sht20_has_rht;
-        s.temperature_m_deg_c = d->sht20_temperature_m_deg_c;
-        s.humidity_m_percent_rh = d->sht20_humidity_m_percent_rh;
-        break;
-    default:
-        break;
-    }
-    return s;
-}
-
-static sensor_id_t default_sensor_for_data(const air_quality_data_t* d) {
-    if (d != NULL) {
-        if (d->scd41_detected) {
-            return SENSOR_SCD41;
-        }
-        if (d->sht20_detected) {
-            return SENSOR_SHT20;
-        }
-    }
-    return SENSOR_SCD41;
-}
-
-static void selector_set_active(sensor_id_t sensor) {
-    if (s_sensor_selector == NULL) {
-        return;
-    }
-
-    lv_buttonmatrix_clear_button_ctrl_all(s_sensor_selector, LV_BUTTONMATRIX_CTRL_CHECKED);
-    lv_buttonmatrix_set_selected_button(s_sensor_selector, (uint32_t)sensor);
-    lv_buttonmatrix_set_button_ctrl(s_sensor_selector, (uint32_t)sensor, LV_BUTTONMATRIX_CTRL_CHECKED);
 }
 
 static bool plot_buffers_init(void) {
-    if (s_history != NULL && s_chart_co2 != NULL && s_chart_temp != NULL && s_chart_rh != NULL) {
+    if (s_plot_buffers_ready) {
         return true;
     }
 
     if (s_history == NULL) {
-        s_history = plot_alloc(sizeof(plot_history_sample_t) * PLOT_HISTORY_CAPACITY);
-    }
-    if (s_chart_co2 == NULL) {
-        s_chart_co2 = plot_alloc(sizeof(int32_t) * PLOT_HISTORY_CAPACITY);
-    }
-    if (s_chart_temp == NULL) {
-        s_chart_temp = plot_alloc(sizeof(int32_t) * PLOT_HISTORY_CAPACITY);
-    }
-    if (s_chart_rh == NULL) {
-        s_chart_rh = plot_alloc(sizeof(int32_t) * PLOT_HISTORY_CAPACITY);
+        s_history = plot_alloc(sizeof(air_quality_snapshot_t) * PLOT_HISTORY_CAPACITY);
     }
 
-    if (s_history == NULL || s_chart_co2 == NULL || s_chart_temp == NULL || s_chart_rh == NULL) {
-        ESP_LOGE(TAG, "plot buffer allocation failed (capacity=%lu)", (unsigned long)PLOT_HISTORY_CAPACITY);
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            if (s_chart_values[metric][source] == NULL) {
+                s_chart_values[metric][source] = plot_alloc(sizeof(int32_t) * PLOT_HISTORY_CAPACITY);
+            }
+        }
+    }
+
+    if (s_history == NULL) {
+        ESP_LOGE(TAG, "history buffer allocation failed (capacity=%lu)", (unsigned long)PLOT_HISTORY_CAPACITY);
         return false;
     }
 
-    for (uint32_t i = 0; i < PLOT_HISTORY_CAPACITY; i++) {
-        s_chart_co2[i] = LV_CHART_POINT_NONE;
-        s_chart_temp[i] = LV_CHART_POINT_NONE;
-        s_chart_rh[i] = LV_CHART_POINT_NONE;
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            if (s_chart_values[metric][source] == NULL) {
+                ESP_LOGE(TAG, "chart buffer allocation failed (metric=%d source=%d)", (int)metric, (int)source);
+                return false;
+            }
+            for (uint32_t i = 0; i < PLOT_HISTORY_CAPACITY; i++) {
+                s_chart_values[metric][source][i] = LV_CHART_POINT_NONE;
+            }
+        }
     }
 
+    s_plot_buffers_ready = true;
     ESP_LOGI(TAG, "plot history ready: %lu samples (%lu hours at %lu ms)", (unsigned long)PLOT_HISTORY_CAPACITY, (unsigned long)PLOT_HISTORY_HOURS, (unsigned long)PLOT_SAMPLE_PERIOD_MS);
     return true;
 }
@@ -253,16 +209,13 @@ static uint32_t history_physical_index(uint32_t chronological_index) {
     return (s_history_next + chronological_index) % PLOT_HISTORY_CAPACITY;
 }
 
-static void history_add_sample(const air_quality_data_t* d, uint32_t now_ms) {
-    if (d == NULL || !plot_buffers_init()) {
+static void history_add_sample(const air_quality_snapshot_t* snapshot, uint32_t now_ms) {
+    if (snapshot == NULL || !plot_buffers_init()) {
         return;
     }
 
-    plot_history_sample_t* out = &s_history[s_history_next];
-    out->ms = now_ms;
-    for (sensor_id_t sensor = SENSOR_SCD41; sensor < SENSOR_COUNT; sensor++) {
-        out->sensor[sensor] = sample_for_sensor(d, sensor);
-    }
+    s_history[s_history_next] = *snapshot;
+    s_history[s_history_next].timestamp_ms = now_ms;
 
     s_history_next = (s_history_next + 1U) % PLOT_HISTORY_CAPACITY;
     if (s_history_count < PLOT_HISTORY_CAPACITY) {
@@ -270,114 +223,194 @@ static void history_add_sample(const air_quality_data_t* d, uint32_t now_ms) {
     }
 }
 
-typedef struct {
-    bool any;
-    int32_t min;
-    int32_t max;
-    int32_t latest;
-} series_stats_t;
-
-static void stats_add(series_stats_t* stats, int32_t value) {
-    if (stats == NULL) {
-        return;
-    }
-    if (!stats->any) {
-        stats->any = true;
-        stats->min = value;
-        stats->max = value;
-    } else {
-        if (value < stats->min) {
-            stats->min = value;
-        }
-        if (value > stats->max) {
-            stats->max = value;
-        }
-    }
-    stats->latest = value;
-}
-
-static int32_t normalize_value(int32_t value, const series_stats_t* stats) {
-    if (stats == NULL || !stats->any) {
-        return LV_CHART_POINT_NONE;
-    }
-    if (stats->min == stats->max) {
-        return PLOT_SCALE_MAX / 2;
-    }
-    const int64_t span = (int64_t)stats->max - (int64_t)stats->min;
-    const int64_t offset = (int64_t)value - (int64_t)stats->min;
-    return (int32_t)((offset * PLOT_SCALE_MAX) / span);
-}
-
-static void format_stat_value(char* out, size_t out_len, const series_stats_t* stats, int32_t value, bool milli_1dp) {
-    if (out == NULL || out_len == 0 || stats == NULL || !stats->any) {
+static void range_add(value_range_t* range, int32_t value) {
+    if (!range->any) {
+        range->any = true;
+        range->min = value;
+        range->max = value;
         return;
     }
 
-    if (milli_1dp) {
-        format_milli_1dp(out, out_len, value);
-    } else {
-        snprintf(out, out_len, "%ld", (long)value);
+    if (value < range->min) {
+        range->min = value;
+    }
+    if (value > range->max) {
+        range->max = value;
     }
 }
 
-static void update_metric_row(uint16_t row, const char* name, const char* unit, const series_stats_t* stats, bool milli_1dp) {
-    if (s_stats_table == NULL || name == NULL || unit == NULL || stats == NULL) {
-        return;
-    }
-
-    if (!stats->any) {
-        lv_table_set_cell_value(s_stats_table, row, 0, "");
-        lv_table_set_cell_value(s_stats_table, row, 1, "");
-        lv_table_set_cell_value(s_stats_table, row, 2, "");
-        lv_table_set_cell_value(s_stats_table, row, 3, "");
-        lv_table_set_cell_value(s_stats_table, row, 4, "");
-        return;
-    }
-
-    char property[16] = {0};
-    char uom[16] = {0};
-    char latest[16] = {0};
-    char min[16] = {0};
-    char max[16] = {0};
-    snprintf(property, sizeof(property), "%s", name);
-    snprintf(uom, sizeof(uom), "[%s]", unit);
-    format_stat_value(latest, sizeof(latest), stats, stats->latest, milli_1dp);
-    format_stat_value(min, sizeof(min), stats, stats->min, milli_1dp);
-    format_stat_value(max, sizeof(max), stats, stats->max, milli_1dp);
-
-    lv_table_set_cell_value(s_stats_table, row, 0, property);
-    lv_table_set_cell_value(s_stats_table, row, 1, uom);
-    lv_table_set_cell_value(s_stats_table, row, 2, latest);
-    lv_table_set_cell_value(s_stats_table, row, 3, min);
-    lv_table_set_cell_value(s_stats_table, row, 4, max);
-}
-
-static lv_color_t stats_row_color(uint32_t row) {
-    switch (row) {
-    case 1:
-        return lv_color_hex(UI_COLOR_CO2);
-    case 2:
-        return lv_color_hex(UI_COLOR_TEMP);
-    case 3:
-        return lv_color_hex(UI_COLOR_RH);
+static int32_t metric_minimum_padding(air_quality_metric_t metric) {
+    switch (metric) {
+    case AIR_QUALITY_METRIC_TEMPERATURE:
+        return 500;
+    case AIR_QUALITY_METRIC_HUMIDITY:
+        return 1000;
+    case AIR_QUALITY_METRIC_CO2:
+        return 50;
     default:
-        return lv_color_hex(UI_COLOR_TEXT);
+        return 1;
     }
 }
 
-static void stats_table_draw_cb(lv_event_t* e) {
-    lv_draw_task_t* draw_task = lv_event_get_draw_task(e);
-    lv_draw_dsc_base_t* base_dsc = (lv_draw_dsc_base_t*)lv_draw_task_get_draw_dsc(draw_task);
-    if (base_dsc == NULL || base_dsc->part != LV_PART_ITEMS) {
+static void range_add_padding(value_range_t* range, air_quality_metric_t metric) {
+    if (!range->any) {
+        range->min = 0;
+        range->max = 1;
         return;
     }
 
-    lv_draw_label_dsc_t* label_dsc = lv_draw_task_get_label_dsc(draw_task);
-    if (label_dsc == NULL) {
+    const int64_t span = (int64_t)range->max - (int64_t)range->min;
+    int32_t padding = (int32_t)(span / 10);
+    const int32_t minimum = metric_minimum_padding(metric);
+    if (padding < minimum) {
+        padding = minimum;
+    }
+
+    range->min -= padding;
+    range->max += padding;
+}
+
+static bool metric_is_visible(air_quality_metric_t metric) {
+    return s_plot_mode == PLOT_MODE_ALL || s_plot_mode == (plot_mode_t)metric;
+}
+
+static void chart_layout(void) {
+    uint32_t visible_index = 0;
+    lv_obj_t* last_chart = NULL;
+
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        const bool visible = metric_is_visible(metric);
+        if (!visible) {
+            lv_obj_add_flag(s_chart[metric], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_chart_title[metric], LV_OBJ_FLAG_HIDDEN);
+            continue;
+        }
+
+        int32_t y = CHART_TOP_Y;
+        int32_t height = CHART_SINGLE_HEIGHT;
+        if (s_plot_mode == PLOT_MODE_ALL) {
+            y += (int32_t)visible_index * (CHART_ALL_HEIGHT + CHART_ALL_GAP);
+            height = CHART_ALL_HEIGHT;
+        }
+
+        lv_obj_clear_flag(s_chart[metric], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(s_chart_title[metric], LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_size(s_chart[metric], CHART_WIDTH, height);
+        lv_obj_align(s_chart[metric], LV_ALIGN_TOP_LEFT, UI_MARGIN_X, y);
+        lv_obj_align_to(s_chart_title[metric], s_chart[metric], LV_ALIGN_TOP_LEFT, 4, 2);
+        lv_obj_move_foreground(s_chart_title[metric]);
+
+        last_chart = s_chart[metric];
+        visible_index++;
+    }
+
+    if (last_chart != NULL) {
+        lv_obj_align_to(s_lbl_x_left, last_chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
+        lv_obj_align_to(s_lbl_x_right, last_chart, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
+    }
+}
+
+static void chart_redraw(void) {
+    if (!s_plot_buffers_ready) {
         return;
     }
 
-    label_dsc->color = stats_row_color(base_dsc->id1);
+    const uint32_t point_count = (s_history_count >= 2U) ? s_history_count : 2U;
+
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        value_range_t range = {0};
+        bool source_has_data[AIR_QUALITY_SOURCE_COUNT] = {0};
+
+        for (uint32_t i = 0; i < s_history_count; i++) {
+            const air_quality_snapshot_t* sample = &s_history[history_physical_index(i)];
+            for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+                const air_quality_metric_data_t* value = &sample->source[source].metric[metric];
+                if (s_source_selected[source] && value->supported && value->valid) {
+                    range_add(&range, value->value);
+                    source_has_data[source] = true;
+                }
+            }
+        }
+
+        range_add_padding(&range, metric);
+
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            for (uint32_t i = 0; i < PLOT_HISTORY_CAPACITY; i++) {
+                s_chart_values[metric][source][i] = LV_CHART_POINT_NONE;
+            }
+
+            if (s_source_selected[source]) {
+                for (uint32_t i = 0; i < s_history_count; i++) {
+                    const air_quality_snapshot_t* sample = &s_history[history_physical_index(i)];
+                    const air_quality_metric_data_t* value = &sample->source[source].metric[metric];
+                    if (value->supported && value->valid) {
+                        s_chart_values[metric][source][i] = value->value;
+                    }
+                }
+            }
+
+            lv_chart_hide_series(s_chart[metric], s_series[metric][source], !source_has_data[source]);
+        }
+
+        lv_chart_set_point_count(s_chart[metric], point_count);
+        lv_chart_set_axis_range(s_chart[metric], LV_CHART_AXIS_PRIMARY_Y, range.min, range.max);
+        lv_chart_refresh(s_chart[metric]);
+    }
+
+    chart_layout();
+
+    if (s_history_count > 0U) {
+        char left[16] = {0};
+        char right[16] = {0};
+        format_duration_hm(left, sizeof(left), s_history[history_physical_index(0)].timestamp_ms);
+        format_duration_hms(right, sizeof(right), s_history[history_physical_index(s_history_count - 1U)].timestamp_ms);
+        lv_label_set_text(s_lbl_x_left, left);
+        lv_label_set_text(s_lbl_x_right, right);
+    } else {
+        lv_label_set_text(s_lbl_x_left, "--:--");
+        lv_label_set_text(s_lbl_x_right, "--:--:--");
+    }
+}
+
+static void table_set_metric(uint16_t row, uint16_t col, const air_quality_metric_data_t* metric, air_quality_metric_t metric_id) {
+    if (!metric->supported) {
+        lv_table_set_cell_value(s_comparison_table, row, col, "--");
+        return;
+    }
+    if (!metric->valid) {
+        lv_table_set_cell_value(s_comparison_table, row, col, "...");
+        return;
+    }
+
+    char value[16] = {0};
+    format_metric_value(value, sizeof(value), metric_id, metric->value);
+    lv_table_set_cell_value(s_comparison_table, row, col, value);
+}
+
+static void comparison_table_update(const air_quality_snapshot_t* snapshot) {
+    if (snapshot == NULL || s_comparison_table == NULL) {
+        return;
+    }
+
+    for (air_quality_source_t source_id = 0; source_id < AIR_QUALITY_SOURCE_COUNT; source_id++) {
+        const uint16_t row = (uint16_t)source_id + 1U;
+        const air_quality_source_data_t* source = &snapshot->source[source_id];
+
+        lv_table_set_cell_value(s_comparison_table, row, 0, s_source_name[source_id]);
+        table_set_metric(row, 1, &source->metric[AIR_QUALITY_METRIC_CO2], AIR_QUALITY_METRIC_CO2);
+        table_set_metric(row, 2, &source->metric[AIR_QUALITY_METRIC_TEMPERATURE], AIR_QUALITY_METRIC_TEMPERATURE);
+        table_set_metric(row, 3, &source->metric[AIR_QUALITY_METRIC_HUMIDITY], AIR_QUALITY_METRIC_HUMIDITY);
+
+        const char* status = "--";
+        if (source->configured && !source->online) {
+            status = "Offline";
+        } else if (source->configured && source->last_update_ms == 0U) {
+            status = "Waiting";
+        } else if (source->configured) {
+            status = "OK";
+        }
+        lv_table_set_cell_value(s_comparison_table, row, 4, status);
+    }
 }
 
 static void force_text_draw_cb(lv_event_t* e) {
@@ -388,98 +421,66 @@ static void force_text_draw_cb(lv_event_t* e) {
     }
 }
 
-static void chart_redraw(void) {
-    if (s_chart == NULL || s_chart_co2 == NULL || s_chart_temp == NULL || s_chart_rh == NULL) {
+static void source_text_draw_cb(lv_event_t* e) {
+    lv_draw_task_t* draw_task = lv_event_get_draw_task(e);
+    lv_draw_dsc_base_t* base_dsc = (lv_draw_dsc_base_t*)lv_draw_task_get_draw_dsc(draw_task);
+    lv_draw_label_dsc_t* label_dsc = lv_draw_task_get_label_dsc(draw_task);
+    if (base_dsc == NULL || label_dsc == NULL || base_dsc->part != LV_PART_ITEMS) {
         return;
     }
 
-    series_stats_t co2 = {0};
-    series_stats_t temp = {0};
-    series_stats_t rh = {0};
-
-    for (uint32_t i = 0; i < s_history_count; i++) {
-        const plot_history_sample_t* sample = &s_history[history_physical_index(i)];
-        const sensor_history_sample_t* sensor = &sample->sensor[s_selected_sensor];
-
-        if (sensor->detected && sensor->has_co2) {
-            stats_add(&co2, sensor->co2_ppm);
-        }
-        if (sensor->detected && sensor->has_rht) {
-            stats_add(&temp, sensor->temperature_m_deg_c);
-            stats_add(&rh, sensor->humidity_m_percent_rh);
-        }
+    if (base_dsc->id1 < AIR_QUALITY_SOURCE_COUNT) {
+        label_dsc->color = lv_color_hex(s_source_color[base_dsc->id1]);
     }
-
-    for (uint32_t i = 0; i < PLOT_HISTORY_CAPACITY; i++) {
-        s_chart_co2[i] = LV_CHART_POINT_NONE;
-        s_chart_temp[i] = LV_CHART_POINT_NONE;
-        s_chart_rh[i] = LV_CHART_POINT_NONE;
-    }
-
-    for (uint32_t i = 0; i < s_history_count; i++) {
-        const plot_history_sample_t* sample = &s_history[history_physical_index(i)];
-        const sensor_history_sample_t* sensor = &sample->sensor[s_selected_sensor];
-
-        if (sensor->detected && sensor->has_co2) {
-            s_chart_co2[i] = normalize_value(sensor->co2_ppm, &co2);
-        }
-        if (sensor->detected && sensor->has_rht) {
-            s_chart_temp[i] = normalize_value(sensor->temperature_m_deg_c, &temp);
-            s_chart_rh[i] = normalize_value(sensor->humidity_m_percent_rh, &rh);
-        }
-    }
-
-    const uint32_t point_count = (s_history_count >= 2U) ? s_history_count : 2U;
-    lv_chart_set_point_count(s_chart, point_count);
-    lv_chart_hide_series(s_chart, s_ser_co2, !co2.any);
-    lv_chart_hide_series(s_chart, s_ser_temp, !temp.any);
-    lv_chart_hide_series(s_chart, s_ser_rh, !rh.any);
-    lv_chart_refresh(s_chart);
-
-    lv_label_set_text_fmt(s_lbl_sensor, "%s", sensor_name(s_selected_sensor));
-    update_metric_row(1, "CO2", "ppm", &co2, false);
-    update_metric_row(2, "T", "C", &temp, true);
-    update_metric_row(3, "RH", "%", &rh, true);
-
-    if (s_history_count > 0U) {
-        char left[16] = {0};
-        char right[16] = {0};
-        format_duration_hm(left, sizeof(left), s_history[history_physical_index(0)].ms);
-        format_duration_hms(right, sizeof(right), s_history[history_physical_index(s_history_count - 1U)].ms);
-        lv_label_set_text(s_lbl_x_left, left);
-        lv_label_set_text(s_lbl_x_right, right);
-    } else {
-        lv_label_set_text(s_lbl_x_left, "--:--");
-        lv_label_set_text(s_lbl_x_right, "--:--:--");
-    }
-
-    selector_set_active(s_selected_sensor);
 }
 
-static void sensor_selector_cb(lv_event_t* e) {
-    lv_obj_t* obj = lv_event_get_target_obj(e);
-    const uint32_t selected = lv_buttonmatrix_get_selected_button(obj);
-    if (selected >= SENSOR_COUNT) {
+static void table_text_draw_cb(lv_event_t* e) {
+    lv_draw_task_t* draw_task = lv_event_get_draw_task(e);
+    lv_draw_dsc_base_t* base_dsc = (lv_draw_dsc_base_t*)lv_draw_task_get_draw_dsc(draw_task);
+    lv_draw_label_dsc_t* label_dsc = lv_draw_task_get_label_dsc(draw_task);
+    if (base_dsc == NULL || label_dsc == NULL || base_dsc->part != LV_PART_ITEMS) {
         return;
     }
 
-    s_selected_sensor = (sensor_id_t)selected;
-    s_user_selected_sensor = true;
+    if (base_dsc->id1 > 0 && base_dsc->id1 <= AIR_QUALITY_SOURCE_COUNT) {
+        label_dsc->color = lv_color_hex(s_source_color[base_dsc->id1 - 1U]);
+    } else {
+        label_dsc->color = lv_color_hex(UI_COLOR_TEXT);
+    }
+}
+
+static void metric_selector_cb(lv_event_t* e) {
+    lv_obj_t* obj = lv_event_get_target_obj(e);
+    const uint32_t selected = lv_buttonmatrix_get_selected_button(obj);
+    if (selected >= PLOT_MODE_COUNT) {
+        return;
+    }
+
+    s_plot_mode = (plot_mode_t)selected;
+    chart_redraw();
+}
+
+static void source_selector_cb(lv_event_t* e) {
+    lv_obj_t* obj = lv_event_get_target_obj(e);
+    const uint32_t selected = lv_buttonmatrix_get_selected_button(obj);
+    if (selected >= AIR_QUALITY_SOURCE_COUNT) {
+        return;
+    }
+
+    s_source_selected[selected] = lv_buttonmatrix_has_button_ctrl(obj, selected, LV_BUTTONMATRIX_CTRL_CHECKED);
     chart_redraw();
 }
 
 static void ui_timer_cb(lv_timer_t* t) {
     (void)t;
 
-    air_quality_data_t d = air_quality_get_latest();
+    air_quality_snapshot_t snapshot = air_quality_get_latest();
+    comparison_table_update(&snapshot);
 
     const uint32_t now_ms = (uint32_t)esp_log_timestamp();
     if (s_last_sample_ms == 0U || (now_ms - s_last_sample_ms) >= PLOT_SAMPLE_PERIOD_MS) {
         s_last_sample_ms = now_ms;
-        history_add_sample(&d, now_ms);
-        if (!s_user_selected_sensor) {
-            s_selected_sensor = default_sensor_for_data(&d);
-        }
+        history_add_sample(&snapshot, now_ms);
         chart_redraw();
     }
 }
@@ -525,63 +526,85 @@ void ui_touch_set_point(uint16_t x, uint16_t y) {
     lvgl_port_unlock();
 }
 
+static void style_selector(lv_obj_t* selector) {
+    lv_obj_set_style_bg_color(selector, lv_color_hex(UI_COLOR_BG), 0);
+    lv_obj_set_style_border_color(selector, lv_color_hex(UI_COLOR_BORDER), 0);
+    lv_obj_set_style_border_width(selector, 0, 0);
+    lv_obj_set_style_pad_all(selector, 0, 0);
+    lv_obj_set_style_text_font(selector, &lv_font_montserrat_16, LV_PART_ITEMS);
+    lv_obj_set_style_text_color(selector, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(selector, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(selector, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS | LV_STATE_CHECKED);
+}
+
+static void create_chart(lv_obj_t* parent, air_quality_metric_t metric) {
+    s_chart[metric] = lv_chart_create(parent);
+    lv_chart_set_type(s_chart[metric], LV_CHART_TYPE_LINE);
+    lv_chart_set_axis_range(s_chart[metric], LV_CHART_AXIS_PRIMARY_Y, 0, 1);
+    lv_chart_set_div_line_count(s_chart[metric], 5, 7);
+    lv_chart_set_point_count(s_chart[metric], 2);
+    lv_obj_set_style_bg_color(s_chart[metric], lv_color_hex(UI_COLOR_BG), 0);
+    lv_obj_set_style_border_color(s_chart[metric], lv_color_hex(UI_COLOR_BORDER), 0);
+    lv_obj_set_style_border_width(s_chart[metric], 1, 0);
+    lv_obj_set_style_line_color(s_chart[metric], lv_color_hex(UI_COLOR_GRID), LV_PART_MAIN);
+    lv_obj_set_style_line_width(s_chart[metric], 2, LV_PART_ITEMS);
+    lv_obj_set_style_size(s_chart[metric], 0, 0, LV_PART_INDICATOR);
+
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        s_series[metric][source] = lv_chart_add_series(s_chart[metric], lv_color_hex(s_source_color[source]), LV_CHART_AXIS_PRIMARY_Y);
+        if (s_chart_values[metric][source] != NULL) {
+            lv_chart_set_series_ext_y_array(s_chart[metric], s_series[metric][source], s_chart_values[metric][source]);
+        }
+    }
+
+    s_chart_title[metric] = lv_label_create(parent);
+    lv_obj_set_style_text_color(s_chart_title[metric], lv_color_hex(UI_COLOR_TEXT), 0);
+    lv_obj_set_style_text_font(s_chart_title[metric], &lv_font_montserrat_12, 0);
+    lv_label_set_text_fmt(s_chart_title[metric], "%s [%s]", s_metric_name[metric], s_metric_unit[metric]);
+}
+
 static void plot_screen_create(lv_obj_t* parent) {
     lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(parent, lv_color_hex(UI_COLOR_BG), 0);
 
-    s_sensor_selector = lv_buttonmatrix_create(parent);
-    lv_buttonmatrix_set_map(s_sensor_selector, s_sensor_selector_map);
-    lv_buttonmatrix_set_button_ctrl_all(s_sensor_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
-    // lv_buttonmatrix_set_one_checked(s_sensor_selector, true);
-    lv_obj_set_size(s_sensor_selector, 274, 34);
-    lv_obj_align(s_sensor_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 0);
-    lv_obj_set_style_bg_color(s_sensor_selector, lv_color_hex(UI_COLOR_BG), 0);
-    lv_obj_set_style_border_color(s_sensor_selector, lv_color_hex(UI_COLOR_BORDER), 0);
-    lv_obj_set_style_border_width(s_sensor_selector, 0, 0);
-    lv_obj_set_style_pad_all(s_sensor_selector, 0, 0);
-    lv_obj_set_style_text_font(s_sensor_selector, &lv_font_montserrat_16, LV_PART_ITEMS);
-    lv_obj_set_style_text_color(s_sensor_selector, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(s_sensor_selector, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(s_sensor_selector, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_set_style_text_color(s_sensor_selector, lv_color_hex(UI_COLOR_TEXT), LV_PART_ITEMS | LV_STATE_CHECKED);
-    lv_obj_add_event_cb(s_sensor_selector, sensor_selector_cb, LV_EVENT_VALUE_CHANGED, NULL);
-    lv_obj_add_event_cb(s_sensor_selector, force_text_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
-    lv_obj_add_flag(s_sensor_selector, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    s_metric_selector = lv_buttonmatrix_create(parent);
+    lv_buttonmatrix_set_map(s_metric_selector, s_metric_selector_map);
+    lv_buttonmatrix_set_button_ctrl_all(s_metric_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+    lv_buttonmatrix_set_one_checked(s_metric_selector, true);
+    lv_buttonmatrix_set_button_ctrl(s_metric_selector, PLOT_MODE_TEMPERATURE, LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_obj_set_size(s_metric_selector, CONTROL_WIDTH, CONTROL_HEIGHT);
+    lv_obj_align(s_metric_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, METRIC_SELECTOR_TOP_Y);
+    style_selector(s_metric_selector);
+    lv_obj_add_event_cb(s_metric_selector, metric_selector_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(s_metric_selector, force_text_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    lv_obj_add_flag(s_metric_selector, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 
-    s_lbl_sensor = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_lbl_sensor, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_text_font(s_lbl_sensor, &lv_font_montserrat_16, 0);
-    lv_obj_align(s_lbl_sensor, LV_ALIGN_TOP_RIGHT, -12, 18);
+    s_source_selector = lv_buttonmatrix_create(parent);
+    lv_buttonmatrix_set_map(s_source_selector, s_source_selector_map);
+    lv_buttonmatrix_set_button_ctrl_all(s_source_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
+    lv_buttonmatrix_set_one_checked(s_source_selector, false);
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        lv_buttonmatrix_set_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
+    }
+    lv_obj_set_size(s_source_selector, CONTROL_WIDTH, CONTROL_HEIGHT);
+    lv_obj_align(s_source_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, SOURCE_SELECTOR_TOP_Y);
+    style_selector(s_source_selector);
+    lv_obj_add_event_cb(s_source_selector, source_selector_cb, LV_EVENT_VALUE_CHANGED, NULL);
+    lv_obj_add_event_cb(s_source_selector, source_text_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    lv_obj_add_flag(s_source_selector, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 
-    s_chart = lv_chart_create(parent);
-    lv_obj_set_size(s_chart, PLOT_WIDTH, PLOT_HEIGHT);
-    lv_obj_align(s_chart, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, PLOT_TOP_Y);
-    lv_chart_set_type(s_chart, LV_CHART_TYPE_LINE);
-    lv_chart_set_axis_range(s_chart, LV_CHART_AXIS_PRIMARY_Y, 0, PLOT_SCALE_MAX);
-    lv_chart_set_div_line_count(s_chart, 5, 7);
-    lv_chart_set_point_count(s_chart, 2);
-    lv_obj_set_style_bg_color(s_chart, lv_color_hex(UI_COLOR_BG), 0);
-    lv_obj_set_style_border_color(s_chart, lv_color_hex(UI_COLOR_BORDER), 0);
-    lv_obj_set_style_border_width(s_chart, 1, 0);
-    lv_obj_set_style_line_color(s_chart, lv_color_hex(UI_COLOR_GRID), LV_PART_MAIN);
-    lv_obj_set_style_line_width(s_chart, 2, LV_PART_ITEMS);
-    lv_obj_set_style_size(s_chart, 0, 0, LV_PART_INDICATOR);
-
-    s_ser_co2 = lv_chart_add_series(s_chart, lv_color_hex(UI_COLOR_CO2), LV_CHART_AXIS_PRIMARY_Y);
-    s_ser_temp = lv_chart_add_series(s_chart, lv_color_hex(UI_COLOR_TEMP), LV_CHART_AXIS_PRIMARY_Y);
-    s_ser_rh = lv_chart_add_series(s_chart, lv_color_hex(UI_COLOR_RH), LV_CHART_AXIS_PRIMARY_Y);
-
-    if (plot_buffers_init()) {
-        lv_chart_set_series_ext_y_array(s_chart, s_ser_co2, s_chart_co2);
-        lv_chart_set_series_ext_y_array(s_chart, s_ser_temp, s_chart_temp);
-        lv_chart_set_series_ext_y_array(s_chart, s_ser_rh, s_chart_rh);
+    const bool buffers_ready = plot_buffers_init();
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        create_chart(parent, metric);
+    }
+    if (!buffers_ready) {
+        ESP_LOGE(TAG, "charts created without external data buffers");
     }
 
     s_lbl_x_left = lv_label_create(parent);
     lv_obj_set_style_text_color(s_lbl_x_left, lv_color_hex(UI_COLOR_TEXT), 0);
     lv_obj_set_style_text_font(s_lbl_x_left, &lv_font_montserrat_12, 0);
     lv_label_set_text(s_lbl_x_left, "--:--");
-    lv_obj_align_to(s_lbl_x_left, s_chart, LV_ALIGN_OUT_BOTTOM_LEFT, 0, 4);
 
     s_lbl_x_right = lv_label_create(parent);
     lv_obj_set_style_text_color(s_lbl_x_right, lv_color_hex(UI_COLOR_TEXT), 0);
@@ -589,44 +612,43 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_obj_set_width(s_lbl_x_right, 120);
     lv_obj_set_style_text_align(s_lbl_x_right, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(s_lbl_x_right, "--:--:--");
-    lv_obj_align_to(s_lbl_x_right, s_chart, LV_ALIGN_OUT_BOTTOM_RIGHT, 0, 4);
+
+    chart_layout();
 }
 
 static void table_screen_create(lv_obj_t* parent) {
     lv_obj_remove_flag(parent, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_bg_color(parent, lv_color_hex(UI_COLOR_BG), 0);
 
-    s_stats_table = lv_table_create(parent);
-    lv_obj_set_size(s_stats_table, STATS_TABLE_WIDTH, STATS_TABLE_HEIGHT);
-    lv_obj_align(s_stats_table, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 0);
-    lv_obj_remove_flag(s_stats_table, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_text_font(s_stats_table, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(s_stats_table, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_bg_color(s_stats_table, lv_color_hex(UI_COLOR_BG), 0);
-    lv_obj_set_style_bg_opa(s_stats_table, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_stats_table, lv_color_hex(UI_COLOR_BORDER), 0);
-    lv_obj_set_style_border_width(s_stats_table, 1, 0);
-    lv_obj_set_style_pad_all(s_stats_table, 0, 0);
-    lv_obj_set_style_pad_top(s_stats_table, 0, LV_PART_ITEMS);
-    lv_obj_set_style_pad_bottom(s_stats_table, 0, LV_PART_ITEMS);
-    lv_obj_set_style_pad_left(s_stats_table, 2, LV_PART_ITEMS);
-    lv_obj_set_style_pad_right(s_stats_table, 2, LV_PART_ITEMS);
-    lv_obj_set_style_bg_color(s_stats_table, lv_color_hex(UI_COLOR_BG), LV_PART_ITEMS);
-    lv_obj_set_style_border_color(s_stats_table, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
-    lv_table_set_column_count(s_stats_table, 5);
-    lv_table_set_row_count(s_stats_table, 4);
-    lv_table_set_column_width(s_stats_table, 0, STATS_COL_PROPERTY_WIDTH);
-    lv_table_set_column_width(s_stats_table, 1, STATS_COL_PROPERTY_WIDTH);
-    lv_table_set_column_width(s_stats_table, 2, STATS_COL_VALUE_WIDTH);
-    lv_table_set_column_width(s_stats_table, 3, STATS_COL_VALUE_WIDTH);
-    lv_table_set_column_width(s_stats_table, 4, STATS_COL_VALUE_WIDTH);
-    lv_table_set_cell_value(s_stats_table, 0, 0, "");
-    lv_table_set_cell_value(s_stats_table, 0, 1, "");
-    lv_table_set_cell_value(s_stats_table, 0, 2, "Latest");
-    lv_table_set_cell_value(s_stats_table, 0, 3, "Min");
-    lv_table_set_cell_value(s_stats_table, 0, 4, "Max");
-    lv_obj_add_event_cb(s_stats_table, stats_table_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
-    lv_obj_add_flag(s_stats_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+    s_comparison_table = lv_table_create(parent);
+    lv_obj_set_size(s_comparison_table, TABLE_WIDTH, LV_SIZE_CONTENT);
+    lv_obj_align(s_comparison_table, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 0);
+    lv_obj_remove_flag(s_comparison_table, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_text_font(s_comparison_table, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_comparison_table, lv_color_hex(UI_COLOR_TEXT), 0);
+    lv_obj_set_style_bg_color(s_comparison_table, lv_color_hex(UI_COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(s_comparison_table, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(s_comparison_table, lv_color_hex(UI_COLOR_BORDER), 0);
+    lv_obj_set_style_border_width(s_comparison_table, 1, 0);
+    lv_obj_set_style_pad_all(s_comparison_table, 0, 0);
+    lv_obj_set_style_pad_left(s_comparison_table, 2, LV_PART_ITEMS);
+    lv_obj_set_style_pad_right(s_comparison_table, 2, LV_PART_ITEMS);
+    lv_obj_set_style_bg_color(s_comparison_table, lv_color_hex(UI_COLOR_BG), LV_PART_ITEMS);
+    lv_obj_set_style_border_color(s_comparison_table, lv_color_hex(UI_COLOR_GRID), LV_PART_ITEMS);
+    lv_table_set_column_count(s_comparison_table, 5);
+    lv_table_set_row_count(s_comparison_table, AIR_QUALITY_SOURCE_COUNT + 1U);
+    lv_table_set_column_width(s_comparison_table, 0, TABLE_COL_SOURCE_WIDTH);
+    lv_table_set_column_width(s_comparison_table, 1, TABLE_COL_VALUE_WIDTH);
+    lv_table_set_column_width(s_comparison_table, 2, TABLE_COL_VALUE_WIDTH);
+    lv_table_set_column_width(s_comparison_table, 3, TABLE_COL_VALUE_WIDTH);
+    lv_table_set_column_width(s_comparison_table, 4, TABLE_COL_STATUS_WIDTH);
+    lv_table_set_cell_value(s_comparison_table, 0, 0, "Source");
+    lv_table_set_cell_value(s_comparison_table, 0, 1, "CO2");
+    lv_table_set_cell_value(s_comparison_table, 0, 2, "T");
+    lv_table_set_cell_value(s_comparison_table, 0, 3, "RH");
+    lv_table_set_cell_value(s_comparison_table, 0, 4, "Status");
+    lv_obj_add_event_cb(s_comparison_table, table_text_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
+    lv_obj_add_flag(s_comparison_table, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
 }
 
 void ui_init(lv_display_t* disp) {
@@ -652,8 +674,8 @@ void ui_init(lv_display_t* disp) {
     table_screen_create(table_tab);
     lv_tabview_set_active(s_tabview, 0, LV_ANIM_OFF);
 
-    air_quality_data_t d = air_quality_get_latest();
-    s_selected_sensor = default_sensor_for_data(&d);
+    air_quality_snapshot_t snapshot = air_quality_get_latest();
+    comparison_table_update(&snapshot);
     chart_redraw();
 
     s_ui_timer = lv_timer_create(ui_timer_cb, 1000, NULL);

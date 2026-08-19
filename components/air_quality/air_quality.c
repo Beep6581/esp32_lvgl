@@ -27,7 +27,7 @@ typedef enum {
 
 static TaskHandle_t s_task = NULL;
 static SemaphoreHandle_t s_lock = NULL;
-static air_quality_data_t s_latest = {0};
+static air_quality_snapshot_t s_latest = {0};
 
 static sensor_sm_t s_scd41_sm = SENSOR_SM_PROBE;
 static sensor_sm_t s_sht20_sm = SENSOR_SM_PROBE;
@@ -36,7 +36,7 @@ static uint32_t s_scd41_ready_fail_count = 0;
 static uint32_t s_scd41_read_fail_count = 0;
 static uint32_t s_scd41_last_sample_ms = 0;
 
-static void set_latest(const air_quality_data_t* d) {
+static void set_latest(const air_quality_snapshot_t* d) {
     if (d == NULL) {
         return;
     }
@@ -49,12 +49,32 @@ static void set_latest(const air_quality_data_t* d) {
     }
 }
 
-static air_quality_data_t get_latest_no_lock(void) {
+static air_quality_snapshot_t get_latest_no_lock(void) {
     return s_latest;
 }
 
+static void init_snapshot(air_quality_snapshot_t* d) {
+    if (d == NULL) {
+        return;
+    }
+
+    *d = (air_quality_snapshot_t){0};
+
+    air_quality_source_data_t* scd41 = &d->source[AIR_QUALITY_SOURCE_SCD41];
+    scd41->configured = true;
+    scd41->metric[AIR_QUALITY_METRIC_TEMPERATURE].supported = true;
+    scd41->metric[AIR_QUALITY_METRIC_HUMIDITY].supported = true;
+    scd41->metric[AIR_QUALITY_METRIC_CO2].supported = true;
+
+    air_quality_source_data_t* sht20 = &d->source[AIR_QUALITY_SOURCE_SHT20];
+    sht20->configured = true;
+    sht20->metric[AIR_QUALITY_METRIC_TEMPERATURE].supported = true;
+    sht20->metric[AIR_QUALITY_METRIC_HUMIDITY].supported = true;
+}
+
 static void clear_latest(void) {
-    air_quality_data_t d = {0};
+    air_quality_snapshot_t d;
+    init_snapshot(&d);
     set_latest(&d);
 }
 
@@ -62,35 +82,39 @@ static bool i2c_addr_present(uint8_t addr_7bit) {
     return (i2c_bus_probe(addr_7bit, 50) == ESP_OK);
 }
 
-static void reset_scd41(air_quality_data_t* d) {
+static void reset_scd41(air_quality_snapshot_t* d) {
     s_scd41_sm = SENSOR_SM_PROBE;
     s_scd41_ready_fail_count = 0;
     s_scd41_read_fail_count = 0;
     s_scd41_last_sample_ms = 0;
     if (d) {
-        d->scd41_detected = false;
-        d->scd41_asc_enabled = false;
-        d->scd41_has_co2 = false;
-        d->scd41_has_rht = false;
-        d->scd41_last_ms = 0;
+        air_quality_source_data_t* source = &d->source[AIR_QUALITY_SOURCE_SCD41];
+        source->online = false;
+        source->last_update_ms = 0;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+        source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
     }
 }
 
-static void reset_sht20(air_quality_data_t* d) {
+static void reset_sht20(air_quality_snapshot_t* d) {
     s_sht20_sm = SENSOR_SM_PROBE;
     if (d) {
-        d->sht20_detected = false;
-        d->sht20_has_rht = false;
-        d->sht20_last_ms = 0;
+        air_quality_source_data_t* source = &d->source[AIR_QUALITY_SOURCE_SHT20];
+        source->online = false;
+        source->last_update_ms = 0;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
     }
 }
 
-static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
+static void run_scd41_sm(air_quality_snapshot_t* d, bool present, uint32_t now_ms) {
     if (d == NULL) {
         return;
     }
 
-    d->scd41_detected = present;
+    air_quality_source_data_t* source = &d->source[AIR_QUALITY_SOURCE_SCD41];
+    source->online = present;
     if (!present) {
         reset_scd41(d);
         return;
@@ -126,14 +150,6 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
             ESP_LOGW(TAG, "SCD41 enable ASC failed (%s)", esp_err_to_name(asc_set_err));
         }
 
-        bool asc_enabled = false;
-        const esp_err_t asc_get_err = scd4x_esp_get_asc_enabled(&asc_enabled);
-        if (asc_get_err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 get ASC failed (%s)", esp_err_to_name(asc_get_err));
-            asc_enabled = false;
-        }
-        d->scd41_asc_enabled = asc_enabled;
-
         const esp_err_t err = scd4x_esp_start_periodic();
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "SCD41 start periodic failed (%s)", esp_err_to_name(err));
@@ -163,9 +179,10 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
 
             s_scd41_ready_fail_count = 0;
             s_scd41_sm = SENSOR_SM_IDENTIFY;
-            d->scd41_has_co2 = false;
-            d->scd41_has_rht = false;
-            d->scd41_last_ms = 0;
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+            source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
+            source->last_update_ms = 0;
             break;
         }
 
@@ -192,18 +209,20 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
 
             s_scd41_read_fail_count = 0;
             s_scd41_sm = SENSOR_SM_IDENTIFY;
-            d->scd41_has_co2 = false;
-            d->scd41_has_rht = false;
-            d->scd41_last_ms = 0;
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+            source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
+            source->last_update_ms = 0;
             break;
         }
 
-        d->scd41_has_co2 = true;
-        d->scd41_has_rht = true;
-        d->scd41_co2_ppm = s.co2_ppm;
-        d->scd41_temperature_m_deg_c = s.temperature_m_deg_c;
-        d->scd41_humidity_m_percent_rh = s.humidity_m_percent_rh;
-        d->scd41_last_ms = now_ms;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = true;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = s.temperature_m_deg_c;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = true;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
+        source->metric[AIR_QUALITY_METRIC_CO2].valid = true;
+        source->metric[AIR_QUALITY_METRIC_CO2].value = s.co2_ppm;
+        source->last_update_ms = now_ms;
 
         s_scd41_ready_fail_count = 0;
         s_scd41_read_fail_count = 0;
@@ -219,12 +238,13 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
     }
 }
 
-static void run_sht20_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
+static void run_sht20_sm(air_quality_snapshot_t* d, bool present, uint32_t now_ms) {
     if (d == NULL) {
         return;
     }
 
-    d->sht20_detected = present;
+    air_quality_source_data_t* source = &d->source[AIR_QUALITY_SOURCE_SHT20];
+    source->online = present;
     if (!present) {
         reset_sht20(d);
         return;
@@ -262,16 +282,18 @@ static void run_sht20_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
         const esp_err_t err = sht20_read_rht(&s);
         if (err != ESP_OK) {
             ESP_LOGW(TAG, "SHT20 read failed (%s)", esp_err_to_name(err));
-            d->sht20_has_rht = false;
-            d->sht20_last_ms = 0;
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+            source->last_update_ms = 0;
             s_sht20_sm = SENSOR_SM_IDENTIFY;
             break;
         }
 
-        d->sht20_has_rht = s.has_rht;
-        d->sht20_temperature_m_deg_c = s.temperature_m_deg_c;
-        d->sht20_humidity_m_percent_rh = s.humidity_m_percent_rh;
-        d->sht20_last_ms = now_ms;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = s.has_rht;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = s.temperature_m_deg_c;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = s.has_rht;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
+        source->last_update_ms = now_ms;
         break;
     }
 
@@ -300,8 +322,9 @@ static void air_quality_task(void* arg) {
     ESP_LOGI(TAG, "Sensors present: SCD41=%d SHT20=%d", scd41_present ? 1 : 0, sht20_present ? 1 : 0);
 
     for (;;) {
-        air_quality_data_t d = get_latest_no_lock();
+        air_quality_snapshot_t d = get_latest_no_lock();
         const uint32_t now_ms = (uint32_t)esp_log_timestamp();
+        d.timestamp_ms = now_ms;
 
         run_scd41_sm(&d, scd41_present, now_ms);
         run_sht20_sm(&d, sht20_present, now_ms);
@@ -327,8 +350,8 @@ esp_err_t air_quality_start(void) {
     return (ok == pdPASS) ? ESP_OK : ESP_FAIL;
 }
 
-air_quality_data_t air_quality_get_latest(void) {
-    air_quality_data_t d = {0};
+air_quality_snapshot_t air_quality_get_latest(void) {
+    air_quality_snapshot_t d = {0};
 
     if (s_lock) {
         xSemaphoreTake(s_lock, portMAX_DELAY);

@@ -9,30 +9,42 @@
 extern "C" {
 #endif
 
-typedef struct {
-    // SCD41 (SCD4x family) at 0x62
-    bool scd41_detected;
-    bool scd41_asc_enabled;
-    bool scd41_has_co2;
-    bool scd41_has_rht;
-    uint16_t scd41_co2_ppm;
-    int32_t scd41_temperature_m_deg_c;      // milli-degrees Celsius
-    int32_t scd41_humidity_m_percent_rh;    // milli-%RH
-    uint32_t scd41_last_ms;
+typedef enum {
+    AIR_QUALITY_SOURCE_SCD41 = 0,
+    AIR_QUALITY_SOURCE_SHT20,
+    AIR_QUALITY_SOURCE_COUNT,
+} air_quality_source_t;
 
-    // SHT20 at 0x40 (temperature + humidity only)
-    bool sht20_detected;
-    bool sht20_has_rht;
-    int32_t sht20_temperature_m_deg_c;      // milli-degrees Celsius
-    int32_t sht20_humidity_m_percent_rh;    // milli-%RH
-    uint32_t sht20_last_ms;
-} air_quality_data_t;
+typedef enum {
+    AIR_QUALITY_METRIC_TEMPERATURE = 0,
+    AIR_QUALITY_METRIC_HUMIDITY,
+    AIR_QUALITY_METRIC_CO2,
+    AIR_QUALITY_METRIC_COUNT,
+} air_quality_metric_t;
+
+typedef struct {
+    bool supported;
+    bool valid;
+    int32_t value; // Temperature and RH use milli-units; CO2 uses ppm.
+} air_quality_metric_data_t;
+
+typedef struct {
+    bool configured;
+    bool online;
+    uint32_t last_update_ms;
+    air_quality_metric_data_t metric[AIR_QUALITY_METRIC_COUNT];
+} air_quality_source_data_t;
+
+typedef struct {
+    uint32_t timestamp_ms;
+    air_quality_source_data_t source[AIR_QUALITY_SOURCE_COUNT];
+} air_quality_snapshot_t;
 
 /** Start the air quality sampling task. */
 esp_err_t air_quality_start(void);
 
 /** Get latest cached values (thread-safe copy). */
-air_quality_data_t air_quality_get_latest(void);
+air_quality_snapshot_t air_quality_get_latest(void);
 
 #ifdef __cplusplus
 }
