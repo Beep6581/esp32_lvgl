@@ -5,7 +5,6 @@
 #include "i2c_bus.h"
 #include "scd4x.h"
 #include "sht20.h"
-#include "stcc4.h"
 
 #include "esp_log.h"
 
@@ -16,7 +15,6 @@
 static const char* TAG = "air_quality";
 
 #define SCD41_ADDR 0x62
-#define STCC4_ADDR 0x64
 #define SHT20_ADDR 0x40
 
 typedef enum {
@@ -32,9 +30,7 @@ static SemaphoreHandle_t s_lock = NULL;
 static air_quality_data_t s_latest = {0};
 
 static sensor_sm_t s_scd41_sm = SENSOR_SM_PROBE;
-static sensor_sm_t s_stcc4_sm = SENSOR_SM_PROBE;
 static sensor_sm_t s_sht20_sm = SENSOR_SM_PROBE;
-static uint32_t s_stcc4_wait_deadline_ms = 0;
 
 static uint32_t s_scd41_ready_fail_count = 0;
 static uint32_t s_scd41_read_fail_count = 0;
@@ -77,17 +73,6 @@ static void reset_scd41(air_quality_data_t* d) {
         d->scd41_has_co2 = false;
         d->scd41_has_rht = false;
         d->scd41_last_ms = 0;
-    }
-}
-
-static void reset_stcc4(air_quality_data_t* d) {
-    s_stcc4_sm = SENSOR_SM_PROBE;
-    s_stcc4_wait_deadline_ms = 0;
-    if (d) {
-        d->stcc4_detected = false;
-        d->stcc4_has_co2 = false;
-        d->stcc4_has_rht = false;
-        d->stcc4_last_ms = 0;
     }
 }
 
@@ -234,106 +219,6 @@ static void run_scd41_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
     }
 }
 
-static void run_stcc4_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
-    if (d == NULL) {
-        return;
-    }
-
-    d->stcc4_detected = present;
-    if (!present) {
-        reset_stcc4(d);
-        return;
-    }
-
-    switch (s_stcc4_sm) {
-    case SENSOR_SM_PROBE:
-        s_stcc4_sm = SENSOR_SM_IDENTIFY;
-        break;
-
-    case SENSOR_SM_IDENTIFY: {
-        const esp_err_t init_err = stcc4_init(STCC4_ADDR);
-        if (init_err != ESP_OK) {
-            ESP_LOGW(TAG, "STCC4 init failed (%s)", esp_err_to_name(init_err));
-            break;
-        }
-
-        stcc4_identity_t id = {0};
-        const esp_err_t id_err = stcc4_get_identity(&id);
-        if (id_err == ESP_OK) {
-            ESP_LOGI(TAG, "STCC4 detected at 0x%02X product_id=%08lX serial=%04X-%04X-%04X-%04X", (unsigned)STCC4_ADDR, (unsigned long)id.product_id, (unsigned)id.serial_words[0],
-                     (unsigned)id.serial_words[1], (unsigned)id.serial_words[2], (unsigned)id.serial_words[3]);
-            s_stcc4_sm = SENSOR_SM_START;
-            break;
-        }
-
-        ESP_LOGW(TAG, "STCC4 get_product_id failed (%s), trying stop+retry", esp_err_to_name(id_err));
-        const esp_err_t stop_err = stcc4_stop_continuous_measurement();
-        if (stop_err != ESP_OK) {
-            ESP_LOGW(TAG, "STCC4 stop continuous failed (%s)", esp_err_to_name(stop_err));
-        }
-        s_stcc4_sm = SENSOR_SM_IDENTIFY;
-        break;
-    }
-
-    case SENSOR_SM_START: {
-        const esp_err_t err = stcc4_start_continuous_measurement();
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "STCC4 start continuous failed (%s), trying stop+retry", esp_err_to_name(err));
-            const esp_err_t stop_err = stcc4_stop_continuous_measurement();
-            if (stop_err != ESP_OK) {
-                ESP_LOGW(TAG, "STCC4 stop continuous failed (%s)", esp_err_to_name(stop_err));
-            }
-            s_stcc4_sm = SENSOR_SM_IDENTIFY;
-            break;
-        }
-
-        s_stcc4_wait_deadline_ms = now_ms + 1000;
-        s_stcc4_sm = SENSOR_SM_WAIT_FIRST;
-        break;
-    }
-
-    case SENSOR_SM_WAIT_FIRST:
-        if (now_ms >= s_stcc4_wait_deadline_ms) {
-            ESP_LOGI(TAG, "Initialized STCC4 at 0x%02X", (unsigned)STCC4_ADDR);
-            s_stcc4_sm = SENSOR_SM_RUN;
-        }
-        break;
-
-    case SENSOR_SM_RUN: {
-        stcc4_sample_t s = {0};
-        const esp_err_t err = stcc4_read_measurement(&s);
-        if (err == ESP_OK) {
-            d->stcc4_has_co2 = s.has_co2;
-            d->stcc4_has_rht = s.has_rht;
-            if (s.has_co2) {
-                d->stcc4_co2_ppm = (uint16_t)s.co2_ppm;
-            }
-            if (s.has_rht) {
-                d->stcc4_temperature_m_deg_c = s.temperature_m_deg_c;
-                d->stcc4_humidity_m_percent_rh = s.humidity_m_percent_rh;
-            }
-            d->stcc4_last_ms = now_ms;
-            break;
-        }
-
-        if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_TIMEOUT || err == ESP_ERR_INVALID_STATE) {
-            break;
-        }
-
-        ESP_LOGW(TAG, "STCC4 read failed (%s), re-identifying", esp_err_to_name(err));
-        d->stcc4_has_co2 = false;
-        d->stcc4_has_rht = false;
-        d->stcc4_last_ms = 0;
-        s_stcc4_sm = SENSOR_SM_IDENTIFY;
-        break;
-    }
-
-    default:
-        s_stcc4_sm = SENSOR_SM_IDENTIFY;
-        break;
-    }
-}
-
 static void run_sht20_sm(air_quality_data_t* d, bool present, uint32_t now_ms) {
     if (d == NULL) {
         return;
@@ -410,17 +295,15 @@ static void air_quality_task(void* arg) {
     clear_latest();
 
     const bool scd41_present = i2c_addr_present(SCD41_ADDR);
-    const bool stcc4_present = i2c_addr_present(STCC4_ADDR);
     const bool sht20_present = i2c_addr_present(SHT20_ADDR);
 
-    ESP_LOGI(TAG, "Sensors present: SCD41=%d STCC4=%d SHT20=%d", scd41_present ? 1 : 0, stcc4_present ? 1 : 0, sht20_present ? 1 : 0);
+    ESP_LOGI(TAG, "Sensors present: SCD41=%d SHT20=%d", scd41_present ? 1 : 0, sht20_present ? 1 : 0);
 
     for (;;) {
         air_quality_data_t d = get_latest_no_lock();
         const uint32_t now_ms = (uint32_t)esp_log_timestamp();
 
         run_scd41_sm(&d, scd41_present, now_ms);
-        run_stcc4_sm(&d, stcc4_present, now_ms);
         run_sht20_sm(&d, sht20_present, now_ms);
 
         set_latest(&d);

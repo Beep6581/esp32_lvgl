@@ -43,7 +43,6 @@ static const char* TAG = "ui";
 
 typedef enum {
     SENSOR_SCD41 = 0,
-    SENSOR_STCC4,
     SENSOR_SHT20,
     SENSOR_COUNT,
 } sensor_id_t;
@@ -88,7 +87,7 @@ static sensor_id_t s_selected_sensor = SENSOR_SCD41;
 static bool s_user_selected_sensor;
 static uint32_t s_last_sample_ms;
 
-static const char* const s_sensor_selector_map[] = {"SCD41", "STCC4", "SHT20", ""};
+static const char* const s_sensor_selector_map[] = {"SCD41", "SHT20", ""};
 
 static uint16_t clamp_touch_coord(uint16_t val, uint16_t max_size) {
     if (max_size == 0) {
@@ -159,8 +158,6 @@ static const char* sensor_name(sensor_id_t sensor) {
     switch (sensor) {
     case SENSOR_SCD41:
         return "SCD41";
-    case SENSOR_STCC4:
-        return "STCC4";
     case SENSOR_SHT20:
         return "SHT20";
     default:
@@ -183,14 +180,6 @@ static sensor_history_sample_t sample_for_sensor(const air_quality_data_t* d, se
         s.temperature_m_deg_c = d->scd41_temperature_m_deg_c;
         s.humidity_m_percent_rh = d->scd41_humidity_m_percent_rh;
         break;
-    case SENSOR_STCC4:
-        s.detected = d->stcc4_detected;
-        s.has_co2 = d->stcc4_has_co2;
-        s.has_rht = d->stcc4_has_rht;
-        s.co2_ppm = d->stcc4_co2_ppm;
-        s.temperature_m_deg_c = d->stcc4_temperature_m_deg_c;
-        s.humidity_m_percent_rh = d->stcc4_humidity_m_percent_rh;
-        break;
     case SENSOR_SHT20:
         s.detected = d->sht20_detected;
         s.has_co2 = false;
@@ -208,9 +197,6 @@ static sensor_id_t default_sensor_for_data(const air_quality_data_t* d) {
     if (d != NULL) {
         if (d->scd41_detected) {
             return SENSOR_SCD41;
-        }
-        if (d->stcc4_detected) {
-            return SENSOR_STCC4;
         }
         if (d->sht20_detected) {
             return SENSOR_SHT20;
@@ -275,13 +261,9 @@ static void table_update(const air_quality_data_t* d) {
     table_set_u16(1, 2, d->scd41_detected && d->scd41_has_co2, d->scd41_co2_ppm);
     table_set_rht(1, 3, 4, d->scd41_detected && d->scd41_has_rht, d->scd41_temperature_m_deg_c, d->scd41_humidity_m_percent_rh);
 
-    table_set_str(2, 1, d->stcc4_detected ? "yes" : "no");
-    table_set_u16(2, 2, d->stcc4_detected && d->stcc4_has_co2, d->stcc4_co2_ppm);
-    table_set_rht(2, 3, 4, d->stcc4_detected && d->stcc4_has_rht, d->stcc4_temperature_m_deg_c, d->stcc4_humidity_m_percent_rh);
-
-    table_set_str(3, 1, d->sht20_detected ? "yes" : "no");
-    table_set_str(3, 2, "--");
-    table_set_rht(3, 3, 4, d->sht20_detected && d->sht20_has_rht, d->sht20_temperature_m_deg_c, d->sht20_humidity_m_percent_rh);
+    table_set_str(2, 1, d->sht20_detected ? "yes" : "no");
+    table_set_str(2, 2, "--");
+    table_set_rht(2, 3, 4, d->sht20_detected && d->sht20_has_rht, d->sht20_temperature_m_deg_c, d->sht20_humidity_m_percent_rh);
 }
 
 static bool plot_buffers_init(void) {
@@ -714,7 +696,7 @@ static void table_screen_create(lv_obj_t* parent) {
     lv_obj_align(s_table, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, 40);
 
     lv_table_set_column_count(s_table, 5);
-    lv_table_set_row_count(s_table, 4);
+    lv_table_set_row_count(s_table, 3);
     lv_table_set_column_width(s_table, 0, 90);
     lv_table_set_column_width(s_table, 1, 110);
     lv_table_set_column_width(s_table, 2, 90);
@@ -728,21 +710,16 @@ static void table_screen_create(lv_obj_t* parent) {
     table_set_str(0, 4, "RH");
 
     table_set_str(1, 0, "SCD41");
-    table_set_str(2, 0, "STCC4");
-    table_set_str(3, 0, "SHT20");
+    table_set_str(2, 0, "SHT20");
 
     table_set_str(1, 1, "no");
     table_set_str(2, 1, "no");
-    table_set_str(3, 1, "no");
     table_set_str(1, 2, "...");
-    table_set_str(2, 2, "...");
-    table_set_str(3, 2, "--");
+    table_set_str(2, 2, "--");
     table_set_str(1, 3, "...");
     table_set_str(1, 4, "...");
     table_set_str(2, 3, "...");
     table_set_str(2, 4, "...");
-    table_set_str(3, 3, "...");
-    table_set_str(3, 4, "...");
 }
 
 void ui_init(lv_display_t* disp) {
