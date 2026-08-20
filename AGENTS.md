@@ -12,7 +12,7 @@ The code should stay easy for a human to read and learn C from. Prefer the small
 - C only. Do not introduce C++.
 - ESP-IDF target: v6.0 for now.
 - LVGL target: v9.5 for now.
-- esp_lvgl_port: 2.7.2.
+- esp_lvgl_port: 2.9.0.
 - esp_lcd_gc9503: 3.0.1.
 - ESP32-S3 target.
 - Keep the ESP-IDF component-style project structure.
