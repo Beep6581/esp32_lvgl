@@ -66,6 +66,7 @@ static lv_obj_t* s_crosshair;
 
 static lv_obj_t* s_metric_selector;
 static lv_obj_t* s_source_selector;
+static lv_obj_t* s_source_status_dot[AIR_QUALITY_SOURCE_COUNT];
 static lv_obj_t* s_chart[AIR_QUALITY_METRIC_COUNT];
 static lv_obj_t* s_chart_title[AIR_QUALITY_METRIC_COUNT];
 static lv_chart_series_t* s_series[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
@@ -79,12 +80,22 @@ static uint32_t s_history_next;
 static int32_t* s_chart_values[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
 static bool s_plot_buffers_ready;
 
-static plot_mode_t s_plot_mode = PLOT_MODE_TEMPERATURE;
+static plot_mode_t s_plot_mode = PLOT_MODE_ALL;
 static bool s_source_selected[AIR_QUALITY_SOURCE_COUNT];
+static bool s_source_online[AIR_QUALITY_SOURCE_COUNT];
+static bool s_source_selection_initialized;
 static uint32_t s_last_sample_ms;
 
-static const char* const s_metric_selector_map[] = {"T", "RH", "CO2", "ALL", ""};
+static const char* const s_metric_selector_map[] = {"ALL", "T", "RH", "CO2", ""};
 static const char* const s_source_selector_map[] = {"SCD41", "SHT20", ""};
+
+static const plot_mode_t s_metric_button_mode[PLOT_MODE_COUNT] = {
+    PLOT_MODE_ALL,
+    PLOT_MODE_TEMPERATURE,
+    PLOT_MODE_HUMIDITY,
+    PLOT_MODE_CO2,
+};
+
 static const char* const s_source_name[AIR_QUALITY_SOURCE_COUNT] = {"SCD41", "SHT20"};
 static const char* const s_metric_name[AIR_QUALITY_METRIC_COUNT] = {"T", "RH", "CO2"};
 static const char* const s_metric_unit[AIR_QUALITY_METRIC_COUNT] = {"C", "%", "ppm"};
@@ -320,6 +331,7 @@ static void chart_redraw(void) {
     for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
         value_range_t range = {0};
         bool source_has_data[AIR_QUALITY_SOURCE_COUNT] = {0};
+        uint32_t source_valid_point_count[AIR_QUALITY_SOURCE_COUNT] = {0};
 
         for (uint32_t i = 0; i < s_history_count; i++) {
             const air_quality_snapshot_t* sample = &s_history[history_physical_index(i)];
@@ -328,6 +340,7 @@ static void chart_redraw(void) {
                 if (s_source_selected[source] && value->supported && value->valid) {
                     range_add(&range, value->value);
                     source_has_data[source] = true;
+                    source_valid_point_count[source]++;
                 }
             }
         }
@@ -351,6 +364,18 @@ static void chart_redraw(void) {
 
             lv_chart_hide_series(s_chart[metric], s_series[metric][source], !source_has_data[source]);
         }
+
+        bool show_single_points = false;
+        bool has_line = false;
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            if (source_valid_point_count[source] == 1U) {
+                show_single_points = true;
+            } else if (source_valid_point_count[source] >= 2U) {
+                has_line = true;
+            }
+        }
+        const int32_t point_size = (show_single_points && !has_line) ? 2 : 0;
+        lv_obj_set_style_size(s_chart[metric], point_size, point_size, LV_PART_INDICATOR);
 
         lv_chart_set_point_count(s_chart[metric], point_count);
         lv_chart_set_axis_range(s_chart[metric], LV_CHART_AXIS_PRIMARY_Y, range.min, range.max);
@@ -431,6 +456,46 @@ static void source_text_draw_cb(lv_event_t* e) {
 
     if (base_dsc->id1 < AIR_QUALITY_SOURCE_COUNT) {
         label_dsc->color = lv_color_hex(s_source_color[base_dsc->id1]);
+        if (!s_source_online[base_dsc->id1]) {
+            label_dsc->opa = LV_OPA_40;
+        }
+    }
+}
+
+static void source_selector_update(const air_quality_snapshot_t* snapshot) {
+    if (snapshot == NULL || s_source_selector == NULL) {
+        return;
+    }
+
+    bool state_changed = false;
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        const bool online = snapshot->source[source].configured && snapshot->source[source].online;
+        if (s_source_online[source] != online) {
+            s_source_online[source] = online;
+            state_changed = true;
+            lv_obj_t* dot = s_source_status_dot[source];
+            if (dot != NULL) {
+                lv_obj_set_style_bg_opa(dot, online ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+                lv_obj_set_style_border_width(dot, online ? 0 : 1, 0);
+            }
+        }
+    }
+
+    if (!s_source_selection_initialized && snapshot->timestamp_ms != 0U) {
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            s_source_selected[source] = s_source_online[source];
+            if (s_source_selected[source]) {
+                lv_buttonmatrix_set_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
+            } else {
+                lv_buttonmatrix_clear_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
+            }
+        }
+        s_source_selection_initialized = true;
+        state_changed = true;
+    }
+
+    if (state_changed) {
+        lv_obj_invalidate(s_source_selector);
     }
 }
 
@@ -456,7 +521,7 @@ static void metric_selector_cb(lv_event_t* e) {
         return;
     }
 
-    s_plot_mode = (plot_mode_t)selected;
+    s_plot_mode = s_metric_button_mode[selected];
     chart_redraw();
 }
 
@@ -475,6 +540,7 @@ static void ui_timer_cb(lv_timer_t* t) {
     (void)t;
 
     air_quality_snapshot_t snapshot = air_quality_get_latest();
+    source_selector_update(&snapshot);
     comparison_table_update(&snapshot);
 
     const uint32_t now_ms = (uint32_t)esp_log_timestamp();
@@ -571,7 +637,7 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_buttonmatrix_set_map(s_metric_selector, s_metric_selector_map);
     lv_buttonmatrix_set_button_ctrl_all(s_metric_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
     lv_buttonmatrix_set_one_checked(s_metric_selector, true);
-    lv_buttonmatrix_set_button_ctrl(s_metric_selector, PLOT_MODE_TEMPERATURE, LV_BUTTONMATRIX_CTRL_CHECKED);
+    lv_buttonmatrix_set_button_ctrl(s_metric_selector, 0, LV_BUTTONMATRIX_CTRL_CHECKED);
     lv_obj_set_size(s_metric_selector, CONTROL_WIDTH, CONTROL_HEIGHT);
     lv_obj_align(s_metric_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, METRIC_SELECTOR_TOP_Y);
     style_selector(s_metric_selector);
@@ -583,16 +649,29 @@ static void plot_screen_create(lv_obj_t* parent) {
     lv_buttonmatrix_set_map(s_source_selector, s_source_selector_map);
     lv_buttonmatrix_set_button_ctrl_all(s_source_selector, LV_BUTTONMATRIX_CTRL_CHECKABLE | LV_BUTTONMATRIX_CTRL_CLICK_TRIG);
     lv_buttonmatrix_set_one_checked(s_source_selector, false);
-    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
-        s_source_selected[source] = true;
-        lv_buttonmatrix_set_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
-    }
     lv_obj_set_size(s_source_selector, CONTROL_WIDTH, CONTROL_HEIGHT);
     lv_obj_align(s_source_selector, LV_ALIGN_TOP_LEFT, UI_MARGIN_X, SOURCE_SELECTOR_TOP_Y);
     style_selector(s_source_selector);
     lv_obj_add_event_cb(s_source_selector, source_selector_cb, LV_EVENT_VALUE_CHANGED, NULL);
     lv_obj_add_event_cb(s_source_selector, source_text_draw_cb, LV_EVENT_DRAW_TASK_ADDED, NULL);
     lv_obj_add_flag(s_source_selector, LV_OBJ_FLAG_SEND_DRAW_TASK_EVENTS);
+
+    const int32_t source_button_width = CONTROL_WIDTH / AIR_QUALITY_SOURCE_COUNT;
+    const int32_t dot_size = 10;
+    const int32_t dot_padding = (CONTROL_HEIGHT - dot_size) / 2;
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        lv_obj_t* dot = lv_obj_create(s_source_selector);
+        s_source_status_dot[source] = dot;
+        lv_obj_set_size(dot, dot_size, dot_size);
+        lv_obj_set_pos(dot, ((int32_t)source + 1) * source_button_width - dot_size - dot_padding, dot_padding);
+        lv_obj_set_style_radius(dot, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(dot, lv_color_hex(s_source_color[source]), 0);
+        lv_obj_set_style_bg_opa(dot, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_color(dot, lv_color_hex(UI_COLOR_BORDER), 0);
+        lv_obj_set_style_border_width(dot, 1, 0);
+        lv_obj_set_style_pad_all(dot, 0, 0);
+        lv_obj_remove_flag(dot, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
 
     const bool buffers_ready = plot_buffers_init();
     for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
@@ -676,6 +755,7 @@ void ui_init(lv_display_t* disp) {
     lv_tabview_set_active(s_tabview, 0, LV_ANIM_OFF);
 
     air_quality_snapshot_t snapshot = air_quality_get_latest();
+    source_selector_update(&snapshot);
     comparison_table_update(&snapshot);
     chart_redraw();
 
