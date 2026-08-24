@@ -224,6 +224,12 @@ static void run_scd41_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
         source->metric[AIR_QUALITY_METRIC_CO2].value = s.co2_ppm;
         source->last_update_ms = now_ms;
 
+        ESP_LOGI(TAG,
+                 "SCD41 measurement T_mC=%ld RH_mpercent=%ld CO2_ppm=%u",
+                 (long)s.temperature_m_deg_c,
+                 (long)s.humidity_m_percent_rh,
+                 (unsigned)s.co2_ppm);
+
         s_scd41_ready_fail_count = 0;
         s_scd41_read_fail_count = 0;
         s_scd41_last_sample_ms = now_ms;
@@ -294,6 +300,11 @@ static void run_sht20_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
         source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = s.has_rht;
         source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
         source->last_update_ms = now_ms;
+
+        ESP_LOGI(TAG,
+                 "SHT20 measurement T_mC=%ld RH_mpercent=%ld",
+                 (long)s.temperature_m_deg_c,
+                 (long)s.humidity_m_percent_rh);
         break;
     }
 
