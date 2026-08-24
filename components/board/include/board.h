@@ -17,6 +17,11 @@ static inline gpio_num_t board_gpio_from_kconfig(int gpio) {
 #define BOARD_I2C_SDA_GPIO (board_gpio_from_kconfig(CONFIG_BOARD_I2C_SDA))
 #define BOARD_I2C_SCL_GPIO (board_gpio_from_kconfig(CONFIG_BOARD_I2C_SCL))
 
+// RS485 CONN2
+#define BOARD_RS485_CONN2_TX_GPIO GPIO_NUM_9
+#define BOARD_RS485_CONN2_DE_GPIO GPIO_NUM_20
+#define BOARD_RS485_CONN2_RX_GPIO GPIO_NUM_7
+
 // LCD/backlight
 #define BOARD_LCD_BL_GPIO (board_gpio_from_kconfig(CONFIG_BOARD_LCD_BL))
 #define BOARD_LCD_RST_GPIO (board_gpio_from_kconfig(CONFIG_BOARD_LCD_RST))

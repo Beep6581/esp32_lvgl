@@ -3,6 +3,7 @@
 #include "i2c_bus.h"
 #include "touch.h"
 #include "ui.h"
+#include "xy_md0x.h"
 
 #include "esp_log.h"
 
@@ -37,4 +38,13 @@ void app_main(void) {
     ui_init(disp);
 
     ESP_ERROR_CHECK(touch_start());
+
+    xy_md0x_sample_t modbus_sample;
+    ESP_ERROR_CHECK(xy_md0x_init(1));
+    const esp_err_t modbus_err = xy_md0x_read(&modbus_sample);
+    if (modbus_err == ESP_OK) {
+        ESP_LOGI(TAG, "XY-MD0x Modbus response: T_mC=%ld RH_mpercent=%ld", (long)modbus_sample.temperature_m_deg_c, (long)modbus_sample.humidity_m_percent_rh);
+    } else {
+        ESP_LOGW(TAG, "XY-MD0x Modbus read failed (%s)", esp_err_to_name(modbus_err));
+    }
 }

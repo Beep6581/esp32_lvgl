@@ -1,4 +1,5 @@
 *.bin
+tmp
 
 # Auto-generated compile_commands for LSP
 compile_commands.*
