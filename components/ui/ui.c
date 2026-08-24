@@ -36,7 +36,8 @@ static const char* TAG = "ui";
 #define METRIC_SELECTOR_TOP_Y 0
 #define SOURCE_SELECTOR_TOP_Y 38
 #define CHART_TOP_Y 78
-#define CHART_WIDTH 448
+#define CHART_WIDTH 400
+#define CHART_LABEL_WIDTH 48
 #define CHART_SINGLE_HEIGHT 356
 #define CHART_ALL_HEIGHT 112
 #define CHART_ALL_GAP 6
@@ -69,6 +70,9 @@ static lv_obj_t* s_source_selector;
 static lv_obj_t* s_source_status_dot[AIR_QUALITY_SOURCE_COUNT];
 static lv_obj_t* s_chart[AIR_QUALITY_METRIC_COUNT];
 static lv_obj_t* s_chart_title[AIR_QUALITY_METRIC_COUNT];
+static lv_obj_t* s_chart_max_label[AIR_QUALITY_METRIC_COUNT];
+static lv_obj_t* s_chart_min_label[AIR_QUALITY_METRIC_COUNT];
+static lv_obj_t* s_chart_latest_label[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
 static lv_chart_series_t* s_series[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
 static lv_obj_t* s_lbl_x_left;
 static lv_obj_t* s_lbl_x_right;
@@ -294,6 +298,11 @@ static void chart_layout(void) {
         if (!visible) {
             lv_obj_add_flag(s_chart[metric], LV_OBJ_FLAG_HIDDEN);
             lv_obj_add_flag(s_chart_title[metric], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_chart_max_label[metric], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_chart_min_label[metric], LV_OBJ_FLAG_HIDDEN);
+            for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+                lv_obj_add_flag(s_chart_latest_label[metric][source], LV_OBJ_FLAG_HIDDEN);
+            }
             continue;
         }
 
@@ -326,12 +335,15 @@ static void chart_redraw(void) {
         return;
     }
 
+    chart_layout();
+
     const uint32_t point_count = (s_history_count >= 2U) ? s_history_count : 2U;
 
     for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
         value_range_t range = {0};
         bool source_has_data[AIR_QUALITY_SOURCE_COUNT] = {0};
         uint32_t source_valid_point_count[AIR_QUALITY_SOURCE_COUNT] = {0};
+        uint32_t source_latest_point[AIR_QUALITY_SOURCE_COUNT] = {0};
 
         for (uint32_t i = 0; i < s_history_count; i++) {
             const air_quality_snapshot_t* sample = &s_history[history_physical_index(i)];
@@ -341,10 +353,12 @@ static void chart_redraw(void) {
                     range_add(&range, value->value);
                     source_has_data[source] = true;
                     source_valid_point_count[source]++;
+                    source_latest_point[source] = i;
                 }
             }
         }
 
+        const bool range_has_data = range.any;
         range_add_padding(&range, metric);
 
         for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
@@ -380,9 +394,51 @@ static void chart_redraw(void) {
         lv_chart_set_point_count(s_chart[metric], point_count);
         lv_chart_set_axis_range(s_chart[metric], LV_CHART_AXIS_PRIMARY_Y, range.min, range.max);
         lv_chart_refresh(s_chart[metric]);
-    }
 
-    chart_layout();
+        if (range_has_data && metric_is_visible(metric)) {
+            char value[16] = {0};
+            format_metric_value(value, sizeof(value), metric, range.max);
+            lv_label_set_text(s_chart_max_label[metric], value);
+            lv_obj_clear_flag(s_chart_max_label[metric], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_align_to(s_chart_max_label[metric], s_chart[metric], LV_ALIGN_OUT_RIGHT_TOP, 0, 0);
+
+            format_metric_value(value, sizeof(value), metric, range.min);
+            lv_label_set_text(s_chart_min_label[metric], value);
+            lv_obj_clear_flag(s_chart_min_label[metric], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_align_to(s_chart_min_label[metric], s_chart[metric], LV_ALIGN_OUT_RIGHT_BOTTOM, 0, 0);
+        } else {
+            lv_obj_add_flag(s_chart_max_label[metric], LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(s_chart_min_label[metric], LV_OBJ_FLAG_HIDDEN);
+        }
+
+        lv_obj_update_layout(s_chart[metric]);
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            lv_obj_t* label = s_chart_latest_label[metric][source];
+            if (!metric_is_visible(metric) || !source_has_data[source]) {
+                lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+                continue;
+            }
+
+            char value[16] = {0};
+            const uint32_t point_id = source_latest_point[source];
+            format_metric_value(value, sizeof(value), metric, s_chart_values[metric][source][point_id]);
+            lv_label_set_text(label, value);
+            lv_obj_clear_flag(label, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_update_layout(label);
+
+            lv_point_t point;
+            lv_chart_get_point_pos_by_id(s_chart[metric], s_series[metric][source], point_id, &point);
+            int32_t label_y = point.y - lv_obj_get_height(label) / 2;
+            const int32_t max_y = lv_obj_get_height(s_chart[metric]) - lv_obj_get_height(label);
+            if (label_y < 0) {
+                label_y = 0;
+            } else if (label_y > max_y) {
+                label_y = max_y;
+            }
+            lv_obj_align_to(label, s_chart[metric], LV_ALIGN_OUT_RIGHT_TOP, 0, label_y);
+            lv_obj_move_foreground(label);
+        }
+    }
 
     if (s_history_count > 0U) {
         char left[16] = {0};
@@ -603,6 +659,21 @@ static void style_selector(lv_obj_t* selector) {
     lv_obj_set_style_bg_color(selector, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS | LV_STATE_CHECKED);
 }
 
+static lv_obj_t* create_chart_value_label(lv_obj_t* parent, uint32_t color) {
+    lv_obj_t* label = lv_label_create(parent);
+    lv_obj_set_width(label, CHART_LABEL_WIDTH);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, 0);
+    lv_obj_set_style_bg_color(label, lv_color_hex(UI_COLOR_BG), 0);
+    lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_left(label, 1, 0);
+    lv_obj_set_style_pad_right(label, 1, 0);
+    lv_obj_remove_flag(label, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
+    return label;
+}
+
 static void create_chart(lv_obj_t* parent, air_quality_metric_t metric) {
     s_chart[metric] = lv_chart_create(parent);
     lv_chart_set_type(s_chart[metric], LV_CHART_TYPE_LINE);
@@ -621,6 +692,12 @@ static void create_chart(lv_obj_t* parent, air_quality_metric_t metric) {
         if (s_chart_values[metric][source] != NULL) {
             lv_chart_set_series_ext_y_array(s_chart[metric], s_series[metric][source], s_chart_values[metric][source]);
         }
+    }
+
+    s_chart_max_label[metric] = create_chart_value_label(parent, UI_COLOR_TEXT);
+    s_chart_min_label[metric] = create_chart_value_label(parent, UI_COLOR_TEXT);
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        s_chart_latest_label[metric][source] = create_chart_value_label(parent, s_source_color[source]);
     }
 
     s_chart_title[metric] = lv_label_create(parent);
