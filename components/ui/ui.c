@@ -87,6 +87,7 @@ static bool s_plot_buffers_ready;
 static plot_mode_t s_plot_mode = PLOT_MODE_ALL;
 static bool s_source_selected[AIR_QUALITY_SOURCE_COUNT];
 static bool s_source_online[AIR_QUALITY_SOURCE_COUNT];
+static bool s_source_has_plot_data[AIR_QUALITY_SOURCE_COUNT];
 static bool s_source_selection_initialized;
 static uint32_t s_last_sample_ms;
 
@@ -592,6 +593,33 @@ static void source_selector_cb(lv_event_t* e) {
     chart_redraw();
 }
 
+static bool source_has_valid_data(const air_quality_source_data_t* source) {
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        const air_quality_metric_data_t* value = &source->metric[metric];
+        if (value->supported && value->valid) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool snapshot_has_new_source_data(const air_quality_snapshot_t* snapshot) {
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        if (s_source_selected[source] && !s_source_has_plot_data[source] && source_has_valid_data(&snapshot->source[source])) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void remember_sources_with_plot_data(const air_quality_snapshot_t* snapshot) {
+    for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+        if (source_has_valid_data(&snapshot->source[source])) {
+            s_source_has_plot_data[source] = true;
+        }
+    }
+}
+
 static void ui_timer_cb(lv_timer_t* t) {
     (void)t;
 
@@ -600,9 +628,12 @@ static void ui_timer_cb(lv_timer_t* t) {
     comparison_table_update(&snapshot);
 
     const uint32_t now_ms = (uint32_t)esp_log_timestamp();
-    if (s_last_sample_ms == 0U || (now_ms - s_last_sample_ms) >= PLOT_SAMPLE_PERIOD_MS) {
+    const bool first_valid_sample = snapshot_has_new_source_data(&snapshot);
+    const bool periodic_sample = s_history_count > 0U && (now_ms - s_last_sample_ms) >= PLOT_SAMPLE_PERIOD_MS;
+    if (first_valid_sample || periodic_sample) {
         s_last_sample_ms = now_ms;
         history_add_sample(&snapshot, now_ms);
+        remember_sources_with_plot_data(&snapshot);
         chart_redraw();
     }
 }

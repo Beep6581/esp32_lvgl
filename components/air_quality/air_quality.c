@@ -120,127 +120,125 @@ static void run_scd41_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
         return;
     }
 
-    switch (s_scd41_sm) {
-    case SENSOR_SM_PROBE:
-        s_scd41_sm = SENSOR_SM_IDENTIFY;
-        break;
-
-    case SENSOR_SM_IDENTIFY: {
-        const esp_err_t err = scd4x_esp_init(SCD41_ADDR);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 init failed (%s)", esp_err_to_name(err));
-            break;
-        }
-
-        uint16_t serial[3] = {0};
-        const esp_err_t ser_err = scd4x_esp_get_serial(serial);
-        if (ser_err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 get serial failed (%s)", esp_err_to_name(ser_err));
-            break;
-        }
-
-        ESP_LOGI(TAG, "SCD41 detected at 0x%02X serial=%04X-%04X-%04X", (unsigned)SCD41_ADDR, (unsigned)serial[0], (unsigned)serial[1], (unsigned)serial[2]);
-        s_scd41_sm = SENSOR_SM_START;
-        break;
-    }
-
-    case SENSOR_SM_START: {
-        const esp_err_t asc_set_err = scd4x_esp_set_asc_enabled(true);
-        if (asc_set_err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 enable ASC failed (%s)", esp_err_to_name(asc_set_err));
-        }
-
-        const esp_err_t err = scd4x_esp_start_periodic();
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "SCD41 start periodic failed (%s)", esp_err_to_name(err));
+    for (;;) {
+        switch (s_scd41_sm) {
+        case SENSOR_SM_PROBE:
             s_scd41_sm = SENSOR_SM_IDENTIFY;
-            break;
-        }
+            continue;
 
-        ESP_LOGI(TAG, "Initialized SCD41 at 0x%02X", (unsigned)SCD41_ADDR);
-        s_scd41_sm = SENSOR_SM_RUN;
-        break;
-    }
-
-    case SENSOR_SM_RUN: {
-        bool ready = false;
-        const esp_err_t ready_err = scd4x_esp_get_data_ready(&ready);
-        if (ready_err != ESP_OK) {
-            s_scd41_ready_fail_count++;
-            const uint32_t age_ms = (s_scd41_last_sample_ms == 0U) ? 0U : (now_ms - s_scd41_last_sample_ms);
-
-            ESP_LOGW(TAG, "SCD41 get_data_ready failed (%s), consecutive=%lu, last_sample_age_ms=%lu", esp_err_to_name(ready_err), (unsigned long)s_scd41_ready_fail_count, (unsigned long)age_ms);
-
-            if (s_scd41_ready_fail_count < 3U) {
-                break;
+        case SENSOR_SM_IDENTIFY: {
+            const esp_err_t err = scd4x_esp_init(SCD41_ADDR);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "SCD41 init failed (%s)", esp_err_to_name(err));
+                return;
             }
 
-            ESP_LOGW(TAG, "SCD41 restarting after %lu consecutive get_data_ready failures", (unsigned long)s_scd41_ready_fail_count);
+            uint16_t serial[3] = {0};
+            const esp_err_t ser_err = scd4x_esp_get_serial(serial);
+            if (ser_err != ESP_OK) {
+                ESP_LOGW(TAG, "SCD41 get serial failed (%s)", esp_err_to_name(ser_err));
+                return;
+            }
+
+            ESP_LOGI(TAG, "SCD41 detected at 0x%02X serial=%04X-%04X-%04X", (unsigned)SCD41_ADDR, (unsigned)serial[0], (unsigned)serial[1], (unsigned)serial[2]);
+            s_scd41_sm = SENSOR_SM_START;
+            continue;
+        }
+
+        case SENSOR_SM_START: {
+            const esp_err_t asc_set_err = scd4x_esp_set_asc_enabled(true);
+            if (asc_set_err != ESP_OK) {
+                ESP_LOGW(TAG, "SCD41 enable ASC failed (%s)", esp_err_to_name(asc_set_err));
+            }
+
+            const esp_err_t err = scd4x_esp_start_periodic();
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "SCD41 start periodic failed (%s)", esp_err_to_name(err));
+                s_scd41_sm = SENSOR_SM_IDENTIFY;
+                return;
+            }
+
+            ESP_LOGI(TAG, "Initialized SCD41 at 0x%02X", (unsigned)SCD41_ADDR);
+            s_scd41_sm = SENSOR_SM_RUN;
+            continue;
+        }
+
+        case SENSOR_SM_RUN: {
+            bool ready = false;
+            const esp_err_t ready_err = scd4x_esp_get_data_ready(&ready);
+            if (ready_err != ESP_OK) {
+                s_scd41_ready_fail_count++;
+                const uint32_t age_ms = (s_scd41_last_sample_ms == 0U) ? 0U : (now_ms - s_scd41_last_sample_ms);
+
+                ESP_LOGW(TAG, "SCD41 get_data_ready failed (%s), consecutive=%lu, last_sample_age_ms=%lu", esp_err_to_name(ready_err), (unsigned long)s_scd41_ready_fail_count, (unsigned long)age_ms);
+
+                if (s_scd41_ready_fail_count < 3U) {
+                    return;
+                }
+
+                ESP_LOGW(TAG, "SCD41 restarting after %lu consecutive get_data_ready failures", (unsigned long)s_scd41_ready_fail_count);
+
+                s_scd41_ready_fail_count = 0;
+                s_scd41_sm = SENSOR_SM_IDENTIFY;
+                source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+                source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+                source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
+                source->last_update_ms = 0;
+                return;
+            }
 
             s_scd41_ready_fail_count = 0;
-            s_scd41_sm = SENSOR_SM_IDENTIFY;
-            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
-            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
-            source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
-            source->last_update_ms = 0;
-            break;
-        }
 
-        s_scd41_ready_fail_count = 0;
-
-        if (!ready) {
-            if (s_scd41_last_sample_ms != 0U && (now_ms - s_scd41_last_sample_ms) > 15000U) {
-                ESP_LOGW(TAG, "SCD41 not ready for %lu ms", (unsigned long)(now_ms - s_scd41_last_sample_ms));
-            }
-            break;
-        }
-
-        scd4x_sample_t s = {0};
-        const esp_err_t read_err = scd4x_esp_read_measurement(&s);
-        if (read_err != ESP_OK) {
-            s_scd41_read_fail_count++;
-            ESP_LOGW(TAG, "SCD41 read failed (%s), consecutive=%lu", esp_err_to_name(read_err), (unsigned long)s_scd41_read_fail_count);
-
-            if (s_scd41_read_fail_count < 3U) {
-                break;
+            if (!ready) {
+                if (s_scd41_last_sample_ms != 0U && (now_ms - s_scd41_last_sample_ms) > 15000U) {
+                    ESP_LOGW(TAG, "SCD41 not ready for %lu ms", (unsigned long)(now_ms - s_scd41_last_sample_ms));
+                }
+                return;
             }
 
-            ESP_LOGW(TAG, "SCD41 restarting after %lu consecutive read failures", (unsigned long)s_scd41_read_fail_count);
+            scd4x_sample_t s = {0};
+            const esp_err_t read_err = scd4x_esp_read_measurement(&s);
+            if (read_err != ESP_OK) {
+                s_scd41_read_fail_count++;
+                ESP_LOGW(TAG, "SCD41 read failed (%s), consecutive=%lu", esp_err_to_name(read_err), (unsigned long)s_scd41_read_fail_count);
 
+                if (s_scd41_read_fail_count < 3U) {
+                    return;
+                }
+
+                ESP_LOGW(TAG, "SCD41 restarting after %lu consecutive read failures", (unsigned long)s_scd41_read_fail_count);
+
+                s_scd41_read_fail_count = 0;
+                s_scd41_sm = SENSOR_SM_IDENTIFY;
+                source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+                source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+                source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
+                source->last_update_ms = 0;
+                return;
+            }
+
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = true;
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = s.temperature_m_deg_c;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = true;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
+            source->metric[AIR_QUALITY_METRIC_CO2].valid = true;
+            source->metric[AIR_QUALITY_METRIC_CO2].value = s.co2_ppm;
+            source->last_update_ms = now_ms;
+
+            ESP_LOGI(TAG, "SCD41 measurement T_mC=%ld RH_mpercent=%ld CO2_ppm=%u", (long)s.temperature_m_deg_c, (long)s.humidity_m_percent_rh, (unsigned)s.co2_ppm);
+
+            s_scd41_ready_fail_count = 0;
             s_scd41_read_fail_count = 0;
-            s_scd41_sm = SENSOR_SM_IDENTIFY;
-            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
-            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
-            source->metric[AIR_QUALITY_METRIC_CO2].valid = false;
-            source->last_update_ms = 0;
-            break;
+            s_scd41_last_sample_ms = now_ms;
+
+            return;
         }
 
-        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = true;
-        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = s.temperature_m_deg_c;
-        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = true;
-        source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
-        source->metric[AIR_QUALITY_METRIC_CO2].valid = true;
-        source->metric[AIR_QUALITY_METRIC_CO2].value = s.co2_ppm;
-        source->last_update_ms = now_ms;
-
-        ESP_LOGI(TAG,
-                 "SCD41 measurement T_mC=%ld RH_mpercent=%ld CO2_ppm=%u",
-                 (long)s.temperature_m_deg_c,
-                 (long)s.humidity_m_percent_rh,
-                 (unsigned)s.co2_ppm);
-
-        s_scd41_ready_fail_count = 0;
-        s_scd41_read_fail_count = 0;
-        s_scd41_last_sample_ms = now_ms;
-
-        break;
-    }
-
-    case SENSOR_SM_WAIT_FIRST:
-    default:
-        s_scd41_sm = SENSOR_SM_IDENTIFY;
-        break;
+        case SENSOR_SM_WAIT_FIRST:
+        default:
+            s_scd41_sm = SENSOR_SM_IDENTIFY;
+            continue;
+        }
     }
 }
 
@@ -256,63 +254,62 @@ static void run_sht20_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
         return;
     }
 
-    switch (s_sht20_sm) {
-    case SENSOR_SM_PROBE:
-        s_sht20_sm = SENSOR_SM_IDENTIFY;
-        break;
-
-    case SENSOR_SM_IDENTIFY: {
-        const esp_err_t init_err = sht20_init(SHT20_ADDR);
-        if (init_err != ESP_OK) {
-            ESP_LOGW(TAG, "SHT20 init failed (%s)", esp_err_to_name(init_err));
-            break;
-        }
-
-        sht20_identity_t id = {0};
-        const esp_err_t id_err = sht20_get_identity(&id);
-        if (id_err != ESP_OK) {
-            ESP_LOGW(TAG, "SHT20 get electronic ID failed (%s)", esp_err_to_name(id_err));
-            break;
-        }
-
-        ESP_LOGI(TAG, "SHT20 detected at 0x%02X otp=%02X%02X%02X%02X%02X%02X%02X%02X metal=%04X-%04X-%04X", (unsigned)SHT20_ADDR, (unsigned)id.otp_bytes[0], (unsigned)id.otp_bytes[1],
-                 (unsigned)id.otp_bytes[2], (unsigned)id.otp_bytes[3], (unsigned)id.otp_bytes[4], (unsigned)id.otp_bytes[5], (unsigned)id.otp_bytes[6], (unsigned)id.otp_bytes[7],
-                 (unsigned)id.metal_rom_words[0], (unsigned)id.metal_rom_words[1], (unsigned)id.metal_rom_words[2]);
-        ESP_LOGI(TAG, "Initialized SHT20 at 0x%02X", (unsigned)SHT20_ADDR);
-        s_sht20_sm = SENSOR_SM_RUN;
-        break;
-    }
-
-    case SENSOR_SM_RUN: {
-        sht20_sample_t s = {0};
-        const esp_err_t err = sht20_read_rht(&s);
-        if (err != ESP_OK) {
-            ESP_LOGW(TAG, "SHT20 read failed (%s)", esp_err_to_name(err));
-            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
-            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
-            source->last_update_ms = 0;
+    for (;;) {
+        switch (s_sht20_sm) {
+        case SENSOR_SM_PROBE:
             s_sht20_sm = SENSOR_SM_IDENTIFY;
-            break;
+            continue;
+
+        case SENSOR_SM_IDENTIFY: {
+            const esp_err_t init_err = sht20_init(SHT20_ADDR);
+            if (init_err != ESP_OK) {
+                ESP_LOGW(TAG, "SHT20 init failed (%s)", esp_err_to_name(init_err));
+                return;
+            }
+
+            sht20_identity_t id = {0};
+            const esp_err_t id_err = sht20_get_identity(&id);
+            if (id_err != ESP_OK) {
+                ESP_LOGW(TAG, "SHT20 get electronic ID failed (%s)", esp_err_to_name(id_err));
+                return;
+            }
+
+            ESP_LOGI(TAG, "SHT20 detected at 0x%02X otp=%02X%02X%02X%02X%02X%02X%02X%02X metal=%04X-%04X-%04X", (unsigned)SHT20_ADDR, (unsigned)id.otp_bytes[0], (unsigned)id.otp_bytes[1],
+                     (unsigned)id.otp_bytes[2], (unsigned)id.otp_bytes[3], (unsigned)id.otp_bytes[4], (unsigned)id.otp_bytes[5], (unsigned)id.otp_bytes[6], (unsigned)id.otp_bytes[7],
+                     (unsigned)id.metal_rom_words[0], (unsigned)id.metal_rom_words[1], (unsigned)id.metal_rom_words[2]);
+            ESP_LOGI(TAG, "Initialized SHT20 at 0x%02X", (unsigned)SHT20_ADDR);
+            s_sht20_sm = SENSOR_SM_RUN;
+            continue;
         }
 
-        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = s.has_rht;
-        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = s.temperature_m_deg_c;
-        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = s.has_rht;
-        source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
-        source->last_update_ms = now_ms;
+        case SENSOR_SM_RUN: {
+            sht20_sample_t s = {0};
+            const esp_err_t err = sht20_read_rht(&s);
+            if (err != ESP_OK) {
+                ESP_LOGW(TAG, "SHT20 read failed (%s)", esp_err_to_name(err));
+                source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+                source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+                source->last_update_ms = 0;
+                s_sht20_sm = SENSOR_SM_IDENTIFY;
+                return;
+            }
 
-        ESP_LOGI(TAG,
-                 "SHT20 measurement T_mC=%ld RH_mpercent=%ld",
-                 (long)s.temperature_m_deg_c,
-                 (long)s.humidity_m_percent_rh);
-        break;
-    }
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = s.has_rht;
+            source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = s.temperature_m_deg_c;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = s.has_rht;
+            source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = s.humidity_m_percent_rh;
+            source->last_update_ms = now_ms;
 
-    case SENSOR_SM_START:
-    case SENSOR_SM_WAIT_FIRST:
-    default:
-        s_sht20_sm = SENSOR_SM_IDENTIFY;
-        break;
+            ESP_LOGI(TAG, "SHT20 measurement T_mC=%ld RH_mpercent=%ld", (long)s.temperature_m_deg_c, (long)s.humidity_m_percent_rh);
+            return;
+        }
+
+        case SENSOR_SM_START:
+        case SENSOR_SM_WAIT_FIRST:
+        default:
+            s_sht20_sm = SENSOR_SM_IDENTIFY;
+            continue;
+        }
     }
 }
 
