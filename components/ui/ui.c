@@ -89,7 +89,7 @@ static plot_mode_t s_plot_mode = PLOT_MODE_ALL;
 static bool s_source_selected[AIR_QUALITY_SOURCE_COUNT];
 static bool s_source_online[AIR_QUALITY_SOURCE_COUNT];
 static bool s_source_has_plot_data[AIR_QUALITY_SOURCE_COUNT];
-static bool s_source_selection_initialized;
+static bool s_source_selection_known[AIR_QUALITY_SOURCE_COUNT];
 static uint32_t s_last_sample_ms;
 
 static const char* const s_metric_selector_map[] = {"ALL", "T", "RH", "CO2", ""};
@@ -528,7 +528,8 @@ static void source_selector_update(const air_quality_snapshot_t* snapshot) {
     bool state_changed = false;
     for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
         const bool online = snapshot->source[source].configured && snapshot->source[source].online;
-        if (s_source_online[source] != online) {
+        const bool online_changed = s_source_online[source] != online;
+        if (online_changed) {
             s_source_online[source] = online;
             state_changed = true;
             lv_obj_t* dot = s_source_status_dot[source];
@@ -537,19 +538,20 @@ static void source_selector_update(const air_quality_snapshot_t* snapshot) {
                 lv_obj_set_style_border_width(dot, online ? 0 : 1, 0);
             }
         }
-    }
 
-    if (!s_source_selection_initialized && snapshot->timestamp_ms != 0U) {
-        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
-            s_source_selected[source] = s_source_online[source];
+        if (online && !s_source_selection_known[source]) {
+            s_source_selected[source] = true;
+            s_source_selection_known[source] = true;
+            state_changed = true;
+        }
+
+        if (online && online_changed) {
             if (s_source_selected[source]) {
                 lv_buttonmatrix_set_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
             } else {
                 lv_buttonmatrix_clear_button_ctrl(s_source_selector, source, LV_BUTTONMATRIX_CTRL_CHECKED);
             }
         }
-        s_source_selection_initialized = true;
-        state_changed = true;
     }
 
     if (state_changed) {
@@ -591,6 +593,7 @@ static void source_selector_cb(lv_event_t* e) {
     }
 
     s_source_selected[selected] = lv_buttonmatrix_has_button_ctrl(obj, selected, LV_BUTTONMATRIX_CTRL_CHECKED);
+    s_source_selection_known[selected] = true;
     chart_redraw();
 }
 
