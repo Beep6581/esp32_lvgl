@@ -15,6 +15,7 @@
 #include "lvgl.h"
 
 static const char* TAG = "ui";
+static const char* HISTORY_TAG = "history";
 
 #define TOUCH_CROSSHAIR_SIZE 19
 #define TOUCH_CROSSHAIR_THICKNESS 3
@@ -105,6 +106,7 @@ static const plot_mode_t s_metric_button_mode[PLOT_MODE_COUNT] = {
 static const char* const s_source_name[AIR_QUALITY_SOURCE_COUNT] = {"SCD41", "SHT20", "XY-MD0x"};
 static const char* const s_metric_name[AIR_QUALITY_METRIC_COUNT] = {"T", "RH", "CO2"};
 static const char* const s_metric_unit[AIR_QUALITY_METRIC_COUNT] = {"C", "%", "ppm"};
+static const char* const s_metric_log_name[AIR_QUALITY_METRIC_COUNT] = {"T_mC", "RH_m%", "CO2_ppm"};
 static const uint32_t s_source_color[AIR_QUALITY_SOURCE_COUNT] = {UI_COLOR_SCD41, UI_COLOR_SHT20, UI_COLOR_XY_MD0X};
 
 static uint16_t clamp_touch_coord(uint16_t val, uint16_t max_size) {
@@ -238,6 +240,43 @@ static void history_add_sample(const air_quality_snapshot_t* snapshot, uint32_t 
     if (s_history_count < PLOT_HISTORY_CAPACITY) {
         s_history_count++;
     }
+}
+
+static void log_history_snapshot(const air_quality_snapshot_t* snapshot) {
+    if (snapshot == NULL) {
+        return;
+    }
+
+    char line[256] = {0};
+    size_t used = 0;
+
+    for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
+        const int header_length = snprintf(line + used, sizeof(line) - used, "%s%s:", metric == 0 ? "Snapshot | " : " | ", s_metric_log_name[metric]);
+        if (header_length < 0 || (size_t)header_length >= sizeof(line) - used) {
+            return;
+        }
+        used += (size_t)header_length;
+
+        for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
+            const air_quality_metric_data_t* value = &snapshot->source[source].metric[metric];
+            char value_text[16];
+            if (!value->supported) {
+                snprintf(value_text, sizeof(value_text), "n/a");
+            } else if (!value->valid) {
+                snprintf(value_text, sizeof(value_text), "--");
+            } else {
+                snprintf(value_text, sizeof(value_text), "%ld", (long)value->value);
+            }
+
+            const int value_length = snprintf(line + used, sizeof(line) - used, "  %s %-5s", s_source_name[source], value_text);
+            if (value_length < 0 || (size_t)value_length >= sizeof(line) - used) {
+                return;
+            }
+            used += (size_t)value_length;
+        }
+    }
+
+    ESP_LOGI(HISTORY_TAG, "%s", line);
 }
 
 static void range_add(value_range_t* range, int32_t value) {
@@ -637,6 +676,7 @@ static void ui_timer_cb(lv_timer_t* t) {
     if (first_valid_sample || periodic_sample) {
         s_last_sample_ms = now_ms;
         history_add_sample(&snapshot, now_ms);
+        log_history_snapshot(&snapshot);
         remember_sources_with_plot_data(&snapshot);
         chart_redraw();
     }
