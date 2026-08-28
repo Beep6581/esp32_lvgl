@@ -5,6 +5,7 @@
 #include "i2c_bus.h"
 #include "scd4x.h"
 #include "sht20.h"
+#include "xy_md0x.h"
 
 #include "esp_log.h"
 
@@ -16,6 +17,7 @@ static const char* TAG = "air_quality";
 
 #define SCD41_ADDR 0x62
 #define SHT20_ADDR 0x40
+#define XY_MD0X_MODBUS_ADDR 1
 
 typedef enum {
     SENSOR_SM_PROBE = 0,
@@ -35,6 +37,8 @@ static sensor_sm_t s_sht20_sm = SENSOR_SM_PROBE;
 static uint32_t s_scd41_ready_fail_count = 0;
 static uint32_t s_scd41_read_fail_count = 0;
 static uint32_t s_scd41_last_sample_ms = 0;
+static bool s_xy_md0x_initialized = false;
+static uint32_t s_xy_md0x_read_fail_count = 0;
 
 static void set_latest(const air_quality_snapshot_t* d) {
     if (d == NULL) {
@@ -70,6 +74,11 @@ static void init_snapshot(air_quality_snapshot_t* d) {
     sht20->configured = true;
     sht20->metric[AIR_QUALITY_METRIC_TEMPERATURE].supported = true;
     sht20->metric[AIR_QUALITY_METRIC_HUMIDITY].supported = true;
+
+    air_quality_source_data_t* xy_md0x = &d->source[AIR_QUALITY_SOURCE_XY_MD0X];
+    xy_md0x->configured = true;
+    xy_md0x->metric[AIR_QUALITY_METRIC_TEMPERATURE].supported = true;
+    xy_md0x->metric[AIR_QUALITY_METRIC_HUMIDITY].supported = true;
 }
 
 static void clear_latest(void) {
@@ -313,6 +322,40 @@ static void run_sht20_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
     }
 }
 
+static void run_xy_md0x(air_quality_snapshot_t* d, uint32_t now_ms) {
+    air_quality_source_data_t* source = &d->source[AIR_QUALITY_SOURCE_XY_MD0X];
+    if (!s_xy_md0x_initialized) {
+        source->online = false;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+        return;
+    }
+
+    xy_md0x_sample_t sample;
+    const esp_err_t err = xy_md0x_read(&sample);
+    if (err != ESP_OK) {
+        s_xy_md0x_read_fail_count++;
+        if (s_xy_md0x_read_fail_count == 1U || (s_xy_md0x_read_fail_count % 30U) == 0U) {
+            ESP_LOGW(TAG, "XY-MD0x read failed (%s), consecutive=%lu", esp_err_to_name(err), (unsigned long)s_xy_md0x_read_fail_count);
+        }
+        source->online = false;
+        source->last_update_ms = 0;
+        source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = false;
+        source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = false;
+        return;
+    }
+
+    source->online = true;
+    source->last_update_ms = now_ms;
+    source->metric[AIR_QUALITY_METRIC_TEMPERATURE].valid = true;
+    source->metric[AIR_QUALITY_METRIC_TEMPERATURE].value = sample.temperature_m_deg_c;
+    source->metric[AIR_QUALITY_METRIC_HUMIDITY].valid = true;
+    source->metric[AIR_QUALITY_METRIC_HUMIDITY].value = sample.humidity_m_percent_rh;
+    s_xy_md0x_read_fail_count = 0;
+
+    ESP_LOGI(TAG, "XY-MD0x measurement T_mC=%ld RH_mpercent=%ld", (long)sample.temperature_m_deg_c, (long)sample.humidity_m_percent_rh);
+}
+
 static void air_quality_task(void* arg) {
     (void)arg;
 
@@ -326,8 +369,13 @@ static void air_quality_task(void* arg) {
 
     const bool scd41_present = i2c_addr_present(SCD41_ADDR);
     const bool sht20_present = i2c_addr_present(SHT20_ADDR);
+    const esp_err_t xy_md0x_init_err = xy_md0x_init(XY_MD0X_MODBUS_ADDR);
+    s_xy_md0x_initialized = (xy_md0x_init_err == ESP_OK);
+    if (!s_xy_md0x_initialized) {
+        ESP_LOGE(TAG, "XY-MD0x Modbus initialization failed (%s)", esp_err_to_name(xy_md0x_init_err));
+    }
 
-    ESP_LOGI(TAG, "Sensors present: SCD41=%d SHT20=%d", scd41_present ? 1 : 0, sht20_present ? 1 : 0);
+    ESP_LOGI(TAG, "Sensors present: SCD41=%d SHT20=%d XY-MD0x-configured=%d", scd41_present ? 1 : 0, sht20_present ? 1 : 0, s_xy_md0x_initialized ? 1 : 0);
 
     for (;;) {
         air_quality_snapshot_t d = get_latest_no_lock();
@@ -336,6 +384,7 @@ static void air_quality_task(void* arg) {
 
         run_scd41_sm(&d, scd41_present, now_ms);
         run_sht20_sm(&d, sht20_present, now_ms);
+        run_xy_md0x(&d, now_ms);
 
         set_latest(&d);
         vTaskDelay(pdMS_TO_TICKS(1000));

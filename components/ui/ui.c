@@ -29,6 +29,7 @@ static const char* TAG = "ui";
 #define UI_COLOR_TEXT 0xC0C0C0
 #define UI_COLOR_SCD41 0x63D471
 #define UI_COLOR_SHT20 0x4DA3FF
+#define UI_COLOR_XY_MD0X 0xFF9F43
 
 #define UI_MARGIN_X 0
 #define CONTROL_WIDTH 448
@@ -92,7 +93,7 @@ static bool s_source_selection_initialized;
 static uint32_t s_last_sample_ms;
 
 static const char* const s_metric_selector_map[] = {"ALL", "T", "RH", "CO2", ""};
-static const char* const s_source_selector_map[] = {"SCD41", "SHT20", ""};
+static const char* const s_source_selector_map[] = {"SCD41", "SHT20", "XY-MD0x", ""};
 
 static const plot_mode_t s_metric_button_mode[PLOT_MODE_COUNT] = {
     PLOT_MODE_ALL,
@@ -101,10 +102,10 @@ static const plot_mode_t s_metric_button_mode[PLOT_MODE_COUNT] = {
     PLOT_MODE_CO2,
 };
 
-static const char* const s_source_name[AIR_QUALITY_SOURCE_COUNT] = {"SCD41", "SHT20"};
+static const char* const s_source_name[AIR_QUALITY_SOURCE_COUNT] = {"SCD41", "SHT20", "XY-MD0x"};
 static const char* const s_metric_name[AIR_QUALITY_METRIC_COUNT] = {"T", "RH", "CO2"};
 static const char* const s_metric_unit[AIR_QUALITY_METRIC_COUNT] = {"C", "%", "ppm"};
-static const uint32_t s_source_color[AIR_QUALITY_SOURCE_COUNT] = {UI_COLOR_SCD41, UI_COLOR_SHT20};
+static const uint32_t s_source_color[AIR_QUALITY_SOURCE_COUNT] = {UI_COLOR_SCD41, UI_COLOR_SHT20, UI_COLOR_XY_MD0X};
 
 static uint16_t clamp_touch_coord(uint16_t val, uint16_t max_size) {
     if (max_size == 0) {

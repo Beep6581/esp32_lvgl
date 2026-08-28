@@ -12,6 +12,7 @@ extern "C" {
 typedef enum {
     AIR_QUALITY_SOURCE_SCD41 = 0,
     AIR_QUALITY_SOURCE_SHT20,
+    AIR_QUALITY_SOURCE_XY_MD0X,
     AIR_QUALITY_SOURCE_COUNT,
 } air_quality_source_t;
 
