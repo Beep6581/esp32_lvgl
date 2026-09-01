@@ -23,6 +23,12 @@ static const char* HISTORY_TAG = "history";
 #define PLOT_SAMPLE_PERIOD_MS (10 * 1000U)
 #define PLOT_HISTORY_HOURS (24U)
 #define PLOT_HISTORY_CAPACITY ((PLOT_HISTORY_HOURS * 60U * 60U * 1000U) / PLOT_SAMPLE_PERIOD_MS)
+#define PLOT_TEMPERATURE_MIN_MILLI_C (-10000)
+#define PLOT_TEMPERATURE_MAX_MILLI_C 45000
+#define PLOT_HUMIDITY_MIN_MILLI_PERCENT 0
+#define PLOT_HUMIDITY_MAX_MILLI_PERCENT 100000
+#define PLOT_CO2_MIN_PPM 400
+#define PLOT_CO2_MAX_PPM 2000
 
 #define UI_COLOR_BG 0x101010
 #define UI_COLOR_GRID 0x202020
@@ -326,6 +332,49 @@ static void range_add_padding(value_range_t* range, air_quality_metric_t metric)
     range->max += padding;
 }
 
+static void range_apply_limits(value_range_t* range, air_quality_metric_t metric) {
+    int32_t minimum;
+    int32_t maximum;
+    switch (metric) {
+    case AIR_QUALITY_METRIC_TEMPERATURE:
+        minimum = PLOT_TEMPERATURE_MIN_MILLI_C;
+        maximum = PLOT_TEMPERATURE_MAX_MILLI_C;
+        break;
+    case AIR_QUALITY_METRIC_HUMIDITY:
+        minimum = PLOT_HUMIDITY_MIN_MILLI_PERCENT;
+        maximum = PLOT_HUMIDITY_MAX_MILLI_PERCENT;
+        break;
+    case AIR_QUALITY_METRIC_CO2:
+        minimum = PLOT_CO2_MIN_PPM;
+        maximum = PLOT_CO2_MAX_PPM;
+        break;
+    default:
+        return;
+    }
+
+    if (!range->any) {
+        range->min = minimum;
+        range->max = maximum;
+        return;
+    }
+
+    if (range->min < minimum) {
+        range->min = minimum;
+    }
+    if (range->max > maximum) {
+        range->max = maximum;
+    }
+    if (range->min >= range->max) {
+        if (range->min >= maximum) {
+            range->min = maximum - metric_minimum_padding(metric);
+            range->max = maximum;
+        } else {
+            range->min = minimum;
+            range->max = minimum + metric_minimum_padding(metric);
+        }
+    }
+}
+
 static bool metric_is_visible(air_quality_metric_t metric) {
     return s_plot_mode == PLOT_MODE_ALL || s_plot_mode == (plot_mode_t)metric;
 }
@@ -401,6 +450,7 @@ static void chart_redraw(void) {
 
         const bool range_has_data = range.any;
         range_add_padding(&range, metric);
+        range_apply_limits(&range, metric);
 
         for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
             for (uint32_t i = 0; i < PLOT_HISTORY_CAPACITY; i++) {
