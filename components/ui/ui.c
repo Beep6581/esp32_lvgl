@@ -22,7 +22,8 @@ static const char* HISTORY_TAG = "history";
 
 #define PLOT_SAMPLE_PERIOD_MS (10 * 1000U)
 #define PLOT_HISTORY_HOURS (24U)
-#define PLOT_HISTORY_CAPACITY ((PLOT_HISTORY_HOURS * 60U * 60U * 1000U) / PLOT_SAMPLE_PERIOD_MS)
+#define PLOT_HISTORY_WINDOW_MS (PLOT_HISTORY_HOURS * 60U * 60U * 1000U)
+#define PLOT_HISTORY_CAPACITY (PLOT_HISTORY_WINDOW_MS / PLOT_SAMPLE_PERIOD_MS)
 #define PLOT_TEMPERATURE_MIN_MILLI_C (-10000)
 #define PLOT_TEMPERATURE_MAX_MILLI_C 45000
 #define PLOT_HUMIDITY_MIN_MILLI_PERCENT 0
@@ -234,6 +235,23 @@ static uint32_t history_physical_index(uint32_t chronological_index) {
     return (s_history_next + chronological_index) % PLOT_HISTORY_CAPACITY;
 }
 
+static uint32_t history_visible_start(void) {
+    if (s_history_count == 0U) {
+        return 0U;
+    }
+
+    const uint32_t latest_timestamp = s_history[history_physical_index(s_history_count - 1U)].timestamp_ms;
+    uint32_t start = 0U;
+    while (start < s_history_count) {
+        const uint32_t timestamp = s_history[history_physical_index(start)].timestamp_ms;
+        if ((latest_timestamp - timestamp) <= PLOT_HISTORY_WINDOW_MS) {
+            break;
+        }
+        start++;
+    }
+    return start;
+}
+
 static void history_add_sample(const air_quality_snapshot_t* snapshot, uint32_t now_ms) {
     if (snapshot == NULL || !plot_buffers_init()) {
         return;
@@ -427,7 +445,9 @@ static void chart_redraw(void) {
 
     chart_layout();
 
-    const uint32_t point_count = (s_history_count >= 2U) ? s_history_count : 2U;
+    const uint32_t history_start = history_visible_start();
+    const uint32_t visible_history_count = s_history_count - history_start;
+    const uint32_t point_count = (visible_history_count >= 2U) ? visible_history_count : 2U;
 
     for (air_quality_metric_t metric = 0; metric < AIR_QUALITY_METRIC_COUNT; metric++) {
         value_range_t range = {0};
@@ -435,8 +455,8 @@ static void chart_redraw(void) {
         uint32_t source_valid_point_count[AIR_QUALITY_SOURCE_COUNT] = {0};
         uint32_t source_latest_point[AIR_QUALITY_SOURCE_COUNT] = {0};
 
-        for (uint32_t i = 0; i < s_history_count; i++) {
-            const air_quality_snapshot_t* sample = &s_history[history_physical_index(i)];
+        for (uint32_t i = 0; i < visible_history_count; i++) {
+            const air_quality_snapshot_t* sample = &s_history[history_physical_index(history_start + i)];
             for (air_quality_source_t source = 0; source < AIR_QUALITY_SOURCE_COUNT; source++) {
                 const air_quality_metric_data_t* value = &sample->source[source].metric[metric];
                 if (s_source_selected[source] && value->supported && value->valid) {
@@ -458,8 +478,8 @@ static void chart_redraw(void) {
             }
 
             if (s_source_selected[source]) {
-                for (uint32_t i = 0; i < s_history_count; i++) {
-                    const air_quality_snapshot_t* sample = &s_history[history_physical_index(i)];
+                for (uint32_t i = 0; i < visible_history_count; i++) {
+                    const air_quality_snapshot_t* sample = &s_history[history_physical_index(history_start + i)];
                     const air_quality_metric_data_t* value = &sample->source[source].metric[metric];
                     if (value->supported && value->valid) {
                         s_chart_values[metric][source][i] = value->value;
@@ -531,10 +551,10 @@ static void chart_redraw(void) {
         }
     }
 
-    if (s_history_count > 0U) {
+    if (visible_history_count > 0U) {
         char left[16] = {0};
         char right[16] = {0};
-        format_duration_hm(left, sizeof(left), s_history[history_physical_index(0)].timestamp_ms);
+        format_duration_hm(left, sizeof(left), s_history[history_physical_index(history_start)].timestamp_ms);
         format_duration_hms(right, sizeof(right), s_history[history_physical_index(s_history_count - 1U)].timestamp_ms);
         lv_label_set_text(s_lbl_x_left, left);
         lv_label_set_text(s_lbl_x_right, right);
