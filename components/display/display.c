@@ -26,6 +26,11 @@
 #include "bitwalk.h"
 
 static const char* TAG = "display";
+static esp_lcd_rgb_timing_t s_rgb_timing;
+
+const esp_lcd_rgb_timing_t* display_get_rgb_timing(void) {
+    return &s_rgb_timing;
+}
 
 /* Based on:
  * https://components.espressif.com/components/espressif/esp_lcd_gc9503/versions/3.0.1/readme
@@ -152,6 +157,7 @@ lv_display_t* display_init(void) {
     timing.vsync_pulse_width = 80;      //  10    80
     timing.vsync_back_porch = 80;       //  40    80
     timing.vsync_front_porch = 40;      //   8    40
+    s_rgb_timing = timing;
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M

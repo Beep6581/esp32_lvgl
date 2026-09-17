@@ -1,9 +1,11 @@
 #include "ui.h"
 
 #include "board.h"
+#include "display.h"
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -101,6 +103,36 @@ static void hue_gradient_create(lv_obj_t* parent) {
     lv_obj_t* canvas = lv_canvas_create(parent);
     lv_canvas_set_buffer(canvas, s_gradient_buffer, width, height, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(canvas, 0, 0);
+
+    const esp_lcd_rgb_timing_t* timing = display_get_rgb_timing();
+    char pclk_text[48];
+    if ((timing->pclk_hz % 1000000U) == 0U) {
+        snprintf(pclk_text, sizeof(pclk_text), "%lu * 1000 * 1000", (unsigned long)(timing->pclk_hz / 1000000U));
+    } else {
+        snprintf(pclk_text, sizeof(pclk_text), "%lu", (unsigned long)timing->pclk_hz);
+    }
+
+    lv_obj_t* label = lv_label_create(parent);
+    lv_label_set_text_fmt(label,
+                          "pclk_hz = %s\n"
+                          "flags.de_idle_high = %lu\n"
+                          "hsync_pulse_width = %lu\n"
+                          "hsync_back_porch = %lu\n"
+                          "hsync_front_porch = %lu\n"
+                          "vsync_pulse_width = %lu\n"
+                          "vsync_back_porch = %lu\n"
+                          "vsync_front_porch = %lu",
+                          pclk_text,
+                          (unsigned long)timing->flags.de_idle_high,
+                          (unsigned long)timing->hsync_pulse_width,
+                          (unsigned long)timing->hsync_back_porch,
+                          (unsigned long)timing->hsync_front_porch,
+                          (unsigned long)timing->vsync_pulse_width,
+                          (unsigned long)timing->vsync_back_porch,
+                          (unsigned long)timing->vsync_front_porch);
+    lv_obj_set_style_text_color(label, lv_color_black(), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_center(label);
 }
 
 void ui_screen_diagnostics_init(lv_display_t* disp) {
