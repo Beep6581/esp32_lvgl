@@ -1,11 +1,11 @@
 #include "display.h"
+#include "i2c_bus.h"
 #include "sdkconfig.h"
+#include "touch.h"
 #include "ui.h"
 
 #if CONFIG_APP_MODE_AIR_QUALITY
 #include "air_quality.h"
-#include "i2c_bus.h"
-#include "touch.h"
 #endif
 
 #include "esp_log.h"
@@ -28,10 +28,10 @@
 static const char* TAG = "main";
 
 void app_main(void) {
-#if CONFIG_APP_MODE_AIR_QUALITY
-    ESP_LOGI(TAG, "Starting air-quality mode");
     ESP_ERROR_CHECK(i2c_bus_init());
 
+#if CONFIG_APP_MODE_AIR_QUALITY
+    ESP_LOGI(TAG, "Starting air-quality mode");
     ESP_ERROR_CHECK(air_quality_start());
 #else
     ESP_LOGI(TAG, "Starting screen-diagnostics mode");
@@ -45,10 +45,10 @@ void app_main(void) {
 
 #if CONFIG_APP_MODE_AIR_QUALITY
     ui_init(disp);
-
-    ESP_ERROR_CHECK(touch_start());
 #else
     ui_screen_diagnostics_init(disp);
     ESP_LOGI(TAG, "Screen diagnostics display ready");
 #endif
+
+    ESP_ERROR_CHECK(touch_start());
 }
