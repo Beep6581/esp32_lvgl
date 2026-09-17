@@ -1,5 +1,7 @@
 idf_component_register(
-    SRCS "ui.c"
+    SRCS
+        "ui.c"
+        "screen_diagnostics.c"
     INCLUDE_DIRS "include"
     REQUIRES
         board
