@@ -1,0 +1,10 @@
+menu "Display"
+
+config DISPLAY_DIAGNOSTIC_BITWALK
+    bool "Run low-level bitwalk diagnostic"
+    depends on APP_MODE_SCREEN_DIAGNOSTICS
+    default n
+    help
+        Draw a direct RGB data-bit test without starting LVGL.
+
+endmenu

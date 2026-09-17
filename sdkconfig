@@ -913,6 +913,13 @@ CONFIG_PARTITION_TABLE_MD5=y
 # end of Partition Table
 
 #
+# Application
+#
+CONFIG_APP_MODE_AIR_QUALITY=y
+# CONFIG_APP_MODE_SCREEN_DIAGNOSTICS is not set
+# end of Application
+
+#
 # Compiler options
 #
 CONFIG_COMPILER_OPTIMIZATION_DEBUG=y
@@ -2915,12 +2922,13 @@ CONFIG_BOARD_LCD_PCLK_HZ=16000000
 # end of Board configuration
 
 #
+# Display
+#
+# end of Display
+
+#
 # UI
 #
-CONFIG_UI_DEMO_NONE=y
-# CONFIG_UI_DEMO_MOVING_BOX is not set
-# CONFIG_UI_DEMO_COLOR_BARS is not set
-# CONFIG_UI_DEMO_BITWALK is not set
 # CONFIG_UI_METRICS is not set
 # end of UI
 

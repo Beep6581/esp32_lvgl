@@ -1,0 +1,15 @@
+menu "Application"
+
+choice APP_MODE
+    prompt "Application mode"
+    default APP_MODE_AIR_QUALITY
+
+config APP_MODE_AIR_QUALITY
+    bool "Air-quality monitor"
+
+config APP_MODE_SCREEN_DIAGNOSTICS
+    bool "Screen diagnostics"
+
+endchoice
+
+endmenu

@@ -1,23 +1,5 @@
 menu "UI"
 
-choice UI_DEMO_MODE
-    prompt "UI demo mode"
-    default UI_DEMO_NONE
-
-config UI_DEMO_NONE
-    bool "None"
-
-config UI_DEMO_MOVING_BOX
-    bool "Moving box"
-
-config UI_DEMO_COLOR_BARS
-    bool "Color bars + Hello world label"
-
-config UI_DEMO_BITWALK
-    bool "Bitwalk color test"
-
-endchoice
-
 config UI_METRICS
     bool "Log UI/LVGL metrics once per second"
     default n
@@ -25,4 +7,3 @@ config UI_METRICS
         Logs LVGL tick delta and animation steps per second.
 
 endmenu
-

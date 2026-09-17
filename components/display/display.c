@@ -258,7 +258,7 @@ lv_display_t* display_init(void) {
         esp_lcd_touch_read_data(touch);
     */
 
-#if CONFIG_UI_DEMO_BITWALK
+#if CONFIG_DISPLAY_DIAGNOSTIC_BITWALK
     demo_bitwalk(panel_handle);
     return NULL;
 #endif
