@@ -32,6 +32,8 @@ const esp_lcd_rgb_timing_t* display_get_rgb_timing(void) {
     return &s_rgb_timing;
 }
 
+typedef enum { LCD_TIMING_WT, LCD_TIMING_BOOTSTRAP, LCD_TIMING_OWN } lcd_timing_mode_t;
+
 /* Based on:
  * https://components.espressif.com/components/espressif/esp_lcd_gc9503/versions/3.0.1/readme
  */
@@ -148,15 +150,43 @@ lv_display_t* display_init(void) {
 
     ESP_LOGI(TAG, "Install GC9503 panel driver");
 
+    const lcd_timing_mode_t timing_mode = LCD_TIMING_WT;
+
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
-    timing.pclk_hz = BOARD_LCD_PCLK_HZ; // 20 * 1000 * 1000; // BOARD_LCD_PCLK_HZ; // default: 16 * 1000 * 1000
-    timing.flags.de_idle_high = 0;      // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
-    timing.hsync_pulse_width = 80;      //  10    80    WT  48
-    timing.hsync_back_porch = 80;       //  40    80    WT  40
-    timing.hsync_front_porch = 40;      //   8    40    WT   8
-    timing.vsync_pulse_width = 80;      //  10    80    WT 100
-    timing.vsync_back_porch = 80;       //  40    80    WT  48
-    timing.vsync_front_porch = 40;      //   8    40    WT   8
+    timing.flags.de_idle_high = 0; // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
+
+    switch (timing_mode) {
+    case LCD_TIMING_WT:
+        timing.pclk_hz = 20 * 1000 * 1000;
+        timing.hsync_pulse_width = 48;
+        timing.hsync_back_porch = 40;
+        timing.hsync_front_porch = 8;
+        timing.vsync_pulse_width = 100;
+        timing.vsync_back_porch = 48;
+        timing.vsync_front_porch = 8;
+        break;
+
+    case LCD_TIMING_BOOTSTRAP:
+        timing.pclk_hz = 10 * 1000 * 1000;
+        timing.hsync_pulse_width = 10;
+        timing.hsync_back_porch = 40;
+        timing.hsync_front_porch = 8;
+        timing.vsync_pulse_width = 10;
+        timing.vsync_back_porch = 40;
+        timing.vsync_front_porch = 8;
+        break;
+
+    case LCD_TIMING_OWN:
+        timing.pclk_hz = BOARD_LCD_PCLK_HZ; // BOARD_LCD_PCLK_HZ = 16 * 1000 * 1000
+        timing.hsync_pulse_width = 80;
+        timing.hsync_back_porch = 80;
+        timing.hsync_front_porch = 40;
+        timing.vsync_pulse_width = 80;
+        timing.vsync_back_porch = 80;
+        timing.vsync_front_porch = 40;
+        break;
+    }
+
     s_rgb_timing = timing;
 
     esp_lcd_rgb_panel_config_t rgb_config = {

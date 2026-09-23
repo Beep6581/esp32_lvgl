@@ -115,21 +115,14 @@ static void hue_gradient_create(lv_obj_t* parent) {
     lv_obj_t* label = lv_label_create(parent);
     lv_label_set_text_fmt(label,
                           "pclk_hz = %s\n"
-                          "flags.de_idle_high = %lu\n"
                           "hsync_pulse_width = %lu\n"
                           "hsync_back_porch = %lu\n"
                           "hsync_front_porch = %lu\n"
                           "vsync_pulse_width = %lu\n"
                           "vsync_back_porch = %lu\n"
                           "vsync_front_porch = %lu",
-                          pclk_text,
-                          (unsigned long)timing->flags.de_idle_high,
-                          (unsigned long)timing->hsync_pulse_width,
-                          (unsigned long)timing->hsync_back_porch,
-                          (unsigned long)timing->hsync_front_porch,
-                          (unsigned long)timing->vsync_pulse_width,
-                          (unsigned long)timing->vsync_back_porch,
-                          (unsigned long)timing->vsync_front_porch);
+                          pclk_text, (unsigned long)timing->hsync_pulse_width, (unsigned long)timing->hsync_back_porch, (unsigned long)timing->hsync_front_porch,
+                          (unsigned long)timing->vsync_pulse_width, (unsigned long)timing->vsync_back_porch, (unsigned long)timing->vsync_front_porch);
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_center(label);
