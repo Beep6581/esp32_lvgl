@@ -5,7 +5,9 @@ idf_component_register(
         board
         esp_driver_gpio
         esp_lcd
+        esp_system
         lvgl__lvgl
+        nvs_flash
         espressif__esp_lvgl_port
         espressif__esp_lcd_panel_io_additions
         espressif__esp_lcd_gc9503

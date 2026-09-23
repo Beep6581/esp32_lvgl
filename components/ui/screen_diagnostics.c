@@ -13,9 +13,18 @@
 #include "lvgl.h"
 
 #define SCREEN_DIAGNOSTIC_BAR_COUNT 3
+#define TIMING_BUTTON_WIDTH 72
+#define TIMING_BUTTON_HEIGHT 42
+#define TIMING_BUTTON_GAP 14
 
 static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
+static const display_timing_mode_t s_timing_button_mode[] = {
+    DISPLAY_TIMING_WT,
+    DISPLAY_TIMING_BOOTSTRAP,
+    DISPLAY_TIMING_OWN,
+};
+static const char* const s_timing_button_label[] = {"WT", "BS", "MD"};
 
 static uint8_t blend_channel(uint8_t from, uint8_t to, uint32_t position, uint32_t distance) {
     return (uint8_t)((from * (distance - position) + to * position) / distance);
@@ -128,6 +137,40 @@ static void hue_gradient_create(lv_obj_t* parent) {
     lv_obj_center(label);
 }
 
+static void timing_button_cb(lv_event_t* e) {
+    const display_timing_mode_t* mode = lv_event_get_user_data(e);
+    if (mode == NULL) {
+        return;
+    }
+
+    const esp_err_t err = display_set_timing_mode_and_restart(*mode);
+    ESP_LOGE(TAG, "failed to save timing mode: %s", esp_err_to_name(err));
+}
+
+static void timing_buttons_create(lv_obj_t* parent) {
+    const int32_t total_width = (TIMING_BUTTON_WIDTH * 3) + (TIMING_BUTTON_GAP * 2);
+    const int32_t start_x = (BOARD_LCD_HRES - total_width) / 2;
+    const int32_t y = BOARD_LCD_VRES - TIMING_BUTTON_HEIGHT - 14;
+
+    for (size_t i = 0; i < 3; i++) {
+        lv_obj_t* button = lv_button_create(parent);
+        lv_obj_set_size(button, TIMING_BUTTON_WIDTH, TIMING_BUTTON_HEIGHT);
+        lv_obj_set_pos(button, start_x + (int32_t)i * (TIMING_BUTTON_WIDTH + TIMING_BUTTON_GAP), y);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x202020), 0);
+        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_color(button, lv_color_hex(0xC0C0C0), 0);
+        lv_obj_set_style_border_width(button, 1, 0);
+        lv_obj_set_style_radius(button, 4, 0);
+        lv_obj_add_event_cb(button, timing_button_cb, LV_EVENT_CLICKED, (void*)&s_timing_button_mode[i]);
+
+        lv_obj_t* label = lv_label_create(button);
+        lv_label_set_text(label, s_timing_button_label[i]);
+        lv_obj_set_style_text_color(label, lv_color_hex(0xC0C0C0), 0);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+        lv_obj_center(label);
+    }
+}
+
 void ui_screen_diagnostics_init(lv_display_t* disp) {
     lvgl_port_lock(0);
 
@@ -153,6 +196,7 @@ void ui_screen_diagnostics_init(lv_display_t* disp) {
     screen_page_style(gradient_page);
     color_bars_create(color_bars_page);
     hue_gradient_create(gradient_page);
+    timing_buttons_create(gradient_page);
     lv_tabview_set_active(tabview, 1, LV_ANIM_OFF);
 
     lvgl_port_unlock();

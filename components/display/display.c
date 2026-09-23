@@ -10,8 +10,11 @@
 
 #include "driver/gpio.h"
 
+#include <stdbool.h>
+
 #include "esp_err.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "esp_lvgl_port.h"
 #include "esp_lvgl_port_disp.h"
@@ -22,17 +25,21 @@
 #include "esp_lcd_panel_rgb.h"
 // #include "esp_lcd_panel_io.h"
 // #include "esp_lcd_touch_ft5x06.h"
+#include "nvs.h"
+#include "nvs_flash.h"
 
 #include "bitwalk.h"
 
 static const char* TAG = "display";
+static const char* DISPLAY_NVS_NAMESPACE = "display";
+static const char* DISPLAY_NVS_TIMING_MODE_KEY = "timing_mode";
+
 static esp_lcd_rgb_timing_t s_rgb_timing;
+static bool s_nvs_ready;
 
 const esp_lcd_rgb_timing_t* display_get_rgb_timing(void) {
     return &s_rgb_timing;
 }
-
-typedef enum { LCD_TIMING_WT, LCD_TIMING_BOOTSTRAP, LCD_TIMING_OWN } lcd_timing_mode_t;
 
 /* Based on:
  * https://components.espressif.com/components/espressif/esp_lcd_gc9503/versions/3.0.1/readme
@@ -124,6 +131,87 @@ static void backlight_init_off(void) {
     ESP_ERROR_CHECK(gpio_set_level(BOARD_LCD_BL_GPIO, 0));
 }
 
+static esp_err_t display_nvs_init(void) {
+    if (s_nvs_ready) {
+        return ESP_OK;
+    }
+
+    const esp_err_t err = nvs_flash_init();
+    if (err == ESP_OK) {
+        s_nvs_ready = true;
+    } else {
+        ESP_LOGW(TAG, "nvs_flash_init failed: %s", esp_err_to_name(err));
+    }
+    return err;
+}
+
+static display_timing_mode_t display_get_saved_timing_mode(void) {
+    esp_err_t err = display_nvs_init();
+    if (err != ESP_OK) {
+        return DISPLAY_TIMING_WT;
+    }
+
+    nvs_handle_t nvs = 0;
+    err = nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READONLY, &nvs);
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return DISPLAY_TIMING_WT;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_open read failed: %s", esp_err_to_name(err));
+        return DISPLAY_TIMING_WT;
+    }
+
+    uint8_t saved_mode = 0;
+    err = nvs_get_u8(nvs, DISPLAY_NVS_TIMING_MODE_KEY, &saved_mode);
+    nvs_close(nvs);
+
+    if (err == ESP_ERR_NVS_NOT_FOUND) {
+        return DISPLAY_TIMING_WT;
+    }
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "nvs_get_u8 timing mode failed: %s", esp_err_to_name(err));
+        return DISPLAY_TIMING_WT;
+    }
+    if (saved_mode >= DISPLAY_TIMING_COUNT) {
+        ESP_LOGW(TAG, "ignoring invalid saved timing mode: %u", (unsigned)saved_mode);
+        return DISPLAY_TIMING_WT;
+    }
+
+    return (display_timing_mode_t)saved_mode;
+}
+
+esp_err_t display_set_timing_mode_and_restart(display_timing_mode_t mode) {
+    if (mode >= DISPLAY_TIMING_COUNT) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    esp_err_t err = display_nvs_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    nvs_handle_t nvs = 0;
+    err = nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READWRITE, &nvs);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "nvs_open write failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_u8(nvs, DISPLAY_NVS_TIMING_MODE_KEY, (uint8_t)mode);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs);
+    }
+    nvs_close(nvs);
+
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "saving timing mode failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    ESP_LOGI(TAG, "saved timing mode %u, restarting", (unsigned)mode);
+    esp_restart();
+}
+
 lv_display_t* display_init(void) {
     backlight_init_off();
 
@@ -150,13 +238,13 @@ lv_display_t* display_init(void) {
 
     ESP_LOGI(TAG, "Install GC9503 panel driver");
 
-    const lcd_timing_mode_t timing_mode = LCD_TIMING_WT;
+    const display_timing_mode_t timing_mode = display_get_saved_timing_mode();
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
     timing.flags.de_idle_high = 0; // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
 
     switch (timing_mode) {
-    case LCD_TIMING_WT:
+    case DISPLAY_TIMING_WT:
         timing.pclk_hz = 20 * 1000 * 1000;
         timing.hsync_pulse_width = 48;
         timing.hsync_back_porch = 40;
@@ -166,7 +254,7 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 8;
         break;
 
-    case LCD_TIMING_BOOTSTRAP:
+    case DISPLAY_TIMING_BOOTSTRAP:
         timing.pclk_hz = 10 * 1000 * 1000;
         timing.hsync_pulse_width = 10;
         timing.hsync_back_porch = 40;
@@ -176,7 +264,7 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 8;
         break;
 
-    case LCD_TIMING_OWN:
+    case DISPLAY_TIMING_OWN:
         timing.pclk_hz = BOARD_LCD_PCLK_HZ; // BOARD_LCD_PCLK_HZ = 16 * 1000 * 1000
         timing.hsync_pulse_width = 80;
         timing.hsync_back_porch = 80;
@@ -184,6 +272,9 @@ lv_display_t* display_init(void) {
         timing.vsync_pulse_width = 80;
         timing.vsync_back_porch = 80;
         timing.vsync_front_porch = 40;
+        break;
+
+    default:
         break;
     }
 
