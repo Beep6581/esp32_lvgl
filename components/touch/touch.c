@@ -7,7 +7,7 @@
 #include "driver/gpio.h"
 #include "esp_lcd_io_i2c.h"
 #include "esp_lcd_touch.h"
-#include "esp_lcd_touch_ft5x06.h"
+#include "esp_lcd_touch_ft6336u.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
 #include "lvgl.h"
@@ -71,7 +71,7 @@ esp_err_t touch_start(void) {
         return ESP_ERR_INVALID_STATE;
     }
 
-    esp_lcd_panel_io_i2c_config_t io_config = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+    esp_lcd_panel_io_i2c_config_t io_config = ESP_LCD_TOUCH_IO_I2C_FT6336U_CONFIG();
     io_config.scl_speed_hz = FT6336U_I2C_CLK_HZ;
 
     esp_err_t err = esp_lcd_new_panel_io_i2c(bus, &io_config, &s_touch_io);
@@ -98,9 +98,9 @@ esp_err_t touch_start(void) {
             },
     };
 
-    err = esp_lcd_touch_new_i2c_ft5x06(s_touch_io, &touch_config, &s_touch);
+    err = esp_lcd_touch_new_i2c_ft6336u(s_touch_io, &touch_config, &s_touch);
     if (err != ESP_OK) {
-        ESP_LOGE(TAG, "esp_lcd_touch_new_i2c_ft5x06 failed: %s", esp_err_to_name(err));
+        ESP_LOGE(TAG, "esp_lcd_touch_new_i2c_ft6336u failed: %s", esp_err_to_name(err));
         return err;
     }
 
@@ -125,6 +125,6 @@ esp_err_t touch_start(void) {
     }
 
     ESP_LOGI(TAG, "FT6336U touch ready at I2C address 0x%02x",
-             ESP_LCD_TOUCH_IO_I2C_FT5x06_ADDRESS);
+             ESP_LCD_TOUCH_IO_I2C_FT6336U_ADDRESS);
     return ESP_OK;
 }

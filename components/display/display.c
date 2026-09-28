@@ -24,7 +24,7 @@
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_rgb.h"
 // #include "esp_lcd_panel_io.h"
-// #include "esp_lcd_touch_ft5x06.h"
+// #include "esp_lcd_touch_ft6336u.h"
 #include "nvs.h"
 #include "nvs_flash.h"
 
@@ -361,7 +361,7 @@ lv_display_t* display_init(void) {
     // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true)); // Don't call this function if auto_del_panel_io is set to 0 and disp_gpio_num is set to -1
 
     /*
-        esp_lcd_panel_io_i2c_config_t touch_io_i2c_cfg = ESP_LCD_TOUCH_IO_I2C_FT5x06_CONFIG();
+        esp_lcd_panel_io_i2c_config_t touch_io_i2c_cfg = ESP_LCD_TOUCH_IO_I2C_FT6336U_CONFIG();
 
         esp_lcd_touch_config_t touch_cfg = {
             .x_max = BOARD_LCD_HRES,
@@ -380,7 +380,7 @@ lv_display_t* display_init(void) {
         };
 
         esp_lcd_touch_handle_t touch;
-        esp_lcd_touch_new_i2c_ft5x06(io_handle, &touch_cfg, &touch);
+        esp_lcd_touch_new_i2c_ft6336u(io_handle, &touch_cfg, &touch);
 
         esp_lcd_touch_read_data(touch);
     */

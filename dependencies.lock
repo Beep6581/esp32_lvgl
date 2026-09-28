@@ -1,4 +1,19 @@
 dependencies:
+  esp_lcd_touch_ft6336u:
+    component_hash: 138d02834083097ab4243e115c5e689a8d101f88f363310c517fee327f712cc4
+    dependencies:
+    - name: idf
+      version: '>=5.3'
+    - name: espressif/cmake_utilities
+      version: 0.*
+    - name: espressif/esp_lcd_touch
+      public: true
+      version: ^1
+    source:
+      git: https://github.com/espressif/esp-iot-solution.git
+      path: components/display/lcd_touch/esp_lcd_touch_ft6336u
+      type: git
+    version: ee4719d17032261777f929bbaf1808817f269b61
   espressif/cmake_utilities:
     component_hash: 351350613ceafba240b761b4ea991e0f231ac7a9f59a9ee901f751bddc0bb18f
     dependencies:
@@ -60,23 +75,9 @@ dependencies:
       require: private
       version: '>=4.4.2'
     source:
-      registry_url: https://components.espressif.com
-      type: service
-    version: 1.2.1
-  espressif/esp_lcd_touch_ft5x06:
-    component_hash: aa3f170c321859146b4084d5e168828d026cb7c67eebfaa524ce48b428182c1e
-    dependencies:
-    - name: espressif/esp_lcd_touch
-      registry_url: https://components.espressif.com
-      require: public
-      version: ^1.2.0
-    - name: idf
-      require: private
-      version: '>=4.4.2'
-    source:
       registry_url: https://components.espressif.com/
       type: service
-    version: 1.1.0
+    version: 1.2.1
   espressif/esp_lvgl_port:
     component_hash: d3c020b45c3dfc0d1706a83b63a1c34a6eb444a6e935f9afff79f92b7b94dcef
     dependencies:
@@ -103,12 +104,12 @@ dependencies:
       type: service
     version: 9.5.0
 direct_dependencies:
+- esp_lcd_touch_ft6336u
 - espressif/esp_lcd_gc9503
 - espressif/esp_lcd_panel_io_additions
-- espressif/esp_lcd_touch_ft5x06
 - espressif/esp_lvgl_port
 - idf
 - lvgl/lvgl
-manifest_hash: d3f15fdfc4d04fbef5f846da8d378e9c2f74466d98cbcec0f51ccfdab3c85b44
+manifest_hash: f8ae2dbb458bed7d15acd6ca722821d94345526e37f2602ea8307f3c0bae58ac
 target: esp32s3
 version: 3.0.0
