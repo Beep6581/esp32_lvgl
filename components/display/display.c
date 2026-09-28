@@ -315,7 +315,7 @@ lv_display_t* display_init(void) {
 
         For the 480x480 LCD the resulting nominal frame rates are:
             min 61.93 Hz
-            mid 59.41 Hz
+            mid 60.00 Hz
             max 56.43 Hz
         all within the documented 54-66 Hz range.
         */
@@ -355,7 +355,7 @@ lv_display_t* display_init(void) {
 
     case DISPLAY_TIMING_MID_HBP:
         timing_name = "MID HBP";
-        timing.pclk_hz = 26150000;
+        timing.pclk_hz = 26407680;
         timing.hsync_pulse_width = 1;
         timing.hsync_back_porch = 115;
         timing.hsync_front_porch = 2;
@@ -366,7 +366,7 @@ lv_display_t* display_init(void) {
 
     case DISPLAY_TIMING_MID_BAL:
         timing_name = "MID BAL";
-        timing.pclk_hz = 26150000;
+        timing.pclk_hz = 26407680;
         timing.hsync_pulse_width = 1;
         timing.hsync_back_porch = 58;
         timing.hsync_front_porch = 59;
@@ -377,7 +377,7 @@ lv_display_t* display_init(void) {
 
     case DISPLAY_TIMING_MID_HSYNC:
         timing_name = "MID HSYNC";
-        timing.pclk_hz = 26150000;
+        timing.pclk_hz = 26407680;
         timing.hsync_pulse_width = 114;
         timing.hsync_back_porch = 2;
         timing.hsync_front_porch = 2;
@@ -560,13 +560,13 @@ lv_display_t* display_init(void) {
                 .sw_rotate = 0,
                 .swap_bytes = 0,
                 .full_refresh = 0,
-                .direct_mode = 0,
+                .direct_mode = 1,
             },
     };
 
     lvgl_port_display_rgb_cfg_t rgb_cfg = {.flags = {
                                                .bb_mode = 1,
-                                               .avoid_tearing = 0,
+                                               .avoid_tearing = 1,
                                            }};
 
     lv_display_t* disp = lvgl_port_add_disp_rgb(&display_config, &rgb_cfg);
