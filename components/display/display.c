@@ -34,10 +34,10 @@ static const char* TAG = "display";
 static const char* DISPLAY_NVS_NAMESPACE = "display";
 static const char* DISPLAY_NVS_TIMING_MODE_KEY = "timing_mode";
 
-static esp_lcd_rgb_timing_t s_rgb_timing;
+static display_rgb_timing_t s_rgb_timing;
 static bool s_nvs_ready;
 
-const esp_lcd_rgb_timing_t* display_get_rgb_timing(void) {
+const display_rgb_timing_t* display_get_rgb_timing(void) {
     return &s_rgb_timing;
 }
 
@@ -241,10 +241,12 @@ lv_display_t* display_init(void) {
     const display_timing_mode_t timing_mode = display_get_saved_timing_mode();
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
+    const char* timing_name = "Unknown";
     timing.flags.de_idle_high = 0; // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
 
     switch (timing_mode) {
     case DISPLAY_TIMING_WT:
+        timing_name = "WT";
         timing.pclk_hz = 20 * 1000 * 1000;
         timing.hsync_pulse_width = 48;
         timing.hsync_back_porch = 40;
@@ -255,6 +257,7 @@ lv_display_t* display_init(void) {
         break;
 
     case DISPLAY_TIMING_BS:
+        timing_name = "BS";
         timing.pclk_hz = 10 * 1000 * 1000;
         timing.hsync_pulse_width = 10;
         timing.hsync_back_porch = 40;
@@ -293,7 +296,7 @@ lv_display_t* display_init(void) {
         frame rate = line rate / (VLW + VBP + VACT + VFP)
         frame rate = PCLK / Htot*Vtot
 
-        HSYNC is calculated as the minimum integer width needed to satisfy HLW+HBP+HFP >= 4.5 us at each PCLK.
+        The total horizontal blanking is the minimum integer width needed to satisfy HLW+HBP+HFP >= 4.5 us at each PCLK.
 
         For min, datasheet provides HBP=2 but it needs to take at least 4.5 us so:
         1/16.6 MHz = 60.24 ns
@@ -301,11 +304,11 @@ lv_display_t* display_init(void) {
         We need to assign the remaining blanking somewhere, and the datasheet does not specify where, so many solutions are possible:
         HLW=71, HBP=2,  HFP=2
         HLW=1,  HBP=72, HFP=2
-        HLW=1,  HBP=2,  HFP=72
         HLW=1,  HBP=37, HFP=37
         ...
 
         Looking at datasheets of other panel controllers, the back porch is the most common place to put the remaining blanking clocks.
+        HFP-heavy distributions produced a blank white screen in hardware testing and are not offered.
 
         16600000/((1+72+480+2)*(1+1+480+1))
                      ^^ remember to assign remaining blanking somewhere
@@ -317,7 +320,30 @@ lv_display_t* display_init(void) {
         all within the documented 54-66 Hz range.
         */
 
-    case DISPLAY_TIMING_TMIN:
+    case DISPLAY_TIMING_MIN_HBP:
+        timing_name = "MIN HBP";
+        timing.pclk_hz = 16600000;
+        timing.hsync_pulse_width = 1;
+        timing.hsync_back_porch = 72;
+        timing.hsync_front_porch = 2;
+        timing.vsync_pulse_width = 1;
+        timing.vsync_back_porch = 1;
+        timing.vsync_front_porch = 1;
+        break;
+
+    case DISPLAY_TIMING_MIN_BAL:
+        timing_name = "MIN BAL";
+        timing.pclk_hz = 16600000;
+        timing.hsync_pulse_width = 1;
+        timing.hsync_back_porch = 37;
+        timing.hsync_front_porch = 37;
+        timing.vsync_pulse_width = 1;
+        timing.vsync_back_porch = 1;
+        timing.vsync_front_porch = 1;
+        break;
+
+    case DISPLAY_TIMING_MIN_HSYNC:
+        timing_name = "MIN HSYNC";
         timing.pclk_hz = 16600000;
         timing.hsync_pulse_width = 71;
         timing.hsync_back_porch = 2;
@@ -327,20 +353,66 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 1;
         break;
 
-    case DISPLAY_TIMING_TMID:
+    case DISPLAY_TIMING_MID_HBP:
+        timing_name = "MID HBP";
         timing.pclk_hz = 26150000;
-        timing.hsync_pulse_width = 52;
-        timing.hsync_back_porch = 64;
+        timing.hsync_pulse_width = 1;
+        timing.hsync_back_porch = 115;
         timing.hsync_front_porch = 2;
         timing.vsync_pulse_width = 64;
         timing.vsync_back_porch = 64;
         timing.vsync_front_porch = 128;
         break;
 
-    case DISPLAY_TIMING_TMAX:
+    case DISPLAY_TIMING_MID_BAL:
+        timing_name = "MID BAL";
+        timing.pclk_hz = 26150000;
+        timing.hsync_pulse_width = 1;
+        timing.hsync_back_porch = 58;
+        timing.hsync_front_porch = 59;
+        timing.vsync_pulse_width = 64;
+        timing.vsync_back_porch = 64;
+        timing.vsync_front_porch = 128;
+        break;
+
+    case DISPLAY_TIMING_MID_HSYNC:
+        timing_name = "MID HSYNC";
+        timing.pclk_hz = 26150000;
+        timing.hsync_pulse_width = 114;
+        timing.hsync_back_porch = 2;
+        timing.hsync_front_porch = 2;
+        timing.vsync_pulse_width = 64;
+        timing.vsync_back_porch = 64;
+        timing.vsync_front_porch = 128;
+        break;
+
+    case DISPLAY_TIMING_MAX_HBP:
+        timing_name = "MAX HBP";
         timing.pclk_hz = 35700000;
         timing.hsync_pulse_width = 33;
         timing.hsync_back_porch = 126;
+        timing.hsync_front_porch = 2;
+        timing.vsync_pulse_width = 126;
+        timing.vsync_back_porch = 126;
+        timing.vsync_front_porch = 255;
+        break;
+
+    case DISPLAY_TIMING_MAX_BAL:
+        timing_name = "MAX BAL";
+        timing.pclk_hz = 35700000;
+        timing.hsync_pulse_width = 1;
+        timing.hsync_back_porch = 80;
+        timing.hsync_front_porch = 80;
+        timing.vsync_pulse_width = 126;
+        timing.vsync_back_porch = 126;
+        timing.vsync_front_porch = 255;
+        break;
+
+    case DISPLAY_TIMING_MAX_HSYNC:
+        timing_name = "MAX HSYNC";
+        timing.pclk_hz = 35700000;
+        timing.hsync_pulse_width = 157;
+        timing.hsync_back_porch = 2;
         timing.hsync_front_porch = 2;
         timing.vsync_pulse_width = 126;
         timing.vsync_back_porch = 126;
@@ -351,7 +423,8 @@ lv_display_t* display_init(void) {
         break;
     }
 
-    s_rgb_timing = timing;
+    s_rgb_timing.timing = timing;
+    s_rgb_timing.name = timing_name;
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M

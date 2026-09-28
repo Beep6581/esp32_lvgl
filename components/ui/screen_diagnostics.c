@@ -16,17 +16,35 @@
 #define TIMING_BUTTON_WIDTH 72
 #define TIMING_BUTTON_HEIGHT 42
 #define TIMING_BUTTON_GAP 14
+#define TIMING_GRID_COLUMNS 3
+#define TIMING_GRID_BUTTON_WIDTH 100
+#define TIMING_GRID_COLUMN_GAP 8
+#define TIMING_GRID_ROW_GAP 6
+#define TIMING_GRID_TO_BUTTON_GAP 10
 
 static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
-static const display_timing_mode_t s_timing_button_mode[] = {
+static const display_timing_mode_t s_standard_timing_mode[] = {
     DISPLAY_TIMING_BS,
     DISPLAY_TIMING_WT,
-    DISPLAY_TIMING_TMIN,
-    DISPLAY_TIMING_TMID,
-    DISPLAY_TIMING_TMAX,
 };
-static const char* const s_timing_button_label[] = {"BS", "WT", "TMIN", "TMID", "TMAX"};
+static const char* const s_standard_timing_label[] = {"BS", "WT"};
+static const display_timing_mode_t s_diagnostic_timing_mode[] = {
+    DISPLAY_TIMING_MIN_HBP,
+    DISPLAY_TIMING_MIN_BAL,
+    DISPLAY_TIMING_MIN_HSYNC,
+    DISPLAY_TIMING_MID_HBP,
+    DISPLAY_TIMING_MID_BAL,
+    DISPLAY_TIMING_MID_HSYNC,
+    DISPLAY_TIMING_MAX_HBP,
+    DISPLAY_TIMING_MAX_BAL,
+    DISPLAY_TIMING_MAX_HSYNC,
+};
+static const char* const s_diagnostic_timing_label[] = {
+    "MIN HBP", "MIN BAL", "MIN HSYNC",
+    "MID HBP", "MID BAL", "MID HSYNC",
+    "MAX HBP", "MAX BAL", "MAX HSYNC",
+};
 
 static uint8_t blend_channel(uint8_t from, uint8_t to, uint32_t position, uint32_t distance) {
     return (uint8_t)((from * (distance - position) + to * position) / distance);
@@ -115,7 +133,8 @@ static void hue_gradient_create(lv_obj_t* parent) {
     lv_canvas_set_buffer(canvas, s_gradient_buffer, width, height, LV_COLOR_FORMAT_RGB565);
     lv_obj_set_pos(canvas, 0, 0);
 
-    const esp_lcd_rgb_timing_t* timing = display_get_rgb_timing();
+    const display_rgb_timing_t* active_timing = display_get_rgb_timing();
+    const esp_lcd_rgb_timing_t* timing = &active_timing->timing;
     char pclk_text[48];
     if ((timing->pclk_hz % 1000000U) == 0U) {
         snprintf(pclk_text, sizeof(pclk_text), "%lu * 1000 * 1000", (unsigned long)(timing->pclk_hz / 1000000U));
@@ -125,6 +144,7 @@ static void hue_gradient_create(lv_obj_t* parent) {
 
     lv_obj_t* label = lv_label_create(parent);
     lv_label_set_text_fmt(label,
+                          "mode = %s\n"
                           "pclk_hz = %s\n"
                           "hsync_pulse_width = %lu\n"
                           "hsync_back_porch = %lu\n"
@@ -132,11 +152,12 @@ static void hue_gradient_create(lv_obj_t* parent) {
                           "vsync_pulse_width = %lu\n"
                           "vsync_back_porch = %lu\n"
                           "vsync_front_porch = %lu",
-                          pclk_text, (unsigned long)timing->hsync_pulse_width, (unsigned long)timing->hsync_back_porch, (unsigned long)timing->hsync_front_porch,
+                          active_timing->name, pclk_text,
+                          (unsigned long)timing->hsync_pulse_width, (unsigned long)timing->hsync_back_porch, (unsigned long)timing->hsync_front_porch,
                           (unsigned long)timing->vsync_pulse_width, (unsigned long)timing->vsync_back_porch, (unsigned long)timing->vsync_front_porch);
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-    lv_obj_center(label);
+    lv_obj_align(label, LV_ALIGN_CENTER, 0, -30);
 }
 
 static void timing_button_cb(lv_event_t* e) {
@@ -149,29 +170,55 @@ static void timing_button_cb(lv_event_t* e) {
     ESP_LOGE(TAG, "failed to save timing mode: %s", esp_err_to_name(err));
 }
 
+static void timing_button_create(lv_obj_t* parent, const display_timing_mode_t* mode,
+                                 const char* text, int32_t x, int32_t y,
+                                 int32_t width, int32_t height) {
+    lv_obj_t* button = lv_button_create(parent);
+    lv_obj_set_size(button, width, height);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_style_bg_color(button, lv_color_hex(0x202020), 0);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(button, lv_color_hex(0xC0C0C0), 0);
+    lv_obj_set_style_border_width(button, 1, 0);
+    lv_obj_set_style_radius(button, 4, 0);
+    lv_obj_add_event_cb(button, timing_button_cb, LV_EVENT_CLICKED, (void*)mode);
+
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, lv_color_hex(0xC0C0C0), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
+    lv_obj_center(label);
+}
+
 static void timing_buttons_create(lv_obj_t* parent) {
-    const size_t button_count = sizeof(s_timing_button_mode) / sizeof(s_timing_button_mode[0]);
-    const int32_t total_width = (TIMING_BUTTON_WIDTH * (int32_t)button_count) +
-                                (TIMING_BUTTON_GAP * ((int32_t)button_count - 1));
-    const int32_t start_x = (BOARD_LCD_HRES - total_width) / 2;
-    const int32_t y = BOARD_LCD_VRES - TIMING_BUTTON_HEIGHT - 14;
+    const size_t standard_count = sizeof(s_standard_timing_mode) / sizeof(s_standard_timing_mode[0]);
+    const int32_t standard_width = (TIMING_BUTTON_WIDTH * (int32_t)standard_count) +
+                                   (TIMING_BUTTON_GAP * ((int32_t)standard_count - 1));
+    const int32_t standard_start_x = (BOARD_LCD_HRES - standard_width) / 2;
+    const int32_t standard_y = BOARD_LCD_VRES - TIMING_BUTTON_HEIGHT - 14;
 
-    for (size_t i = 0; i < button_count; i++) {
-        lv_obj_t* button = lv_button_create(parent);
-        lv_obj_set_size(button, TIMING_BUTTON_WIDTH, TIMING_BUTTON_HEIGHT);
-        lv_obj_set_pos(button, start_x + (int32_t)i * (TIMING_BUTTON_WIDTH + TIMING_BUTTON_GAP), y);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x202020), 0);
-        lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_color(button, lv_color_hex(0xC0C0C0), 0);
-        lv_obj_set_style_border_width(button, 1, 0);
-        lv_obj_set_style_radius(button, 4, 0);
-        lv_obj_add_event_cb(button, timing_button_cb, LV_EVENT_CLICKED, (void*)&s_timing_button_mode[i]);
+    for (size_t i = 0; i < standard_count; i++) {
+        timing_button_create(parent, &s_standard_timing_mode[i], s_standard_timing_label[i],
+                             standard_start_x + (int32_t)i * (TIMING_BUTTON_WIDTH + TIMING_BUTTON_GAP),
+                             standard_y, TIMING_BUTTON_WIDTH, TIMING_BUTTON_HEIGHT);
+    }
 
-        lv_obj_t* label = lv_label_create(button);
-        lv_label_set_text(label, s_timing_button_label[i]);
-        lv_obj_set_style_text_color(label, lv_color_hex(0xC0C0C0), 0);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-        lv_obj_center(label);
+    const size_t diagnostic_count = sizeof(s_diagnostic_timing_mode) / sizeof(s_diagnostic_timing_mode[0]);
+    const int32_t grid_width = (TIMING_GRID_BUTTON_WIDTH * TIMING_GRID_COLUMNS) +
+                               (TIMING_GRID_COLUMN_GAP * (TIMING_GRID_COLUMNS - 1));
+    const int32_t grid_rows = (int32_t)diagnostic_count / TIMING_GRID_COLUMNS;
+    const int32_t grid_height = (TIMING_BUTTON_HEIGHT * grid_rows) +
+                                (TIMING_GRID_ROW_GAP * (grid_rows - 1));
+    const int32_t grid_start_x = (BOARD_LCD_HRES - grid_width) / 2;
+    const int32_t grid_start_y = standard_y - TIMING_GRID_TO_BUTTON_GAP - grid_height;
+
+    for (size_t i = 0; i < diagnostic_count; i++) {
+        const int32_t column = (int32_t)i % TIMING_GRID_COLUMNS;
+        const int32_t row = (int32_t)i / TIMING_GRID_COLUMNS;
+        timing_button_create(parent, &s_diagnostic_timing_mode[i], s_diagnostic_timing_label[i],
+                             grid_start_x + column * (TIMING_GRID_BUTTON_WIDTH + TIMING_GRID_COLUMN_GAP),
+                             grid_start_y + row * (TIMING_BUTTON_HEIGHT + TIMING_GRID_ROW_GAP),
+                             TIMING_GRID_BUTTON_WIDTH, TIMING_BUTTON_HEIGHT);
     }
 }
 
