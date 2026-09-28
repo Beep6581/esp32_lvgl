@@ -14,6 +14,9 @@
 
 #define SCREEN_DIAGNOSTIC_BAR_COUNT 3
 #define SCREEN_DIAGNOSTIC_ANIMATION_MS 5333
+#define SCREEN_DIAGNOSTIC_GRID_SPACING 40
+#define SCREEN_DIAGNOSTIC_GRID_LINE_WIDTH 2
+#define SCREEN_DIAGNOSTIC_STRIPE_HEIGHT 2
 #define TIMING_BUTTON_WIDTH 72
 #define TIMING_BUTTON_HEIGHT 42
 #define TIMING_BUTTON_GAP 14
@@ -71,12 +74,41 @@ static void color_bar_set_x(void* bar, int32_t x) {
     lv_obj_set_x(bar, x);
 }
 
+static lv_obj_t* diagnostic_rectangle_create(lv_obj_t* parent, int32_t x, int32_t y, int32_t width, int32_t height, lv_color_t color) {
+    lv_obj_t* rectangle = lv_obj_create(parent);
+    lv_obj_set_pos(rectangle, x, y);
+    lv_obj_set_size(rectangle, width, height);
+    lv_obj_remove_flag(rectangle, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(rectangle, color, 0);
+    lv_obj_set_style_bg_opa(rectangle, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(rectangle, 0, 0);
+    lv_obj_set_style_radius(rectangle, 0, 0);
+    lv_obj_set_style_pad_all(rectangle, 0, 0);
+    return rectangle;
+}
+
+static void diagnostic_grid_create(lv_obj_t* parent) {
+    const int32_t half_line_width = SCREEN_DIAGNOSTIC_GRID_LINE_WIDTH / 2;
+
+    for (int32_t x = SCREEN_DIAGNOSTIC_GRID_SPACING; x < BOARD_LCD_HRES; x += SCREEN_DIAGNOSTIC_GRID_SPACING) {
+        diagnostic_rectangle_create(parent, x, 0, half_line_width, BOARD_LCD_VRES, lv_color_black());
+        diagnostic_rectangle_create(parent, x + half_line_width, 0, half_line_width, BOARD_LCD_VRES, lv_color_white());
+    }
+
+    for (int32_t y = SCREEN_DIAGNOSTIC_GRID_SPACING; y < BOARD_LCD_VRES; y += SCREEN_DIAGNOSTIC_GRID_SPACING) {
+        diagnostic_rectangle_create(parent, 0, y, BOARD_LCD_HRES, half_line_width, lv_color_black());
+        diagnostic_rectangle_create(parent, 0, y + half_line_width, BOARD_LCD_HRES, half_line_width, lv_color_white());
+    }
+}
+
 static void color_bars_create(lv_obj_t* parent) {
     const int32_t bar_width = BOARD_LCD_HRES / SCREEN_DIAGNOSTIC_BAR_COUNT;
 
     color_bar_create(parent, 0, bar_width, 0xFF0000);
     color_bar_create(parent, BOARD_LCD_HRES - bar_width, bar_width, 0x0000FF);
     lv_obj_t* green_bar = color_bar_create(parent, 0, bar_width, 0x00FF00);
+    diagnostic_rectangle_create(green_bar, 0, BOARD_LCD_VRES / 3, bar_width, SCREEN_DIAGNOSTIC_STRIPE_HEIGHT, lv_color_black());
+    diagnostic_rectangle_create(green_bar, 0, (BOARD_LCD_VRES * 2) / 3, bar_width, SCREEN_DIAGNOSTIC_STRIPE_HEIGHT, lv_color_black());
 
     lv_anim_t animation;
     lv_anim_init(&animation);
@@ -88,6 +120,8 @@ static void color_bars_create(lv_obj_t* parent) {
     lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&animation, lv_anim_path_linear);
     lv_anim_start(&animation);
+
+    diagnostic_grid_create(parent);
 
     const display_rgb_timing_t* active_timing = display_get_rgb_timing();
     lv_obj_t* label = lv_label_create(parent);
