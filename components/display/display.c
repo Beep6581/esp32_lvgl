@@ -254,7 +254,7 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 8;
         break;
 
-    case DISPLAY_TIMING_BOOTSTRAP:
+    case DISPLAY_TIMING_BS:
         timing.pclk_hz = 10 * 1000 * 1000;
         timing.hsync_pulse_width = 10;
         timing.hsync_back_porch = 40;
@@ -264,8 +264,8 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 8;
         break;
 
-    case DISPLAY_TIMING_OWN:
-        timing.pclk_hz = BOARD_LCD_PCLK_HZ; // BOARD_LCD_PCLK_HZ = 16 * 1000 * 1000
+    case DISPLAY_TIMING_MD:
+        timing.pclk_hz = 16 * 1000 * 1000; // BOARD_LCD_PCLK_HZ = 16 * 1000 * 1000
         timing.hsync_pulse_width = 80;
         timing.hsync_back_porch = 80;
         timing.hsync_front_porch = 40;

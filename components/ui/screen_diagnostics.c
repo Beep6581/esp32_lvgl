@@ -21,8 +21,8 @@ static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
 static const display_timing_mode_t s_timing_button_mode[] = {
     DISPLAY_TIMING_WT,
-    DISPLAY_TIMING_BOOTSTRAP,
-    DISPLAY_TIMING_OWN,
+    DISPLAY_TIMING_BS,
+    DISPLAY_TIMING_MD,
 };
 static const char* const s_timing_button_label[] = {"WT", "BS", "MD"};
 

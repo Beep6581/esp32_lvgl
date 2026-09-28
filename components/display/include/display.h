@@ -10,8 +10,8 @@ extern "C" {
 
 typedef enum {
     DISPLAY_TIMING_WT = 0,
-    DISPLAY_TIMING_BOOTSTRAP,
-    DISPLAY_TIMING_OWN,
+    DISPLAY_TIMING_BS,
+    DISPLAY_TIMING_MD,
     DISPLAY_TIMING_COUNT,
 } display_timing_mode_t;
 
