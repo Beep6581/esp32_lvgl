@@ -264,14 +264,87 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 8;
         break;
 
-    case DISPLAY_TIMING_MD:
-        timing.pclk_hz = 16 * 1000 * 1000; // BOARD_LCD_PCLK_HZ = 16 * 1000 * 1000
-        timing.hsync_pulse_width = 80;
-        timing.hsync_back_porch = 80;
-        timing.hsync_front_porch = 40;
-        timing.vsync_pulse_width = 80;
-        timing.vsync_back_porch = 80;
-        timing.vsync_front_porch = 40;
+        /*
+        GC9503V datasheet, 5.3.2 DPI interface timing, figure 12.
+        Some values in GC9503V datasheet were clipped - those were taken from GC9503CV datasheet.
+
+        HLW+HBP+HFP >= 4.5us
+
+        Parameter                    Symbol  Min   Typ   Max   Units
+        Frame Rate                   FR      54          66    fps
+        Horizontal Low Pulse width   HLW     1           -     DOTCLK
+        Horizontal Back Porch        HBP     2           126   DOTCLK
+        Horizontal Address           HACT          480         DOTCLK
+        Horizontal Front Porch       HFP     2           -     DOTCLK
+        Vertical Low Pulse width     VLW     1           126   Line
+        Vertical Back Porch          VBP     1           126   Line
+        Vertical Address             VACT                864   Line
+        Vertical Front Porch         VFP     1           255   Line
+        Data Clock                   DCLK    16.6        35.7  MHz
+
+        PCLK = pixel clock = DCLK = data clock = DOTCLK
+        HSYNC = hsync_pulse_width = HLW = horizontal low pulse width
+
+        How frame rates are calculated:
+        period = 1/freq
+        1 horizontal line = HLW + HBP + HACT + HFP DOTCLK periods
+        1 frame = VLW + VBP + VACT + VFP lines
+        line rate = PCLK / (HLW + HBP + HACT + HFP)
+        frame rate = line rate / (VLW + VBP + VACT + VFP)
+        frame rate = PCLK / Htot*Vtot
+
+        HSYNC is calculated as the minimum integer width needed to satisfy HLW+HBP+HFP >= 4.5 us at each PCLK.
+
+        For min, datasheet provides HBP=2 but it needs to take at least 4.5 us so:
+        1/16.6 MHz = 60.24 ns
+        4.5 us / 60.24 ns = ceil(74.4) clocks = 75 clocks
+        We need to assign the remaining blanking somewhere, and the datasheet does not specify where, so many solutions are possible:
+        HLW=71, HBP=2,  HFP=2
+        HLW=1,  HBP=72, HFP=2
+        HLW=1,  HBP=2,  HFP=72
+        HLW=1,  HBP=37, HFP=37
+        ...
+
+        Looking at datasheets of other panel controllers, the back porch is the most common place to put the remaining blanking clocks.
+
+        16600000/((1+72+480+2)*(1+1+480+1))
+                     ^^ remember to assign remaining blanking somewhere
+
+        For the 480x480 LCD the resulting nominal frame rates are:
+            min 61.93 Hz
+            mid 59.41 Hz
+            max 56.43 Hz
+        all within the documented 54-66 Hz range.
+        */
+
+    case DISPLAY_TIMING_TMIN:
+        timing.pclk_hz = 16600000;
+        timing.hsync_pulse_width = 71;
+        timing.hsync_back_porch = 2;
+        timing.hsync_front_porch = 2;
+        timing.vsync_pulse_width = 1;
+        timing.vsync_back_porch = 1;
+        timing.vsync_front_porch = 1;
+        break;
+
+    case DISPLAY_TIMING_TMID:
+        timing.pclk_hz = 26150000;
+        timing.hsync_pulse_width = 52;
+        timing.hsync_back_porch = 64;
+        timing.hsync_front_porch = 2;
+        timing.vsync_pulse_width = 64;
+        timing.vsync_back_porch = 64;
+        timing.vsync_front_porch = 128;
+        break;
+
+    case DISPLAY_TIMING_TMAX:
+        timing.pclk_hz = 35700000;
+        timing.hsync_pulse_width = 33;
+        timing.hsync_back_porch = 126;
+        timing.hsync_front_porch = 2;
+        timing.vsync_pulse_width = 126;
+        timing.vsync_back_porch = 126;
+        timing.vsync_front_porch = 255;
         break;
 
     default:

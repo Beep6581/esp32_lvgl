@@ -20,11 +20,13 @@
 static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
 static const display_timing_mode_t s_timing_button_mode[] = {
-    DISPLAY_TIMING_WT,
     DISPLAY_TIMING_BS,
-    DISPLAY_TIMING_MD,
+    DISPLAY_TIMING_WT,
+    DISPLAY_TIMING_TMIN,
+    DISPLAY_TIMING_TMID,
+    DISPLAY_TIMING_TMAX,
 };
-static const char* const s_timing_button_label[] = {"WT", "BS", "MD"};
+static const char* const s_timing_button_label[] = {"BS", "WT", "TMIN", "TMID", "TMAX"};
 
 static uint8_t blend_channel(uint8_t from, uint8_t to, uint32_t position, uint32_t distance) {
     return (uint8_t)((from * (distance - position) + to * position) / distance);
@@ -148,11 +150,13 @@ static void timing_button_cb(lv_event_t* e) {
 }
 
 static void timing_buttons_create(lv_obj_t* parent) {
-    const int32_t total_width = (TIMING_BUTTON_WIDTH * 3) + (TIMING_BUTTON_GAP * 2);
+    const size_t button_count = sizeof(s_timing_button_mode) / sizeof(s_timing_button_mode[0]);
+    const int32_t total_width = (TIMING_BUTTON_WIDTH * (int32_t)button_count) +
+                                (TIMING_BUTTON_GAP * ((int32_t)button_count - 1));
     const int32_t start_x = (BOARD_LCD_HRES - total_width) / 2;
     const int32_t y = BOARD_LCD_VRES - TIMING_BUTTON_HEIGHT - 14;
 
-    for (size_t i = 0; i < 3; i++) {
+    for (size_t i = 0; i < button_count; i++) {
         lv_obj_t* button = lv_button_create(parent);
         lv_obj_set_size(button, TIMING_BUTTON_WIDTH, TIMING_BUTTON_HEIGHT);
         lv_obj_set_pos(button, start_x + (int32_t)i * (TIMING_BUTTON_WIDTH + TIMING_BUTTON_GAP), y);
