@@ -328,18 +328,18 @@ lv_display_t* display_init(void) {
         timing.hsync_front_porch = 2;
         timing.vsync_pulse_width = 1;
         timing.vsync_back_porch = 1;
-        timing.vsync_front_porch = 1;
+        timing.vsync_front_porch = 16;
         break;
 
     case DISPLAY_TIMING_MIN_BAL:
         timing_name = "MIN BAL";
         timing.pclk_hz = 16600000;
         timing.hsync_pulse_width = 1;
-        timing.hsync_back_porch = 37;
-        timing.hsync_front_porch = 37;
+        timing.hsync_back_porch = 72;
+        timing.hsync_front_porch = 2;
         timing.vsync_pulse_width = 1;
         timing.vsync_back_porch = 1;
-        timing.vsync_front_porch = 1;
+        timing.vsync_front_porch = 71;
         break;
 
     case DISPLAY_TIMING_MIN_HSYNC:
@@ -434,7 +434,7 @@ lv_display_t* display_init(void) {
         .in_color_format = LCD_COLOR_FMT_RGB565,
         .out_color_format = LCD_COLOR_FMT_RGB565,
         .num_fbs = 2,
-        .bounce_buffer_size_px = BOARD_LCD_HRES * 30,
+        .bounce_buffer_size_px = BOARD_LCD_HRES * 40,
         .dma_burst_size = 64, // Replaces removed psram/sram trans-align fields in ESP-IDF 6.
         .hsync_gpio_num = BOARD_LCD_RGB_HSYNC_GPIO,
         .vsync_gpio_num = BOARD_LCD_RGB_VSYNC_GPIO,
