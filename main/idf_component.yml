@@ -1,8 +1,7 @@
 # ESP-IDF Component Manager manifest.
-# Port target: ESP-IDF v6.x and LVGL v9.5.0.
 dependencies:
   idf: ">=6.0.0,<7.0.0"
-  lvgl/lvgl: "9.5.0"
+  lvgl/lvgl: "9.6.0"
   espressif/esp_lvgl_port: "2.9.0"
   espressif/esp_lcd_panel_io_additions: "1.0.1"
   espressif/esp_lcd_gc9503: "3.0.1"
