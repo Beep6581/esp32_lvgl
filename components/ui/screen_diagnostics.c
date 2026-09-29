@@ -17,6 +17,9 @@
 #define SCREEN_DIAGNOSTIC_GRID_SPACING 40
 #define SCREEN_DIAGNOSTIC_GRID_LINE_WIDTH 2
 #define SCREEN_DIAGNOSTIC_STRIPE_HEIGHT 2
+#define SWIPE_DIAGNOSTIC_ANIMATION_MS 2400
+#define SWIPE_DIAGNOSTIC_CIRCLE_SIZE 300
+#define SWIPE_DIAGNOSTIC_LINE_WIDTH 4
 #define TIMING_BUTTON_WIDTH 72
 #define TIMING_BUTTON_HEIGHT 42
 #define TIMING_BUTTON_GAP 14
@@ -39,6 +42,10 @@ static const display_timing_mode_t s_diagnostic_timing_mode[] = {
 };
 static const char* const s_diagnostic_timing_label[] = {
     "MIN HBP", "MIN BAL", "MIN HSYNC", "MID HBP", "MID BAL", "MID HSYNC", "MAX HBP", "MAX BAL", "MAX HSYNC",
+};
+static const lv_point_precise_t s_swipe_diagonal_points[] = {
+    {60, BOARD_LCD_VRES - 60},
+    {BOARD_LCD_HRES - 60, 60},
 };
 
 static uint8_t blend_channel(uint8_t from, uint8_t to, uint32_t position, uint32_t distance) {
@@ -99,6 +106,76 @@ static void diagnostic_grid_create(lv_obj_t* parent) {
         diagnostic_rectangle_create(parent, 0, y, BOARD_LCD_HRES, half_line_width, lv_color_black());
         diagnostic_rectangle_create(parent, 0, y + half_line_width, BOARD_LCD_HRES, half_line_width, lv_color_white());
     }
+}
+
+static void swipe_test_page_create(lv_obj_t* parent, int32_t x, lv_color_t background_color, lv_color_t foreground_color, const char* text) {
+    lv_obj_t* page = lv_obj_create(parent);
+    lv_obj_set_pos(page, x, 0);
+    lv_obj_set_size(page, BOARD_LCD_HRES, BOARD_LCD_VRES);
+    lv_obj_remove_flag(page, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(page, background_color, 0);
+    lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_radius(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 0, 0);
+
+    diagnostic_grid_create(page);
+
+    lv_obj_t* circle = lv_obj_create(page);
+    lv_obj_set_size(circle, SWIPE_DIAGNOSTIC_CIRCLE_SIZE, SWIPE_DIAGNOSTIC_CIRCLE_SIZE);
+    lv_obj_center(circle);
+    lv_obj_remove_flag(circle, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_opa(circle, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(circle, foreground_color, 0);
+    lv_obj_set_style_border_width(circle, SWIPE_DIAGNOSTIC_LINE_WIDTH, 0);
+    lv_obj_set_style_radius(circle, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_pad_all(circle, 0, 0);
+
+    diagnostic_rectangle_create(page, 0, (BOARD_LCD_VRES - SWIPE_DIAGNOSTIC_LINE_WIDTH) / 2, BOARD_LCD_HRES, SWIPE_DIAGNOSTIC_LINE_WIDTH, foreground_color);
+    diagnostic_rectangle_create(page, (BOARD_LCD_HRES - SWIPE_DIAGNOSTIC_LINE_WIDTH) / 2, 0, SWIPE_DIAGNOSTIC_LINE_WIDTH, BOARD_LCD_VRES, foreground_color);
+
+    lv_obj_t* diagonal = lv_line_create(page);
+    lv_line_set_points(diagonal, s_swipe_diagonal_points, 2);
+    lv_obj_set_style_line_color(diagonal, foreground_color, 0);
+    lv_obj_set_style_line_width(diagonal, SWIPE_DIAGNOSTIC_LINE_WIDTH, 0);
+
+    lv_obj_t* label = lv_label_create(page);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_bg_color(label, background_color, 0);
+    lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(label, foreground_color, 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_pad_all(label, 8, 0);
+    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 16);
+}
+
+static void swipe_track_set_x(void* track, int32_t x) {
+    lv_obj_set_x(track, x);
+}
+
+static void swipe_test_create(lv_obj_t* parent) {
+    lv_obj_t* track = lv_obj_create(parent);
+    lv_obj_set_pos(track, 0, 0);
+    lv_obj_set_size(track, BOARD_LCD_HRES * 2, BOARD_LCD_VRES);
+    lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_width(track, 0, 0);
+    lv_obj_set_style_radius(track, 0, 0);
+    lv_obj_set_style_pad_all(track, 0, 0);
+
+    const display_rgb_timing_t* active_timing = display_get_rgb_timing();
+    swipe_test_page_create(track, 0, lv_color_hex(0x101820), lv_color_hex(0x00FFFF), active_timing->name);
+    swipe_test_page_create(track, BOARD_LCD_HRES, lv_color_hex(0xF0E8D8), lv_color_hex(0xC00030), active_timing->name);
+
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, track);
+    lv_anim_set_exec_cb(&animation, swipe_track_set_x);
+    lv_anim_set_values(&animation, 0, -BOARD_LCD_HRES);
+    lv_anim_set_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
+    lv_anim_set_reverse_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
+    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+    lv_anim_start(&animation);
 }
 
 static void color_bars_create(lv_obj_t* parent) {
@@ -282,12 +359,15 @@ void ui_screen_diagnostics_init(lv_display_t* disp) {
 
     lv_obj_t* color_bars_page = lv_tabview_add_tab(tabview, "RGB");
     lv_obj_t* gradient_page = lv_tabview_add_tab(tabview, "Hue");
+    lv_obj_t* swipe_page = lv_tabview_add_tab(tabview, "Swipe");
     screen_page_style(color_bars_page);
     screen_page_style(gradient_page);
+    screen_page_style(swipe_page);
     color_bars_create(color_bars_page);
     hue_gradient_create(gradient_page);
     timing_buttons_create(gradient_page);
-    lv_tabview_set_active(tabview, 1, LV_ANIM_OFF);
+    swipe_test_create(swipe_page);
+    lv_tabview_set_active(tabview, 2, LV_ANIM_OFF);
 
     lvgl_port_unlock();
 }
