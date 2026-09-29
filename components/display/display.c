@@ -331,8 +331,8 @@ lv_display_t* display_init(void) {
         timing.vsync_front_porch = 16;
         break;
 
-    case DISPLAY_TIMING_MIN_BAL:
-        timing_name = "MIN BAL";
+    case DISPLAY_TIMING_MIN_HBP_54HZ:
+        timing_name = "MIN HBP 54Hz";
         timing.pclk_hz = 16600000;
         timing.hsync_pulse_width = 1;
         timing.hsync_back_porch = 72;

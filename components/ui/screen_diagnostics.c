@@ -54,11 +54,11 @@ static const display_timing_mode_t s_standard_timing_mode[] = {
 };
 static const char* const s_standard_timing_label[] = {"BS", "WT"};
 static const display_timing_mode_t s_diagnostic_timing_mode[] = {
-    DISPLAY_TIMING_MIN_HBP,   DISPLAY_TIMING_MIN_BAL, DISPLAY_TIMING_MIN_HSYNC, DISPLAY_TIMING_MID_HBP,   DISPLAY_TIMING_MID_BAL,
+    DISPLAY_TIMING_MIN_HBP,   DISPLAY_TIMING_MIN_HBP_54HZ, DISPLAY_TIMING_MIN_HSYNC, DISPLAY_TIMING_MID_HBP,   DISPLAY_TIMING_MID_BAL,
     DISPLAY_TIMING_MID_HSYNC, DISPLAY_TIMING_MAX_HBP, DISPLAY_TIMING_MAX_BAL,   DISPLAY_TIMING_MAX_HSYNC,
 };
 static const char* const s_diagnostic_timing_label[] = {
-    "MIN HBP", "MIN BAL", "MIN HSYNC", "MID HBP", "MID BAL", "MID HSYNC", "MAX HBP", "MAX BAL", "MAX HSYNC",
+    "MIN HBP", "MIN HBP 54Hz", "MIN HSYNC", "MID HBP", "MID BAL", "MID HSYNC", "MAX HBP", "MAX BAL", "MAX HSYNC",
 };
 static const lv_point_precise_t s_swipe_diagonal_points[] = {
     {60, BOARD_LCD_VRES - 60},
