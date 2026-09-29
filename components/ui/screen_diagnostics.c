@@ -3,6 +3,7 @@
 #include "board.h"
 #include "display.h"
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -34,6 +35,18 @@ static uint8_t* s_gradient_buffer;
 #if CONFIG_UI_METRICS
 static uint32_t s_swipe_animation_exec_count;
 static uint32_t s_swipe_metrics_last_tick;
+typedef struct {
+    uint32_t refresh_count;
+    uint32_t render_start;
+    uint32_t render_elapsed_sum;
+    uint32_t render_count;
+    uint32_t flush_in_render_start;
+    uint32_t flush_in_render_elapsed_sum;
+    uint32_t flush_outside_render_start;
+    uint32_t flush_outside_render_elapsed_sum;
+    bool render_in_progress;
+} swipe_display_metrics_t;
+static swipe_display_metrics_t s_swipe_display_metrics;
 #endif
 static const display_timing_mode_t s_standard_timing_mode[] = {
     DISPLAY_TIMING_BS,
@@ -163,14 +176,73 @@ static void monitored_swipe_track_set_x(void* track, int32_t x) {
     s_swipe_animation_exec_count++;
 }
 
+static void swipe_display_event_cb(lv_event_t* event) {
+    switch (lv_event_get_code(event)) {
+        case LV_EVENT_REFR_READY:
+            s_swipe_display_metrics.refresh_count++;
+            break;
+        case LV_EVENT_RENDER_START:
+            s_swipe_display_metrics.render_in_progress = true;
+            s_swipe_display_metrics.render_start = lv_tick_get();
+            break;
+        case LV_EVENT_RENDER_READY:
+            s_swipe_display_metrics.render_in_progress = false;
+            s_swipe_display_metrics.render_elapsed_sum += lv_tick_elaps(s_swipe_display_metrics.render_start);
+            s_swipe_display_metrics.render_count++;
+            break;
+        case LV_EVENT_FLUSH_START:
+        case LV_EVENT_FLUSH_WAIT_START:
+            if (s_swipe_display_metrics.render_in_progress) {
+                s_swipe_display_metrics.flush_in_render_start = lv_tick_get();
+            } else {
+                s_swipe_display_metrics.flush_outside_render_start = lv_tick_get();
+            }
+            break;
+        case LV_EVENT_FLUSH_FINISH:
+        case LV_EVENT_FLUSH_WAIT_FINISH:
+            if (s_swipe_display_metrics.render_in_progress) {
+                s_swipe_display_metrics.flush_in_render_elapsed_sum += lv_tick_elaps(s_swipe_display_metrics.flush_in_render_start);
+            } else {
+                s_swipe_display_metrics.flush_outside_render_elapsed_sum += lv_tick_elaps(s_swipe_display_metrics.flush_outside_render_start);
+            }
+            break;
+        default:
+            break;
+    }
+}
+
 static void swipe_metrics_timer_cb(lv_timer_t* timer) {
     const uint32_t elapsed_ms = lv_tick_elaps(s_swipe_metrics_last_tick);
     const uint32_t exec_count = s_swipe_animation_exec_count;
+    uint32_t callbacks_per_second = 0;
+    uint32_t fps = 0;
+    uint32_t render_ms = 0;
+    uint32_t flush_ms = 0;
+
+    if (elapsed_ms > 0) {
+        callbacks_per_second = exec_count * 1000 / elapsed_ms;
+        fps = s_swipe_display_metrics.refresh_count * 1000 / elapsed_ms;
+    }
+
+    const uint32_t maximum_fps = 1000 / LV_DEF_REFR_PERIOD;
+    if (fps > maximum_fps) {
+        fps = maximum_fps;
+    }
+
+    if (s_swipe_display_metrics.render_count > 0) {
+        render_ms = (s_swipe_display_metrics.render_elapsed_sum - s_swipe_display_metrics.flush_in_render_elapsed_sum) / s_swipe_display_metrics.render_count;
+        flush_ms = (s_swipe_display_metrics.flush_in_render_elapsed_sum + s_swipe_display_metrics.flush_outside_render_elapsed_sum) /
+                   s_swipe_display_metrics.render_count;
+    }
+
+    const uint32_t refresh_ms = render_ms + flush_ms;
 
     (void)timer;
     s_swipe_animation_exec_count = 0;
+    s_swipe_display_metrics = (swipe_display_metrics_t){0};
     s_swipe_metrics_last_tick = lv_tick_get();
-    ESP_LOGI(TAG, "Swipe animation: %lu exec callbacks in %lu ms", (unsigned long)exec_count, (unsigned long)elapsed_ms);
+    ESP_LOGI(TAG, "Swipe: %lu callbacks/s | LVGL: %lu FPS, %lu ms (%lu render | %lu flush)", (unsigned long)callbacks_per_second, (unsigned long)fps,
+             (unsigned long)refresh_ms, (unsigned long)render_ms, (unsigned long)flush_ms);
 }
 #endif
 
@@ -199,7 +271,7 @@ static void swipe_test_create(lv_obj_t* parent) {
     lv_anim_start(&animation);
 }
 
-static void solid_swipe_test_create(lv_obj_t* parent) {
+static void solid_swipe_test_create(lv_obj_t* parent, lv_display_t* display) {
     lv_obj_t* track = lv_obj_create(parent);
     lv_obj_set_pos(track, 0, 0);
     lv_obj_set_size(track, BOARD_LCD_HRES * 2, BOARD_LCD_VRES);
@@ -227,6 +299,8 @@ static void solid_swipe_test_create(lv_obj_t* parent) {
 #if CONFIG_UI_METRICS
     s_swipe_animation_exec_count = 0;
     s_swipe_metrics_last_tick = lv_tick_get();
+    s_swipe_display_metrics = (swipe_display_metrics_t){0};
+    lv_display_add_event_cb(display, swipe_display_event_cb, LV_EVENT_ALL, NULL);
     lv_timer_create(swipe_metrics_timer_cb, 1000, NULL);
 #endif
     lv_anim_start(&animation);
@@ -423,7 +497,7 @@ void ui_screen_diagnostics_init(lv_display_t* disp) {
     hue_gradient_create(gradient_page);
     timing_buttons_create(gradient_page);
     swipe_test_create(swipe_page);
-    solid_swipe_test_create(solid_swipe_page);
+    solid_swipe_test_create(solid_swipe_page, disp);
     lv_tabview_set_active(tabview, 3, LV_ANIM_OFF);
 
     lvgl_port_unlock();
