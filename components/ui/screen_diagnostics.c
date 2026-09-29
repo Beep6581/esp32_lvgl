@@ -31,6 +31,10 @@
 
 static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
+#if CONFIG_UI_METRICS
+static uint32_t s_swipe_animation_exec_count;
+static uint32_t s_swipe_metrics_last_tick;
+#endif
 static const display_timing_mode_t s_standard_timing_mode[] = {
     DISPLAY_TIMING_BS,
     DISPLAY_TIMING_WT,
@@ -151,7 +155,22 @@ static void swipe_test_page_create(lv_obj_t* parent, int32_t x, lv_color_t backg
 
 static void swipe_track_set_x(void* track, int32_t x) {
     lv_obj_set_x(track, x);
+#if CONFIG_UI_METRICS
+    s_swipe_animation_exec_count++;
+#endif
 }
+
+#if CONFIG_UI_METRICS
+static void swipe_metrics_timer_cb(lv_timer_t* timer) {
+    const uint32_t elapsed_ms = lv_tick_elaps(s_swipe_metrics_last_tick);
+    const uint32_t exec_count = s_swipe_animation_exec_count;
+
+    (void)timer;
+    s_swipe_animation_exec_count = 0;
+    s_swipe_metrics_last_tick = lv_tick_get();
+    ESP_LOGI(TAG, "Swipe animation: %lu exec callbacks in %lu ms", (unsigned long)exec_count, (unsigned long)elapsed_ms);
+}
+#endif
 
 static void swipe_test_create(lv_obj_t* parent) {
     lv_obj_t* track = lv_obj_create(parent);
@@ -175,6 +194,11 @@ static void swipe_test_create(lv_obj_t* parent) {
     lv_anim_set_reverse_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
     lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+#if CONFIG_UI_METRICS
+    s_swipe_animation_exec_count = 0;
+    s_swipe_metrics_last_tick = lv_tick_get();
+    lv_timer_create(swipe_metrics_timer_cb, 1000, NULL);
+#endif
     lv_anim_start(&animation);
 }
 

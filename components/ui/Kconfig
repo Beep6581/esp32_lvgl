@@ -1,9 +1,10 @@
 menu "UI"
 
 config UI_METRICS
-    bool "Log UI/LVGL metrics once per second"
+    bool "Log Swipe animation metrics once per second"
     default n
     help
-        Logs LVGL tick delta and animation steps per second.
+        Logs the number of Swipe animation exec callbacks and the elapsed
+        LVGL tick interval once per second.
 
 endmenu

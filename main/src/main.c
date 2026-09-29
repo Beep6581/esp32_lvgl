@@ -27,7 +27,26 @@
 
 static const char* TAG = "main";
 
+#if CONFIG_SPIRAM_MODE_OCT
+#define APP_PSRAM_MODE "octal"
+#elif CONFIG_SPIRAM_MODE_QUAD
+#define APP_PSRAM_MODE "quad"
+#else
+#define APP_PSRAM_MODE "unknown"
+#endif
+
+#if CONFIG_SPIRAM_XIP_FROM_PSRAM
+#define APP_PSRAM_XIP_ENABLED 1
+#else
+#define APP_PSRAM_XIP_ENABLED 0
+#endif
+
 void app_main(void) {
+    ESP_LOGI(TAG,
+             "Build config: LV_DEF_REFR_PERIOD=%d ms, LV_USE_SYSMON=%d, LV_USE_PERF_MONITOR=%d, PSRAM=%s/%d MHz, D-cache=%d KiB/%d B line, PSRAM XIP=%d",
+             LV_DEF_REFR_PERIOD, LV_USE_SYSMON, LV_USE_PERF_MONITOR, APP_PSRAM_MODE, CONFIG_SPIRAM_SPEED, CONFIG_ESP32S3_DATA_CACHE_SIZE / 1024,
+             CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, APP_PSRAM_XIP_ENABLED);
+
     ESP_ERROR_CHECK(i2c_bus_init());
 
 #if CONFIG_APP_MODE_AIR_QUALITY

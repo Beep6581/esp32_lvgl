@@ -2,15 +2,6 @@ cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(hello_lvgl)
 
-# Ensure LVGL uses lv_conf.h (independent of include path quirks)
-idf_component_get_property(lvgl_lib lvgl__lvgl COMPONENT_LIB)
-if(lvgl_lib)
-    target_compile_definitions(${lvgl_lib} PUBLIC LV_CONF_INCLUDE_SIMPLE)
-    target_include_directories(${lvgl_lib} PUBLIC
-        ${CMAKE_SOURCE_DIR}/components/lvgl_conf/include
-    )
-endif()
-
 # --------
 # Fix compile_commands to not generate clang errors.
 # Warning race condition: must run after compile_commands.json is generated.
