@@ -4,6 +4,7 @@ idf_component_register(
     REQUIRES
         board
         esp_driver_gpio
+        freertos
         esp_lcd
         esp_system
         lvgl__lvgl

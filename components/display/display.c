@@ -8,6 +8,9 @@
 
 #include "driver/gpio.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include <stdbool.h>
 
 #include "esp_err.h"
@@ -32,8 +35,163 @@ static const char* TAG = "display";
 static const char* DISPLAY_NVS_NAMESPACE = "display";
 static const char* DISPLAY_NVS_TIMING_MODE_KEY = "timing_mode";
 
+#define RGB_FRAMEBUFFER_COUNT 3
+#define TRIPLE_BUFFER_LOG_PERIOD_MS 5000
+/* Change this one value to restore the validated FULL-mode comparison. */
+#define TRIPLE_BUFFER_RENDER_MODE LV_DISPLAY_RENDER_MODE_DIRECT
+
+typedef struct {
+    esp_lcd_panel_handle_t panel;
+    void* framebuffer[RGB_FRAMEBUFFER_COUNT];
+    lv_draw_buf_t draw_buffer[RGB_FRAMEBUFFER_COUNT];
+    SemaphoreHandle_t frame_complete_sem;
+    volatile uint32_t frame_sequence;
+    uint32_t pending_frame_sequence;
+    int8_t scanout;
+    int8_t pending;
+    int8_t last_rendered;
+    int8_t last_completed;
+    uint32_t rendered[RGB_FRAMEBUFFER_COUNT];
+    uint32_t submitted[RGB_FRAMEBUFFER_COUNT];
+    uint32_t completed[RGB_FRAMEBUFFER_COUNT];
+    uint32_t scanout_count[RGB_FRAMEBUFFER_COUNT];
+    uint32_t recycled[RGB_FRAMEBUFFER_COUNT];
+    uint32_t last_log_ms;
+} triple_buffer_state_t;
+
+static triple_buffer_state_t s_triple_buffer;
 static display_rgb_timing_t s_rgb_timing;
 static bool s_nvs_ready;
+
+static int8_t triple_buffer_index(const void* framebuffer) {
+    for (int8_t i = 0; i < RGB_FRAMEBUFFER_COUNT; i++) {
+        if (s_triple_buffer.framebuffer[i] == framebuffer) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static bool triple_buffer_frame_complete_cb(esp_lcd_panel_handle_t panel, const esp_lcd_rgb_panel_event_data_t* event_data, void* user_ctx) {
+    triple_buffer_state_t* state = user_ctx;
+    BaseType_t task_woken = pdFALSE;
+
+    (void)panel;
+    (void)event_data;
+    state->frame_sequence++;
+    xSemaphoreGiveFromISR(state->frame_complete_sem, &task_woken);
+    return task_woken == pdTRUE;
+}
+
+static void triple_buffer_wait_for_pending(void) {
+    if (s_triple_buffer.pending < 0) {
+        return;
+    }
+
+    while ((int32_t)(s_triple_buffer.frame_sequence - s_triple_buffer.pending_frame_sequence) < 0) {
+        xSemaphoreTake(s_triple_buffer.frame_complete_sem, portMAX_DELAY);
+    }
+
+    const int8_t completed = s_triple_buffer.scanout;
+    s_triple_buffer.completed[completed]++;
+    s_triple_buffer.recycled[completed]++;
+    s_triple_buffer.last_completed = completed;
+    s_triple_buffer.scanout = s_triple_buffer.pending;
+    s_triple_buffer.scanout_count[s_triple_buffer.scanout]++;
+    s_triple_buffer.pending = -1;
+}
+
+static void triple_buffer_flush_wait_cb(lv_display_t* display) {
+    (void)display;
+    triple_buffer_wait_for_pending();
+}
+
+static void triple_buffer_log(void) {
+    const uint32_t now = esp_log_timestamp();
+    if (now - s_triple_buffer.last_log_ms < TRIPLE_BUFFER_LOG_PERIOD_MS) {
+        return;
+    }
+    s_triple_buffer.last_log_ms = now;
+
+    ESP_LOGI(TAG,
+             "Triple RGB: render/submit=fb%d complete/recycled=fb%d scanout=fb%d pending=fb%d | "
+             "fb0 r=%lu s=%lu c=%lu out=%lu free=%lu | fb1 r=%lu s=%lu c=%lu out=%lu free=%lu | "
+             "fb2 r=%lu s=%lu c=%lu out=%lu free=%lu",
+             s_triple_buffer.last_rendered, s_triple_buffer.last_completed, s_triple_buffer.scanout, s_triple_buffer.pending,
+             (unsigned long)s_triple_buffer.rendered[0], (unsigned long)s_triple_buffer.submitted[0], (unsigned long)s_triple_buffer.completed[0],
+             (unsigned long)s_triple_buffer.scanout_count[0], (unsigned long)s_triple_buffer.recycled[0],
+             (unsigned long)s_triple_buffer.rendered[1], (unsigned long)s_triple_buffer.submitted[1], (unsigned long)s_triple_buffer.completed[1],
+             (unsigned long)s_triple_buffer.scanout_count[1], (unsigned long)s_triple_buffer.recycled[1],
+             (unsigned long)s_triple_buffer.rendered[2], (unsigned long)s_triple_buffer.submitted[2], (unsigned long)s_triple_buffer.completed[2],
+             (unsigned long)s_triple_buffer.scanout_count[2], (unsigned long)s_triple_buffer.recycled[2]);
+}
+
+static void triple_buffer_flush_cb(lv_display_t* display, const lv_area_t* area, uint8_t* color_map) {
+    if (!lv_display_flush_is_last(display)) {
+        lv_display_flush_ready(display);
+        return;
+    }
+
+    const int8_t rendered = triple_buffer_index(color_map);
+    ESP_ERROR_CHECK(rendered >= 0 ? ESP_OK : ESP_ERR_INVALID_ARG);
+    ESP_ERROR_CHECK((rendered != s_triple_buffer.scanout && rendered != s_triple_buffer.pending) ? ESP_OK : ESP_ERR_INVALID_STATE);
+
+    s_triple_buffer.rendered[rendered]++;
+    s_triple_buffer.last_rendered = rendered;
+    triple_buffer_wait_for_pending();
+
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(s_triple_buffer.panel, 0, 0, BOARD_LCD_HRES, BOARD_LCD_VRES, color_map));
+    s_triple_buffer.submitted[rendered]++;
+    s_triple_buffer.pending = rendered;
+    /* Requiring a boundary after draw_bitmap returns avoids a submit/VSYNC race. */
+    s_triple_buffer.pending_frame_sequence = s_triple_buffer.frame_sequence + 1;
+
+    triple_buffer_log();
+    if (TRIPLE_BUFFER_RENDER_MODE != LV_DISPLAY_RENDER_MODE_DIRECT) {
+        lv_display_flush_ready(display);
+    }
+    (void)area;
+}
+
+static void triple_buffer_enable(lv_display_t* display, esp_lcd_panel_handle_t panel) {
+    s_triple_buffer = (triple_buffer_state_t){
+        .panel = panel,
+        .scanout = 0,
+        .pending = -1,
+        .last_rendered = -1,
+        .last_completed = -1,
+        .scanout_count = {1, 0, 0},
+        .last_log_ms = esp_log_timestamp(),
+    };
+    s_triple_buffer.frame_complete_sem = xSemaphoreCreateBinary();
+    ESP_ERROR_CHECK(s_triple_buffer.frame_complete_sem != NULL ? ESP_OK : ESP_ERR_NO_MEM);
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_get_frame_buffer(panel, RGB_FRAMEBUFFER_COUNT, &s_triple_buffer.framebuffer[0],
+                                                       &s_triple_buffer.framebuffer[1], &s_triple_buffer.framebuffer[2]));
+
+    const uint32_t stride = lv_draw_buf_width_to_stride(BOARD_LCD_HRES, LV_COLOR_FORMAT_RGB565);
+    const uint32_t buffer_size = stride * BOARD_LCD_VRES;
+    for (int i = 0; i < RGB_FRAMEBUFFER_COUNT; i++) {
+        ESP_ERROR_CHECK(lv_draw_buf_init(&s_triple_buffer.draw_buffer[i], BOARD_LCD_HRES, BOARD_LCD_VRES, LV_COLOR_FORMAT_RGB565,
+                                         stride, s_triple_buffer.framebuffer[i], buffer_size) == LV_RESULT_OK
+                            ? ESP_OK
+                            : ESP_FAIL);
+    }
+
+    /* fb0 is already being scanned, so LVGL starts rendering into fb1. */
+    lv_display_set_draw_buffers(display, &s_triple_buffer.draw_buffer[1], &s_triple_buffer.draw_buffer[2]);
+    lv_display_set_3rd_draw_buffer(display, &s_triple_buffer.draw_buffer[0]);
+    lv_display_set_render_mode(display, TRIPLE_BUFFER_RENDER_MODE);
+    lv_display_set_flush_cb(display, triple_buffer_flush_cb);
+    lv_display_set_flush_wait_cb(display, triple_buffer_flush_wait_cb);
+
+    const esp_lcd_rgb_panel_event_callbacks_t callbacks = {
+        .on_frame_buf_complete = triple_buffer_frame_complete_cb,
+    };
+    ESP_ERROR_CHECK(esp_lcd_rgb_panel_register_event_callbacks(panel, &callbacks, &s_triple_buffer));
+
+    ESP_LOGI(TAG, "Zero-copy triple RGB enabled: fb0=%p fb1=%p fb2=%p, LVGL order=fb1->fb2->fb0", s_triple_buffer.framebuffer[0],
+             s_triple_buffer.framebuffer[1], s_triple_buffer.framebuffer[2]);
+}
 
 const display_rgb_timing_t* display_get_rgb_timing(void) {
     return &s_rgb_timing;
@@ -431,7 +589,7 @@ lv_display_t* display_init(void) {
         .data_width = 16,
         .in_color_format = LCD_COLOR_FMT_RGB565,
         .out_color_format = LCD_COLOR_FMT_RGB565,
-        .num_fbs = 2,
+        .num_fbs = 3,
         .bounce_buffer_size_px = BOARD_LCD_HRES * 40,
         .dma_burst_size = 64, // Replaces removed psram/sram trans-align fields in ESP-IDF 6.
         .hsync_gpio_num = BOARD_LCD_RGB_HSYNC_GPIO,
@@ -557,8 +715,8 @@ lv_display_t* display_init(void) {
                 .buff_spiram = 1,
                 .sw_rotate = 0,
                 .swap_bytes = 0,
-                .full_refresh = 0,
-                .direct_mode = 1,
+                .full_refresh = TRIPLE_BUFFER_RENDER_MODE == LV_DISPLAY_RENDER_MODE_FULL,
+                .direct_mode = TRIPLE_BUFFER_RENDER_MODE == LV_DISPLAY_RENDER_MODE_DIRECT,
             },
     };
 
@@ -567,8 +725,11 @@ lv_display_t* display_init(void) {
                                                .avoid_tearing = 1,
                                            }};
 
+    lvgl_port_lock(0);
     lv_display_t* disp = lvgl_port_add_disp_rgb(&display_config, &rgb_cfg);
+    triple_buffer_enable(disp, panel_handle);
     lv_display_set_default(disp);
+    lvgl_port_unlock();
 
     ESP_LOGI(TAG, "LVGL display registered, disp=%p", disp);
 
