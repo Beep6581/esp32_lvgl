@@ -1,10 +1,10 @@
 menu "UI"
 
 config UI_METRICS
-    bool "Log Swipe animation metrics once per second"
+    bool "Log screen-diagnostic animation metrics once per second"
     default n
     help
-        Logs the number of Swipe animation exec callbacks and the elapsed
-        LVGL tick interval once per second.
+        Logs animation callbacks and LVGL refresh, render, and flush metrics
+        once per second for the active screen-diagnostic page.
 
 endmenu

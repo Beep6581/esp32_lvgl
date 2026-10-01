@@ -21,6 +21,11 @@
 #define SWIPE_DIAGNOSTIC_ANIMATION_MS 2400
 #define SWIPE_DIAGNOSTIC_CIRCLE_SIZE 300
 #define SWIPE_DIAGNOSTIC_LINE_WIDTH 4
+#define DASHBOARD_ARC_ANIMATION_MS 2200
+#define DASHBOARD_BAR_ANIMATION_MS 1700
+#define DASHBOARD_SLIDER_ANIMATION_MS 2600
+#define DASHBOARD_CHART_UPDATE_MS 200
+#define DASHBOARD_CHART_POINT_COUNT 32
 #define TIMING_BUTTON_WIDTH 72
 #define TIMING_BUTTON_HEIGHT 42
 #define TIMING_BUTTON_GAP 14
@@ -32,9 +37,23 @@
 
 static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
+static lv_obj_t* s_diagnostic_tabview;
+static lv_obj_t* s_dashboard_value_label;
+static lv_obj_t* s_dashboard_chart;
+static lv_chart_series_t* s_dashboard_chart_series;
+static uint32_t s_dashboard_chart_step;
+
+enum {
+    DIAGNOSTIC_TAB_RGB,
+    DIAGNOSTIC_TAB_HUE,
+    DIAGNOSTIC_TAB_SWIPE,
+    DIAGNOSTIC_TAB_SOLID,
+    DIAGNOSTIC_TAB_DASHBOARD,
+};
+
 #if CONFIG_UI_METRICS
-static uint32_t s_swipe_animation_exec_count;
-static uint32_t s_swipe_metrics_last_tick;
+static uint32_t s_diagnostic_animation_exec_count;
+static uint32_t s_diagnostic_metrics_last_tick;
 typedef struct {
     uint32_t refresh_count;
     uint32_t render_start;
@@ -45,8 +64,8 @@ typedef struct {
     uint32_t flush_outside_render_start;
     uint32_t flush_outside_render_elapsed_sum;
     bool render_in_progress;
-} swipe_display_metrics_t;
-static swipe_display_metrics_t s_swipe_display_metrics;
+} diagnostic_display_metrics_t;
+static diagnostic_display_metrics_t s_diagnostic_display_metrics;
 #endif
 static const display_timing_mode_t s_standard_timing_mode[] = {
     DISPLAY_TIMING_BS,
@@ -171,39 +190,45 @@ static void swipe_track_set_x(void* track, int32_t x) {
 }
 
 #if CONFIG_UI_METRICS
-static void monitored_swipe_track_set_x(void* track, int32_t x) {
-    swipe_track_set_x(track, x);
-    s_swipe_animation_exec_count++;
+static void diagnostic_animation_callback_record(uint32_t tab_index) {
+    if (s_diagnostic_tabview != NULL && lv_tabview_get_tab_active(s_diagnostic_tabview) == tab_index) {
+        s_diagnostic_animation_exec_count++;
+    }
 }
 
-static void swipe_display_event_cb(lv_event_t* event) {
+static void monitored_swipe_track_set_x(void* track, int32_t x) {
+    swipe_track_set_x(track, x);
+    diagnostic_animation_callback_record(DIAGNOSTIC_TAB_SOLID);
+}
+
+static void diagnostic_display_event_cb(lv_event_t* event) {
     switch (lv_event_get_code(event)) {
         case LV_EVENT_REFR_READY:
-            s_swipe_display_metrics.refresh_count++;
+            s_diagnostic_display_metrics.refresh_count++;
             break;
         case LV_EVENT_RENDER_START:
-            s_swipe_display_metrics.render_in_progress = true;
-            s_swipe_display_metrics.render_start = lv_tick_get();
+            s_diagnostic_display_metrics.render_in_progress = true;
+            s_diagnostic_display_metrics.render_start = lv_tick_get();
             break;
         case LV_EVENT_RENDER_READY:
-            s_swipe_display_metrics.render_in_progress = false;
-            s_swipe_display_metrics.render_elapsed_sum += lv_tick_elaps(s_swipe_display_metrics.render_start);
-            s_swipe_display_metrics.render_count++;
+            s_diagnostic_display_metrics.render_in_progress = false;
+            s_diagnostic_display_metrics.render_elapsed_sum += lv_tick_elaps(s_diagnostic_display_metrics.render_start);
+            s_diagnostic_display_metrics.render_count++;
             break;
         case LV_EVENT_FLUSH_START:
         case LV_EVENT_FLUSH_WAIT_START:
-            if (s_swipe_display_metrics.render_in_progress) {
-                s_swipe_display_metrics.flush_in_render_start = lv_tick_get();
+            if (s_diagnostic_display_metrics.render_in_progress) {
+                s_diagnostic_display_metrics.flush_in_render_start = lv_tick_get();
             } else {
-                s_swipe_display_metrics.flush_outside_render_start = lv_tick_get();
+                s_diagnostic_display_metrics.flush_outside_render_start = lv_tick_get();
             }
             break;
         case LV_EVENT_FLUSH_FINISH:
         case LV_EVENT_FLUSH_WAIT_FINISH:
-            if (s_swipe_display_metrics.render_in_progress) {
-                s_swipe_display_metrics.flush_in_render_elapsed_sum += lv_tick_elaps(s_swipe_display_metrics.flush_in_render_start);
+            if (s_diagnostic_display_metrics.render_in_progress) {
+                s_diagnostic_display_metrics.flush_in_render_elapsed_sum += lv_tick_elaps(s_diagnostic_display_metrics.flush_in_render_start);
             } else {
-                s_swipe_display_metrics.flush_outside_render_elapsed_sum += lv_tick_elaps(s_swipe_display_metrics.flush_outside_render_start);
+                s_diagnostic_display_metrics.flush_outside_render_elapsed_sum += lv_tick_elaps(s_diagnostic_display_metrics.flush_outside_render_start);
             }
             break;
         default:
@@ -211,9 +236,18 @@ static void swipe_display_event_cb(lv_event_t* event) {
     }
 }
 
-static void swipe_metrics_timer_cb(lv_timer_t* timer) {
-    const uint32_t elapsed_ms = lv_tick_elaps(s_swipe_metrics_last_tick);
-    const uint32_t exec_count = s_swipe_animation_exec_count;
+static const char* diagnostic_active_page_name(void) {
+    static const char* const page_name[] = {"RGB", "Hue", "Swipe", "Solid", "Dashboard"};
+    const uint32_t active_tab = lv_tabview_get_tab_active(s_diagnostic_tabview);
+    if (active_tab < sizeof(page_name) / sizeof(page_name[0])) {
+        return page_name[active_tab];
+    }
+    return "Unknown";
+}
+
+static void diagnostic_metrics_timer_cb(lv_timer_t* timer) {
+    const uint32_t elapsed_ms = lv_tick_elaps(s_diagnostic_metrics_last_tick);
+    const uint32_t exec_count = s_diagnostic_animation_exec_count;
     uint32_t callbacks_per_second = 0;
     uint32_t fps = 0;
     uint32_t render_ms = 0;
@@ -221,7 +255,7 @@ static void swipe_metrics_timer_cb(lv_timer_t* timer) {
 
     if (elapsed_ms > 0) {
         callbacks_per_second = exec_count * 1000 / elapsed_ms;
-        fps = s_swipe_display_metrics.refresh_count * 1000 / elapsed_ms;
+        fps = s_diagnostic_display_metrics.refresh_count * 1000 / elapsed_ms;
     }
 
     const uint32_t maximum_fps = 1000 / LV_DEF_REFR_PERIOD;
@@ -229,20 +263,29 @@ static void swipe_metrics_timer_cb(lv_timer_t* timer) {
         fps = maximum_fps;
     }
 
-    if (s_swipe_display_metrics.render_count > 0) {
-        render_ms = (s_swipe_display_metrics.render_elapsed_sum - s_swipe_display_metrics.flush_in_render_elapsed_sum) / s_swipe_display_metrics.render_count;
-        flush_ms = (s_swipe_display_metrics.flush_in_render_elapsed_sum + s_swipe_display_metrics.flush_outside_render_elapsed_sum) /
-                   s_swipe_display_metrics.render_count;
+    if (s_diagnostic_display_metrics.render_count > 0) {
+        render_ms = (s_diagnostic_display_metrics.render_elapsed_sum - s_diagnostic_display_metrics.flush_in_render_elapsed_sum) /
+                    s_diagnostic_display_metrics.render_count;
+        flush_ms = (s_diagnostic_display_metrics.flush_in_render_elapsed_sum + s_diagnostic_display_metrics.flush_outside_render_elapsed_sum) /
+                   s_diagnostic_display_metrics.render_count;
     }
 
     const uint32_t refresh_ms = render_ms + flush_ms;
 
     (void)timer;
-    s_swipe_animation_exec_count = 0;
-    s_swipe_display_metrics = (swipe_display_metrics_t){0};
-    s_swipe_metrics_last_tick = lv_tick_get();
-    ESP_LOGI(TAG, "Swipe: %lu callbacks/s | LVGL: %lu FPS, %lu ms (%lu render | %lu flush)", (unsigned long)callbacks_per_second, (unsigned long)fps,
-             (unsigned long)refresh_ms, (unsigned long)render_ms, (unsigned long)flush_ms);
+    s_diagnostic_animation_exec_count = 0;
+    s_diagnostic_display_metrics = (diagnostic_display_metrics_t){0};
+    s_diagnostic_metrics_last_tick = lv_tick_get();
+    ESP_LOGI(TAG, "%s: %lu animation callbacks/s | LVGL: %lu FPS, %lu ms (%lu render | %lu flush)", diagnostic_active_page_name(),
+             (unsigned long)callbacks_per_second, (unsigned long)fps, (unsigned long)refresh_ms, (unsigned long)render_ms, (unsigned long)flush_ms);
+}
+
+static void diagnostic_metrics_start(lv_display_t* display) {
+    s_diagnostic_animation_exec_count = 0;
+    s_diagnostic_metrics_last_tick = lv_tick_get();
+    s_diagnostic_display_metrics = (diagnostic_display_metrics_t){0};
+    lv_display_add_event_cb(display, diagnostic_display_event_cb, LV_EVENT_ALL, NULL);
+    lv_timer_create(diagnostic_metrics_timer_cb, 1000, NULL);
 }
 #endif
 
@@ -271,7 +314,7 @@ static void swipe_test_create(lv_obj_t* parent) {
     lv_anim_start(&animation);
 }
 
-static void solid_swipe_test_create(lv_obj_t* parent, lv_display_t* display) {
+static void solid_swipe_test_create(lv_obj_t* parent) {
     lv_obj_t* track = lv_obj_create(parent);
     lv_obj_set_pos(track, 0, 0);
     lv_obj_set_size(track, BOARD_LCD_HRES * 2, BOARD_LCD_VRES);
@@ -296,14 +339,186 @@ static void solid_swipe_test_create(lv_obj_t* parent, lv_display_t* display) {
     lv_anim_set_reverse_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
     lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
     lv_anim_set_path_cb(&animation, lv_anim_path_linear);
-#if CONFIG_UI_METRICS
-    s_swipe_animation_exec_count = 0;
-    s_swipe_metrics_last_tick = lv_tick_get();
-    s_swipe_display_metrics = (swipe_display_metrics_t){0};
-    lv_display_add_event_cb(display, swipe_display_event_cb, LV_EVENT_ALL, NULL);
-    lv_timer_create(swipe_metrics_timer_cb, 1000, NULL);
-#endif
     lv_anim_start(&animation);
+}
+
+static lv_obj_t* dashboard_card_create(lv_obj_t* parent, int32_t x, int32_t y, int32_t width, int32_t height) {
+    lv_obj_t* card = lv_obj_create(parent);
+    lv_obj_set_pos(card, x, y);
+    lv_obj_set_size(card, width, height);
+    lv_obj_set_scrollable(card, false);
+    lv_obj_set_style_bg_color(card, lv_color_hex(0x182431), 0);
+    lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_color(card, lv_color_hex(0x31465A), 0);
+    lv_obj_set_style_border_width(card, 1, 0);
+    lv_obj_set_style_radius(card, 10, 0);
+    lv_obj_set_style_pad_all(card, 0, 0);
+    return card;
+}
+
+static void dashboard_arc_set_value(void* arc, int32_t value) {
+    lv_arc_set_value(arc, value);
+    if (s_dashboard_value_label != NULL) {
+        lv_label_set_text_fmt(s_dashboard_value_label, "%ld%%", (long)value);
+    }
+#if CONFIG_UI_METRICS
+    diagnostic_animation_callback_record(DIAGNOSTIC_TAB_DASHBOARD);
+#endif
+}
+
+static void dashboard_bar_set_value(void* bar, int32_t value) {
+    lv_bar_set_value(bar, value, LV_ANIM_OFF);
+#if CONFIG_UI_METRICS
+    diagnostic_animation_callback_record(DIAGNOSTIC_TAB_DASHBOARD);
+#endif
+}
+
+static void dashboard_slider_set_value(void* slider, int32_t value) {
+    lv_slider_set_value(slider, value, LV_ANIM_OFF);
+#if CONFIG_UI_METRICS
+    diagnostic_animation_callback_record(DIAGNOSTIC_TAB_DASHBOARD);
+#endif
+}
+
+static void dashboard_chart_timer_cb(lv_timer_t* timer) {
+    static const int32_t values[DASHBOARD_CHART_POINT_COUNT] = {
+        42, 45, 49, 53, 58, 62, 66, 69, 72, 74, 73, 71, 68, 64, 61, 57,
+        54, 51, 48, 46, 44, 43, 45, 48, 52, 57, 61, 65, 62, 58, 53, 47,
+    };
+
+    (void)timer;
+    lv_chart_set_next_value(s_dashboard_chart, s_dashboard_chart_series,
+                            values[s_dashboard_chart_step % DASHBOARD_CHART_POINT_COUNT]);
+    s_dashboard_chart_step++;
+}
+
+static void dashboard_animation_start(lv_obj_t* object, lv_anim_exec_xcb_t callback, int32_t start, int32_t end, uint32_t duration) {
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, object);
+    lv_anim_set_exec_cb(&animation, callback);
+    lv_anim_set_values(&animation, start, end);
+    lv_anim_set_duration(&animation, duration);
+    lv_anim_set_reverse_duration(&animation, duration);
+    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+    lv_anim_start(&animation);
+}
+
+static void dashboard_button_create(lv_obj_t* parent, int32_t x, const char* text) {
+    lv_obj_t* button = lv_button_create(parent);
+    lv_obj_set_pos(button, x, 70);
+    lv_obj_set_size(button, 136, 40);
+    lv_obj_set_style_bg_color(button, lv_color_hex(0x2463A8), 0);
+    lv_obj_set_style_radius(button, 7, 0);
+
+    lv_obj_t* label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_center(label);
+}
+
+static void dashboard_create(lv_obj_t* parent) {
+    lv_obj_set_style_bg_color(parent, lv_color_hex(0x0C141D), 0);
+
+    lv_obj_t* header = dashboard_card_create(parent, 12, 10, 456, 48);
+    lv_obj_t* title = lv_label_create(header);
+    lv_label_set_text(title, "DEVICE DASHBOARD");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
+    lv_obj_align(title, LV_ALIGN_LEFT_MID, 14, 0);
+
+    lv_obj_t* status = lv_label_create(header);
+    lv_label_set_text(status, "ONLINE");
+    lv_obj_set_style_text_color(status, lv_color_hex(0x55D68B), 0);
+    lv_obj_align(status, LV_ALIGN_RIGHT_MID, -14, 0);
+
+    dashboard_button_create(parent, 12, "Overview");
+    dashboard_button_create(parent, 172, "Control");
+    dashboard_button_create(parent, 332, "History");
+
+    lv_obj_t* gauge_card = dashboard_card_create(parent, 12, 122, 210, 184);
+    lv_obj_t* gauge_title = lv_label_create(gauge_card);
+    lv_label_set_text(gauge_title, "SYSTEM LOAD");
+    lv_obj_set_style_text_color(gauge_title, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_align(gauge_title, LV_ALIGN_TOP_MID, 0, 10);
+
+    lv_obj_t* arc = lv_arc_create(gauge_card);
+    lv_obj_set_size(arc, 136, 136);
+    lv_obj_align(arc, LV_ALIGN_BOTTOM_MID, 0, -7);
+    lv_arc_set_range(arc, 0, 100);
+    lv_arc_set_rotation(arc, 135);
+    lv_arc_set_bg_angles(arc, 0, 270);
+    lv_obj_set_clickable(arc, false);
+    lv_obj_set_style_arc_width(arc, 12, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, 12, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0x263747), LV_PART_MAIN);
+    lv_obj_set_style_arc_color(arc, lv_color_hex(0x39B8FF), LV_PART_INDICATOR);
+
+    s_dashboard_value_label = lv_label_create(gauge_card);
+    lv_label_set_text(s_dashboard_value_label, "15%");
+    lv_obj_set_style_text_color(s_dashboard_value_label, lv_color_white(), 0);
+    lv_obj_set_style_text_font(s_dashboard_value_label, &lv_font_montserrat_16, 0);
+    lv_obj_align(s_dashboard_value_label, LV_ALIGN_CENTER, 0, 20);
+
+    lv_obj_t* control_card = dashboard_card_create(parent, 234, 122, 234, 184);
+    lv_obj_t* output_label = lv_label_create(control_card);
+    lv_label_set_text(output_label, "OUTPUT");
+    lv_obj_set_style_text_color(output_label, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_set_pos(output_label, 14, 12);
+
+    lv_obj_t* bar = lv_bar_create(control_card);
+    lv_obj_set_pos(bar, 14, 40);
+    lv_obj_set_size(bar, 206, 20);
+    lv_bar_set_range(bar, 0, 100);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x263747), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(bar, lv_color_hex(0x55D68B), LV_PART_INDICATOR);
+
+    lv_obj_t* target_label = lv_label_create(control_card);
+    lv_label_set_text(target_label, "TARGET");
+    lv_obj_set_style_text_color(target_label, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_set_pos(target_label, 14, 88);
+
+    lv_obj_t* slider = lv_slider_create(control_card);
+    lv_obj_set_pos(slider, 14, 119);
+    lv_obj_set_size(slider, 206, 20);
+    lv_slider_set_range(slider, 0, 100);
+    lv_obj_set_clickable(slider, false);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0x263747), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(slider, lv_color_hex(0xFFB84D), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_KNOB);
+
+    lv_obj_t* chart_card = dashboard_card_create(parent, 12, 318, 456, 150);
+    lv_obj_t* chart_title = lv_label_create(chart_card);
+    lv_label_set_text(chart_title, "ACTIVITY - LAST 6 SECONDS");
+    lv_obj_set_style_text_color(chart_title, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_set_pos(chart_title, 12, 8);
+
+    s_dashboard_chart = lv_chart_create(chart_card);
+    lv_obj_set_pos(s_dashboard_chart, 10, 31);
+    lv_obj_set_size(s_dashboard_chart, 436, 108);
+    lv_chart_set_type(s_dashboard_chart, LV_CHART_TYPE_LINE);
+    lv_chart_set_axis_range(s_dashboard_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
+    lv_chart_set_point_count(s_dashboard_chart, DASHBOARD_CHART_POINT_COUNT);
+    lv_chart_set_div_line_count(s_dashboard_chart, 4, 8);
+    lv_chart_set_update_mode(s_dashboard_chart, LV_CHART_UPDATE_MODE_SHIFT);
+    lv_obj_set_style_bg_color(s_dashboard_chart, lv_color_hex(0x111C27), 0);
+    lv_obj_set_style_border_width(s_dashboard_chart, 0, 0);
+    lv_obj_set_style_line_color(s_dashboard_chart, lv_color_hex(0x2A3B4C), LV_PART_MAIN);
+    lv_obj_set_style_line_width(s_dashboard_chart, 1, LV_PART_MAIN);
+    lv_obj_set_style_line_width(s_dashboard_chart, 2, LV_PART_ITEMS);
+    lv_obj_set_style_size(s_dashboard_chart, 0, 0, LV_PART_INDICATOR);
+    s_dashboard_chart_series = lv_chart_add_series(s_dashboard_chart, lv_color_hex(0xB679FF), LV_CHART_AXIS_PRIMARY_Y);
+
+    s_dashboard_chart_step = 0;
+    for (uint32_t i = 0; i < DASHBOARD_CHART_POINT_COUNT; i++) {
+        dashboard_chart_timer_cb(NULL);
+    }
+    lv_timer_create(dashboard_chart_timer_cb, DASHBOARD_CHART_UPDATE_MS, NULL);
+
+    dashboard_animation_start(arc, dashboard_arc_set_value, 15, 92, DASHBOARD_ARC_ANIMATION_MS);
+    dashboard_animation_start(bar, dashboard_bar_set_value, 20, 95, DASHBOARD_BAR_ANIMATION_MS);
+    dashboard_animation_start(slider, dashboard_slider_set_value, 5, 95, DASHBOARD_SLIDER_ANIMATION_MS);
 }
 
 static void color_bars_create(lv_obj_t* parent) {
@@ -474,31 +689,37 @@ void ui_screen_diagnostics_init(lv_display_t* disp) {
     lv_obj_remove_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_style_pad_all(screen, 0, 0);
 
-    lv_obj_t* tabview = lv_tabview_create(screen);
-    lv_obj_set_size(tabview, BOARD_LCD_HRES, BOARD_LCD_VRES);
-    lv_obj_set_style_border_width(tabview, 0, 0);
-    lv_obj_set_style_pad_all(tabview, 0, 0);
-    lv_tabview_set_tab_bar_position(tabview, LV_DIR_TOP);
-    lv_tabview_set_tab_bar_size(tabview, 0);
+    s_diagnostic_tabview = lv_tabview_create(screen);
+    lv_obj_set_size(s_diagnostic_tabview, BOARD_LCD_HRES, BOARD_LCD_VRES);
+    lv_obj_set_style_border_width(s_diagnostic_tabview, 0, 0);
+    lv_obj_set_style_pad_all(s_diagnostic_tabview, 0, 0);
+    lv_tabview_set_tab_bar_position(s_diagnostic_tabview, LV_DIR_TOP);
+    lv_tabview_set_tab_bar_size(s_diagnostic_tabview, 0);
 
-    lv_obj_t* content = lv_tabview_get_content(tabview);
+    lv_obj_t* content = lv_tabview_get_content(s_diagnostic_tabview);
     lv_obj_set_style_pad_all(content, 0, 0);
     lv_obj_set_style_pad_column(content, 0, 0);
 
-    lv_obj_t* color_bars_page = lv_tabview_add_tab(tabview, "RGB");
-    lv_obj_t* gradient_page = lv_tabview_add_tab(tabview, "Hue");
-    lv_obj_t* swipe_page = lv_tabview_add_tab(tabview, "Swipe");
-    lv_obj_t* solid_swipe_page = lv_tabview_add_tab(tabview, "Solid");
+    lv_obj_t* color_bars_page = lv_tabview_add_tab(s_diagnostic_tabview, "RGB");
+    lv_obj_t* gradient_page = lv_tabview_add_tab(s_diagnostic_tabview, "Hue");
+    lv_obj_t* swipe_page = lv_tabview_add_tab(s_diagnostic_tabview, "Swipe");
+    lv_obj_t* solid_swipe_page = lv_tabview_add_tab(s_diagnostic_tabview, "Solid");
+    lv_obj_t* dashboard_page = lv_tabview_add_tab(s_diagnostic_tabview, "Dashboard");
     screen_page_style(color_bars_page);
     screen_page_style(gradient_page);
     screen_page_style(swipe_page);
     screen_page_style(solid_swipe_page);
+    screen_page_style(dashboard_page);
     color_bars_create(color_bars_page);
     hue_gradient_create(gradient_page);
     timing_buttons_create(gradient_page);
     swipe_test_create(swipe_page);
-    solid_swipe_test_create(solid_swipe_page, disp);
-    lv_tabview_set_active(tabview, 3, LV_ANIM_OFF);
+    solid_swipe_test_create(solid_swipe_page);
+    dashboard_create(dashboard_page);
+#if CONFIG_UI_METRICS
+    diagnostic_metrics_start(disp);
+#endif
+    lv_tabview_set_active(s_diagnostic_tabview, DIAGNOSTIC_TAB_DASHBOARD, LV_ANIM_OFF);
 
     lvgl_port_unlock();
 }
