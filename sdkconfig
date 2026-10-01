@@ -3836,7 +3836,7 @@ CONFIG_LV_CHECK_ARG_LOG_MODE=0
 #
 # Examples
 #
-CONFIG_LV_BUILD_EXAMPLES=y
+# CONFIG_LV_BUILD_EXAMPLES is not set
 # end of Examples
 
 #

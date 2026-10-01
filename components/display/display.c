@@ -146,17 +146,17 @@ static esp_err_t display_nvs_init(void) {
 static display_timing_mode_t display_get_saved_timing_mode(void) {
     esp_err_t err = display_nvs_init();
     if (err != ESP_OK) {
-        return DISPLAY_TIMING_WT;
+        return DISPLAY_TIMING_MIN_HBP_54HZ;
     }
 
     nvs_handle_t nvs = 0;
     err = nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READONLY, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return DISPLAY_TIMING_WT;
+        return DISPLAY_TIMING_MIN_HBP_54HZ;
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs_open read failed: %s", esp_err_to_name(err));
-        return DISPLAY_TIMING_WT;
+        return DISPLAY_TIMING_MIN_HBP_54HZ;
     }
 
     uint8_t saved_mode = 0;
@@ -164,15 +164,15 @@ static display_timing_mode_t display_get_saved_timing_mode(void) {
     nvs_close(nvs);
 
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return DISPLAY_TIMING_WT;
+        return DISPLAY_TIMING_MIN_HBP_54HZ;
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs_get_u8 timing mode failed: %s", esp_err_to_name(err));
-        return DISPLAY_TIMING_WT;
+        return DISPLAY_TIMING_MIN_HBP_54HZ;
     }
     if (saved_mode >= DISPLAY_TIMING_COUNT) {
         ESP_LOGW(TAG, "ignoring invalid saved timing mode: %u", (unsigned)saved_mode);
-        return DISPLAY_TIMING_WT;
+        return DISPLAY_TIMING_MIN_HBP_54HZ;
     }
 
     return (display_timing_mode_t)saved_mode;
@@ -308,13 +308,12 @@ lv_display_t* display_init(void) {
         Looking at datasheets of other panel controllers, the back porch is the most common place to put the remaining blanking clocks.
         HFP-heavy distributions produced a blank white screen in hardware testing and are not offered.
 
-        16600000/((1+72+480+2)*(1+1+480+1))
-                     ^^ remember to assign remaining blanking somewhere
-
         For the 480x480 LCD the resulting nominal frame rates are:
-            min 61.93 Hz
-            mid 60.00 Hz
-            max 56.43 Hz
+            MIN HBP       16600000/((1+72+480+2)*(1+1+480+16)) = 60.06 Hz
+            MIN HBP 54Hz  16600000/((1+72+480+2)*(1+1+480+71)) = 54.09 Hz
+            MIN HSYNC     16600000/((71+2+480+2)*(1+1+480+1))  = 61.93 Hz
+            MID                                                        60.00 Hz
+            MAX                                                        56.43 Hz
         all within the documented 54-66 Hz range.
         */
 

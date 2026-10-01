@@ -34,18 +34,28 @@ Do not expose sensor register/protocol details to the UI.
 
 ## Known-good display configuration
 
-The RGB display is currently stable. Do not change these settings unless the task specifically requires display work and there is evidence the change is needed:
+The present validated master baseline is:
 
-- PSRAM speed: 80 MHz.
-- LCD pixel clock: 16 MHz.
-- RGB framebuffers: 2.
-- RGB bounce buffer: enabled, currently `BOARD_LCD_HRES * 30` pixels.
-- `bb_mode = 1`.
-- `avoid_tearing = 0`.
-- `full_refresh = 0`.
-- `direct_mode = 0`.
+- Default LCD timing: `DISPLAY_TIMING_MIN_HBP_54HZ` (16.6 MHz PCLK,
+  approximately 54.09 Hz).
+- Two RGB framebuffers in PSRAM.
+- RGB bounce-buffer mode with 40 lines per buffer.
+- `bb_mode = 1`, `avoid_tearing = 1`, `full_refresh = 0`, and
+  `direct_mode = 1`.
+- Octal PSRAM at 80 MHz with XIP enabled.
+- 64 KiB D-cache with 64-byte cache lines.
+- ESP32-S3 CPU at 240 MHz, LVGL refresh period 15 ms, and two LVGL software
+  draw units.
+- Air Quality is the repository default app mode; a local generated
+  `sdkconfig` may select Screen Diagnostics for testing.
 
-The previous periodic RGB screen-shift/glitch was fixed by changing PSRAM from 40 MHz to 80 MHz. Do not undo this.
+See `docs/display_configuration.md` for rationale, experiments, tradeoffs,
+version-specific limitations, and situations worth retesting. Treat this as
+the current baseline rather than a permanent prohibition on future changes.
+
+The previous periodic RGB screen-shift/glitch was fixed by changing PSRAM from
+40 MHz to 80 MHz. Keep that evidence in mind and retest display stability if
+revisiting the PSRAM frequency.
 
 ## I2C and sensor behavior
 
