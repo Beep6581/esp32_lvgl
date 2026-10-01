@@ -10,10 +10,8 @@ The code should stay easy for a human to read and learn C from. Prefer the small
 ## Toolchain and language
 
 - C only. Do not introduce C++.
-- ESP-IDF target: v6.0 for now.
-- LVGL target: v9.5 for now.
-- esp_lvgl_port: 2.9.0.
-- esp_lcd_gc9503: 3.0.1.
+- Use the ESP-IDF and managed-component versions already selected by the
+  project unless the task explicitly asks for an upgrade.
 - ESP32-S3 target.
 - Keep the ESP-IDF component-style project structure.
 - Use only APIs that exist in the project's installed versions.

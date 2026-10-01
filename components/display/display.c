@@ -1,7 +1,5 @@
 /*
  * Minimal LVGL setup for ZX3D95CE01S-TR-4848
- * ESP-IDF: 6.0
- * LVGL: 9.5.0
  */
 
 #include "board.h"
