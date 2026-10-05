@@ -2,10 +2,14 @@
 #include "i2c_bus.h"
 #include "sdkconfig.h"
 #include "touch.h"
-#include "ui.h"
 
 #if CONFIG_APP_MODE_AIR_QUALITY
 #include "air_quality.h"
+#include "ui.h"
+#elif CONFIG_APP_MODE_SCREEN_DIAGNOSTICS
+#include "ui.h"
+#elif CONFIG_APP_MODE_CLOCK
+#include "clock.h"
 #endif
 
 #include "esp_log.h"
@@ -52,8 +56,10 @@ void app_main(void) {
 #if CONFIG_APP_MODE_AIR_QUALITY
     ESP_LOGI(TAG, "Starting air-quality mode");
     ESP_ERROR_CHECK(air_quality_start());
-#else
+#elif CONFIG_APP_MODE_SCREEN_DIAGNOSTICS
     ESP_LOGI(TAG, "Starting screen-diagnostics mode");
+#else
+    ESP_LOGI(TAG, "Starting particle-clock mode");
 #endif
 
     lv_display_t* disp = display_init();
@@ -64,9 +70,12 @@ void app_main(void) {
 
 #if CONFIG_APP_MODE_AIR_QUALITY
     ui_init(disp);
-#else
+    touch_set_point_callback(ui_touch_set_point);
+#elif CONFIG_APP_MODE_SCREEN_DIAGNOSTICS
     ui_screen_diagnostics_init(disp);
     ESP_LOGI(TAG, "Screen diagnostics display ready");
+#else
+    ESP_ERROR_CHECK(clock_start(disp));
 #endif
 
     ESP_ERROR_CHECK(touch_start());

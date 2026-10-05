@@ -4,8 +4,9 @@ idf_component_register(
     REQUIRES
         board
         i2c_bus
-        ui
         esp_lcd
+        lvgl__lvgl
+        espressif__esp_lvgl_port
         espressif__esp_lcd_touch
         esp_lcd_touch_ft6336u
 )

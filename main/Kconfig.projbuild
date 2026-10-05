@@ -10,6 +10,10 @@ config APP_MODE_AIR_QUALITY
 config APP_MODE_SCREEN_DIAGNOSTICS
     bool "Screen diagnostics"
 
+config APP_MODE_CLOCK
+    bool "Particle clock"
+    select LV_FONT_MONTSERRAT_48
+
 endchoice
 
 endmenu

@@ -2,7 +2,6 @@
 
 #include "board.h"
 #include "i2c_bus.h"
-#include "ui.h"
 
 #include "driver/gpio.h"
 #include "esp_lcd_io_i2c.h"
@@ -22,6 +21,11 @@ static lv_indev_t* s_touch_indev = NULL;
 static uint16_t s_last_x = UINT16_MAX;
 static uint16_t s_last_y = UINT16_MAX;
 static bool s_was_pressed = false;
+static touch_point_callback_t s_point_callback = NULL;
+
+void touch_set_point_callback(touch_point_callback_t callback) {
+    s_point_callback = callback;
+}
 
 static void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
     (void)indev;
@@ -49,7 +53,9 @@ static void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
 
         if (!s_was_pressed || point.x != s_last_x || point.y != s_last_y) {
             ESP_LOGI(TAG, "touch: x=%u y=%u", (unsigned)point.x, (unsigned)point.y);
-            ui_touch_set_point(point.x, point.y);
+            if (s_point_callback != NULL) {
+                s_point_callback(point.x, point.y);
+            }
             s_last_x = point.x;
             s_last_y = point.y;
         }
