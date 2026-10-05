@@ -129,6 +129,13 @@ static void backlight_init_off(void) {
     ESP_ERROR_CHECK(gpio_set_level(BOARD_LCD_BL_GPIO, 0));
 }
 
+esp_err_t display_backlight_on(void) {
+    if (BOARD_LCD_BL_GPIO == GPIO_NUM_NC) {
+        return ESP_OK;
+    }
+    return gpio_set_level(BOARD_LCD_BL_GPIO, 1);
+}
+
 static esp_err_t display_nvs_init(void) {
     if (s_nvs_ready) {
         return ESP_OK;
@@ -210,11 +217,13 @@ esp_err_t display_set_timing_mode_and_restart(display_timing_mode_t mode) {
     esp_restart();
 }
 
-lv_display_t* display_init(void) {
+static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
     backlight_init_off();
 
-    const lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
-    ESP_ERROR_CHECK(lvgl_port_init(&lvgl_config));
+    if (direct_panel == NULL) {
+        const lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
+        ESP_ERROR_CHECK(lvgl_port_init(&lvgl_config));
+    }
 
     ESP_LOGI(TAG, "Install 3-wire SPI panel IO");
 
@@ -497,9 +506,13 @@ lv_display_t* display_init(void) {
 
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
-    if (BOARD_LCD_BL_GPIO != GPIO_NUM_NC) {
-        ESP_ERROR_CHECK(gpio_set_level(BOARD_LCD_BL_GPIO, 1));
+    if (direct_panel != NULL) {
+        *direct_panel = panel_handle;
+        ESP_LOGI(TAG, "Direct RGB panel ready, panel=%p", panel_handle);
+        return NULL;
     }
+
+    ESP_ERROR_CHECK(display_backlight_on());
 
     // ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true)); // Don't call this function if auto_del_panel_io is set to 0 and disp_gpio_num is set to -1
 
@@ -572,4 +585,14 @@ lv_display_t* display_init(void) {
     ESP_LOGI(TAG, "LVGL display registered, disp=%p", disp);
 
     return disp;
+}
+
+lv_display_t* display_init(void) {
+    return display_init_common(NULL);
+}
+
+esp_lcd_panel_handle_t display_init_direct(void) {
+    esp_lcd_panel_handle_t panel = NULL;
+    display_init_common(&panel);
+    return panel;
 }

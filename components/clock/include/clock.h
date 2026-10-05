@@ -3,13 +3,13 @@
 #pragma once
 
 #include "esp_err.h"
-#include "lvgl.h"
+#include "esp_lcd_types.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-esp_err_t clock_start(lv_display_t* display);
+esp_err_t clock_start(esp_lcd_panel_handle_t panel);
 
 #ifdef __cplusplus
 }

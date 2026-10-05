@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 #include "clock_mask.h"
+#include "clock_scene.h"
 
 typedef struct particle_engine particle_engine_t;
 
@@ -15,8 +16,7 @@ void particle_engine_destroy(particle_engine_t* engine);
 void particle_engine_set_mask(particle_engine_t* engine, const clock_mask_t* mask, bool transition);
 void particle_engine_pulse_colon(particle_engine_t* engine);
 void particle_engine_update(particle_engine_t* engine, uint32_t elapsed_ms);
-void particle_engine_render_rgb565(particle_engine_t* engine, void* pixels, uint32_t stride_bytes);
+void particle_engine_get_scene(const particle_engine_t* engine, clock_scene_t* scene);
 size_t particle_engine_count(const particle_engine_t* engine);
 size_t particle_engine_spark_count(const particle_engine_t* engine);
-int32_t particle_engine_spark_max_rise(const particle_engine_t* engine);
 size_t particle_engine_memory_size(const particle_engine_t* engine);

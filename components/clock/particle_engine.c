@@ -3,15 +3,14 @@
 #include "particle_engine.h"
 
 #include <limits.h>
-#include <string.h>
 
 #include "esp_heap_caps.h"
 
-#define PARTICLE_COUNT 2000U
+#define PARTICLE_COUNT 1000U
 #define PARTICLE_POSITION_SHIFT 8
 #define PARTICLE_POSITION_ONE (1 << PARTICLE_POSITION_SHIFT)
-#define PARTICLE_DISINTEGRATE_MS 700U
-#define PARTICLE_TRANSITION_MS 1750U
+#define PARTICLE_DISINTEGRATE_MS 1000U
+#define PARTICLE_TRANSITION_MS 3000U
 #define PARTICLE_COLON_SHARE 12U
 #define PARTICLE_HEAT_CELL_SIZE 4U
 #define SPARK_COUNT 16U
@@ -40,7 +39,6 @@ typedef struct {
 typedef struct {
     int32_t x;
     int32_t y;
-    int32_t start_y;
     int16_t velocity_x;
     int16_t velocity_y;
     uint16_t age_ms;
@@ -51,8 +49,10 @@ typedef struct {
 struct particle_engine {
     particle_t particles[PARTICLE_COUNT];
     flame_spark_t sparks[SPARK_COUNT];
+    clock_scene_sprite_t scene_sprites[SPARK_COUNT];
     clock_mask_t mask;
     uint8_t* heat;
+    uint16_t palette[UINT8_MAX + 1U];
     uint32_t random_state;
     uint32_t transition_elapsed_ms;
     uint32_t spark_emit_elapsed_ms;
@@ -60,10 +60,14 @@ struct particle_engine {
     uint16_t height;
     uint16_t heat_width;
     uint16_t heat_height;
+    uint8_t scene_sprite_count;
     uint8_t colon_flare;
     particle_mode_t mode;
     bool mask_ready;
 };
+
+static uint16_t flame_color(uint8_t level);
+static void compose_scene(particle_engine_t* engine);
 
 static uint32_t particle_random(particle_engine_t* engine) {
     uint32_t value = engine->random_state;
@@ -180,6 +184,9 @@ particle_engine_t* particle_engine_create(uint16_t width, uint16_t height) {
         heap_caps_free(engine);
         return NULL;
     }
+    for (uint16_t level = 0; level <= UINT8_MAX; level++) {
+        engine->palette[level] = flame_color((uint8_t)level);
+    }
     engine->random_state = 0x6d2b79f5U;
     return engine;
 }
@@ -282,7 +289,6 @@ static void spark_emit(particle_engine_t* engine) {
         *spark = (flame_spark_t){
             .x = x * PARTICLE_POSITION_ONE,
             .y = y * PARTICLE_POSITION_ONE,
-            .start_y = y * PARTICLE_POSITION_ONE,
             .velocity_x = (int16_t)(random_range(engine, -8, 8) * PARTICLE_POSITION_ONE),
             .velocity_y = (int16_t)(-random_range(engine, 75, 105) * PARTICLE_POSITION_ONE),
             .life_ms = (uint16_t)random_range(engine, 900, 1400),
@@ -363,6 +369,7 @@ void particle_engine_update(particle_engine_t* engine, uint32_t elapsed_ms) {
         }
     }
     update_sparks(engine, elapsed_ms);
+    compose_scene(engine);
 }
 
 static uint16_t flame_color(uint8_t level) {
@@ -433,55 +440,7 @@ static void heat_decay(particle_engine_t* engine) {
     }
 }
 
-static void render_heat(const particle_engine_t* engine, void* pixels, uint32_t stride_bytes) {
-    for (uint16_t heat_y = 0; heat_y < engine->heat_height; heat_y++) {
-        for (uint16_t heat_x = 0; heat_x < engine->heat_width; heat_x++) {
-            const uint8_t level = engine->heat[(uint32_t)heat_y * engine->heat_width + heat_x];
-            if (level == 0U) {
-                continue;
-            }
-
-            const uint16_t color = flame_color(level);
-            const uint16_t x1 = heat_x * PARTICLE_HEAT_CELL_SIZE;
-            const uint16_t y1 = heat_y * PARTICLE_HEAT_CELL_SIZE;
-            const uint16_t x2 = (uint16_t)(x1 + PARTICLE_HEAT_CELL_SIZE) < engine->width ? x1 + PARTICLE_HEAT_CELL_SIZE : engine->width;
-            const uint16_t y2 = (uint16_t)(y1 + PARTICLE_HEAT_CELL_SIZE) < engine->height ? y1 + PARTICLE_HEAT_CELL_SIZE : engine->height;
-
-            for (uint16_t y = y1; y < y2; y++) {
-                uint16_t* row = (uint16_t*)((uint8_t*)pixels + (uint32_t)y * stride_bytes);
-                for (uint16_t x = x1; x < x2; x++) {
-                    row[x] = color;
-                }
-            }
-        }
-    }
-}
-
-static void render_spark(const particle_engine_t* engine, void* pixels, uint32_t stride_bytes, const flame_spark_t* spark) {
-    const int32_t x1 = spark->x >> PARTICLE_POSITION_SHIFT;
-    const int32_t y1 = spark->y >> PARTICLE_POSITION_SHIFT;
-    const uint32_t progress = (uint32_t)spark->age_ms * 255U / spark->life_ms;
-    const uint16_t color = flame_color((uint8_t)(230U - progress * 80U / 255U));
-
-    for (int32_t y = y1; y < y1 + PARTICLE_HEAT_CELL_SIZE; y++) {
-        if (y < 0 || y >= engine->height) {
-            continue;
-        }
-        uint16_t* row = (uint16_t*)((uint8_t*)pixels + (uint32_t)y * stride_bytes);
-        for (int32_t x = x1; x < x1 + PARTICLE_HEAT_CELL_SIZE; x++) {
-            if (x >= 0 && x < engine->width) {
-                row[x] = color;
-            }
-        }
-    }
-}
-
-void particle_engine_render_rgb565(particle_engine_t* engine, void* pixels, uint32_t stride_bytes) {
-    if (engine == NULL || pixels == NULL || !engine->mask_ready || stride_bytes < engine->width * sizeof(uint16_t)) {
-        return;
-    }
-
-    memset(pixels, 0, (size_t)stride_bytes * engine->height);
+static void compose_scene(particle_engine_t* engine) {
     heat_decay(engine);
     for (size_t index = 0; index < PARTICLE_COUNT; index++) {
         const particle_t* particle = &engine->particles[index];
@@ -494,13 +453,38 @@ void particle_engine_render_rgb565(particle_engine_t* engine, void* pixels, uint
             heat_add(engine, x + PARTICLE_HEAT_CELL_SIZE, y, level / 3U);
         }
     }
-    render_heat(engine, pixels, stride_bytes);
+
+    engine->scene_sprite_count = 0U;
     for (size_t index = 0; index < SPARK_COUNT; index++) {
         const flame_spark_t* spark = &engine->sparks[index];
         if (spark->active) {
-            render_spark(engine, pixels, stride_bytes, spark);
+            const uint32_t progress = (uint32_t)spark->age_ms * 255U / spark->life_ms;
+            engine->scene_sprites[engine->scene_sprite_count++] = (clock_scene_sprite_t){
+                .x = (int16_t)(spark->x >> PARTICLE_POSITION_SHIFT),
+                .y = (int16_t)(spark->y >> PARTICLE_POSITION_SHIFT),
+                .width = PARTICLE_HEAT_CELL_SIZE,
+                .height = PARTICLE_HEAT_CELL_SIZE,
+                .color = flame_color((uint8_t)(230U - progress * 80U / 255U)),
+            };
         }
     }
+}
+
+void particle_engine_get_scene(const particle_engine_t* engine, clock_scene_t* scene) {
+    if (engine == NULL || scene == NULL) {
+        return;
+    }
+
+    *scene = (clock_scene_t){
+        .cells = engine->heat,
+        .palette = engine->palette,
+        .sprites = engine->scene_sprites,
+        .sprite_count = engine->scene_sprite_count,
+        .cell_columns = engine->heat_width,
+        .cell_rows = engine->heat_height,
+        .cell_stride = engine->heat_width,
+        .cell_size = PARTICLE_HEAT_CELL_SIZE,
+    };
 }
 
 size_t particle_engine_count(const particle_engine_t* engine) {
@@ -519,24 +503,6 @@ size_t particle_engine_spark_count(const particle_engine_t* engine) {
         }
     }
     return count;
-}
-
-int32_t particle_engine_spark_max_rise(const particle_engine_t* engine) {
-    if (engine == NULL) {
-        return 0;
-    }
-
-    int32_t maximum = 0;
-    for (size_t index = 0; index < SPARK_COUNT; index++) {
-        const flame_spark_t* spark = &engine->sparks[index];
-        if (spark->active) {
-            const int32_t rise = (spark->start_y - spark->y) / PARTICLE_POSITION_ONE;
-            if (rise > maximum) {
-                maximum = rise;
-            }
-        }
-    }
-    return maximum;
 }
 
 size_t particle_engine_memory_size(const particle_engine_t* engine) {

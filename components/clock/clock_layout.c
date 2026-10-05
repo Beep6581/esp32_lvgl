@@ -120,6 +120,16 @@ esp_err_t clock_layout_init(clock_layout_t* layout, uint16_t width, uint16_t hei
         return ESP_ERR_INVALID_ARG;
     }
 
+    /*
+     * Direct clock mode does not start LVGL, but LVGL's font decoder still
+     * needs the draw-buffer stride handler normally installed by lv_init().
+     * Initialize only those public handlers; the animation remains outside
+     * LVGL and no unused LVGL rendering threads are created.
+     */
+    if (!lv_is_initialized()) {
+        lv_draw_buf_init_with_default_handlers(lv_draw_buf_get_handlers());
+    }
+
     *layout = (clock_layout_t){
         .width = width,
         .height = height,
