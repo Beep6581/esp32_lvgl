@@ -25,6 +25,10 @@
 #define FLAME_DETAIL_PARTICLE_STRIDE 29U
 #define FLAME_SCENE_SPRITE_CAPACITY (RISING_SPARK_COUNT + FLAME_DETAIL_SPRITE_COUNT + FLAME_ACCENT_SPRITE_COUNT)
 #define RISING_SPARK_EMIT_INTERVAL_MS 125U
+#define RISING_SPARK_TURBULENCE_PHASE_STEP_MIN 5
+#define RISING_SPARK_TURBULENCE_PHASE_STEP_MAX 11
+#define RISING_SPARK_TURBULENCE_MAX_SPEED_PX_PER_SECOND 48
+#define TURBULENCE_WAVE_PEAK 64
 
 typedef enum {
     PARTICLE_MODE_FLAME,
@@ -54,6 +58,8 @@ typedef struct {
     uint16_t age_ms;
     uint16_t life_ms;
     uint8_t size;
+    uint8_t phase;
+    uint8_t phase_step;
     bool active;
 } flame_spark_t;
 
@@ -92,6 +98,10 @@ static uint32_t particle_random(particle_engine_t* engine) {
 static int32_t random_range(particle_engine_t* engine, int32_t minimum, int32_t maximum) {
     const uint32_t span = (uint32_t)(maximum - minimum + 1);
     return minimum + (int32_t)(particle_random(engine) % span);
+}
+
+static int16_t turbulence_wave(uint8_t phase) {
+    return phase < 128U ? (int16_t)phase - TURBULENCE_WAVE_PEAK : 191 - (int16_t)phase;
 }
 
 static bool mask_bounds_valid(const clock_mask_t* mask, bool colon) {
@@ -254,7 +264,7 @@ static void update_flame(particle_engine_t* engine, particle_t* particle, size_t
     }
 
     particle->phase = (uint8_t)(particle->phase + particle->phase_step);
-    const int16_t turbulence = particle->phase < 128U ? (int16_t)particle->phase - 64 : 191 - (int16_t)particle->phase;
+    const int16_t turbulence = turbulence_wave(particle->phase);
     const int32_t target_x = particle->target_x * PARTICLE_POSITION_SCALE;
     particle->velocity_x += (int16_t)(((target_x - particle->x) * (int32_t)elapsed_ms) / 8000);
     particle->velocity_x += (int16_t)(turbulence * (int32_t)elapsed_ms / 12);
@@ -279,7 +289,7 @@ static void update_attract(particle_engine_t* engine, particle_t* particle, uint
     const int32_t target_x = particle->target_x * PARTICLE_POSITION_SCALE;
     const int32_t target_y = particle->target_y * PARTICLE_POSITION_SCALE;
     particle->phase = (uint8_t)(particle->phase + particle->phase_step);
-    const int16_t turbulence = particle->phase < 128U ? (int16_t)particle->phase - 64 : 191 - (int16_t)particle->phase;
+    const int16_t turbulence = turbulence_wave(particle->phase);
 
     particle->x += (target_x - particle->x) * (int32_t)elapsed_ms / 330;
     particle->y += (target_y - particle->y) * (int32_t)elapsed_ms / 330;
@@ -317,6 +327,8 @@ static void spark_emit(particle_engine_t* engine) {
             .velocity_y = (int16_t)(-random_range(engine, 75, 105) * PARTICLE_POSITION_SCALE),
             .life_ms = (uint16_t)random_range(engine, 900, 1400),
             .size = size,
+            .phase = (uint8_t)particle_random(engine),
+            .phase_step = (uint8_t)random_range(engine, RISING_SPARK_TURBULENCE_PHASE_STEP_MIN, RISING_SPARK_TURBULENCE_PHASE_STEP_MAX),
             .active = true,
         };
         return;
@@ -336,7 +348,10 @@ static void update_sparks(particle_engine_t* engine, uint32_t elapsed_ms) {
             spark->active = false;
             continue;
         }
-        spark->x += (int32_t)spark->velocity_x * elapsed / 1000;
+        spark->phase = (uint8_t)(spark->phase + spark->phase_step);
+        const int32_t turbulence_velocity_x = (int32_t)turbulence_wave(spark->phase) * RISING_SPARK_TURBULENCE_MAX_SPEED_PX_PER_SECOND *
+                                              PARTICLE_POSITION_SCALE / TURBULENCE_WAVE_PEAK;
+        spark->x += ((int32_t)spark->velocity_x + turbulence_velocity_x) * elapsed / 1000;
         spark->y += (int32_t)spark->velocity_y * elapsed / 1000;
     }
 
