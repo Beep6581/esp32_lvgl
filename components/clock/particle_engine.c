@@ -6,15 +6,25 @@
 
 #include "esp_heap_caps.h"
 
-#define PARTICLE_COUNT 1000U
-#define PARTICLE_POSITION_SHIFT 8
-#define PARTICLE_POSITION_ONE (1 << PARTICLE_POSITION_SHIFT)
-#define PARTICLE_DISINTEGRATE_MS 1000U
-#define PARTICLE_TRANSITION_MS 3000U
-#define PARTICLE_COLON_SHARE 12U
-#define PARTICLE_HEAT_CELL_SIZE 4U
-#define SPARK_COUNT 16U
-#define SPARK_EMIT_INTERVAL_MS 125U
+#define FLAME_PARTICLE_COUNT 1500U
+#define PARTICLE_POSITION_FRACTION_BITS 8
+#define PARTICLE_POSITION_SCALE (1 << PARTICLE_POSITION_FRACTION_BITS)
+#define MINUTE_CHANGE_DISINTEGRATE_MS 1000U
+#define MINUTE_CHANGE_TOTAL_MS 3000U
+#define COLON_PARTICLE_EVERY_N 12U
+#define FLAME_BODY_CELL_SIZE_PX 4U
+#define FLAME_FINE_DETAIL_SIZE_PX 1U
+#define FLAME_DETAIL_SIZE_PX 2U
+#define FLAME_ACCENT_SIZE_PX 8U
+#define FLAME_FINE_DETAIL_EVERY_N 3U
+#define RISING_SPARK_COUNT 16U
+#define FLAME_DETAIL_SPRITE_COUNT 28U
+#define FLAME_ACCENT_SPRITE_COUNT 6U
+#define FLAME_ACCENT_PARTICLE_STRIDE 17U
+#define FLAME_DETAIL_PARTICLE_START 131U
+#define FLAME_DETAIL_PARTICLE_STRIDE 29U
+#define FLAME_SCENE_SPRITE_CAPACITY (RISING_SPARK_COUNT + FLAME_DETAIL_SPRITE_COUNT + FLAME_ACCENT_SPRITE_COUNT)
+#define RISING_SPARK_EMIT_INTERVAL_MS 125U
 
 typedef enum {
     PARTICLE_MODE_FLAME,
@@ -43,13 +53,14 @@ typedef struct {
     int16_t velocity_y;
     uint16_t age_ms;
     uint16_t life_ms;
+    uint8_t size;
     bool active;
 } flame_spark_t;
 
 struct particle_engine {
-    particle_t particles[PARTICLE_COUNT];
-    flame_spark_t sparks[SPARK_COUNT];
-    clock_scene_sprite_t scene_sprites[SPARK_COUNT];
+    particle_t particles[FLAME_PARTICLE_COUNT];
+    flame_spark_t sparks[RISING_SPARK_COUNT];
+    clock_scene_sprite_t scene_sprites[FLAME_SCENE_SPRITE_CAPACITY];
     clock_mask_t mask;
     uint8_t* heat;
     uint16_t palette[UINT8_MAX + 1U];
@@ -60,7 +71,7 @@ struct particle_engine {
     uint16_t height;
     uint16_t heat_width;
     uint16_t heat_height;
-    uint8_t scene_sprite_count;
+    size_t scene_sprite_count;
     uint8_t colon_flare;
     particle_mode_t mode;
     bool mask_ready;
@@ -127,7 +138,7 @@ static void sample_mask_upper_edge(particle_engine_t* engine, int16_t* x, int16_
         const uint16_t candidate_x = (uint16_t)random_range(engine, mask->x1, mask->x2);
         const uint16_t candidate_y = (uint16_t)random_range(engine, mask->y1, mask->y2);
         const uint8_t alpha = mask->alpha[candidate_y * mask->stride + candidate_x];
-        const int32_t above_y = (int32_t)candidate_y - 2 * PARTICLE_HEAT_CELL_SIZE;
+        const int32_t above_y = (int32_t)candidate_y - 2 * FLAME_BODY_CELL_SIZE_PX;
         const bool open_above = above_y < 0 || mask->alpha[(uint32_t)above_y * mask->stride + candidate_x] == 0U;
 
         if (alpha != 0U && open_above && (particle_random(engine) & 0xffU) <= alpha) {
@@ -141,13 +152,13 @@ static void sample_mask_upper_edge(particle_engine_t* engine, int16_t* x, int16_
 }
 
 static void set_particle_target(particle_engine_t* engine, particle_t* particle, size_t index) {
-    particle->colon = (index % PARTICLE_COLON_SHARE) == 0U;
+    particle->colon = (index % COLON_PARTICLE_EVERY_N) == 0U;
     sample_mask(engine, particle->colon, &particle->target_x, &particle->target_y);
 }
 
 static void set_flame_velocity(particle_engine_t* engine, particle_t* particle) {
-    particle->velocity_x = (int16_t)(random_range(engine, -8, 8) * PARTICLE_POSITION_ONE);
-    particle->velocity_y = (int16_t)(-random_range(engine, 14, 42) * PARTICLE_POSITION_ONE);
+    particle->velocity_x = (int16_t)(random_range(engine, -8, 8) * PARTICLE_POSITION_SCALE);
+    particle->velocity_y = (int16_t)(-random_range(engine, 14, 42) * PARTICLE_POSITION_SCALE);
     particle->phase = (uint8_t)particle_random(engine);
     particle->phase_step = (uint8_t)random_range(engine, 2, 6);
 }
@@ -158,8 +169,8 @@ static void reset_flame_particle(particle_engine_t* engine, particle_t* particle
     particle->age_ms = spread_age ? (uint16_t)(particle_random(engine) % particle->life_ms) : 0;
     set_flame_velocity(engine, particle);
 
-    particle->x = particle->target_x * PARTICLE_POSITION_ONE + random_range(engine, -2, 2) * PARTICLE_POSITION_ONE;
-    particle->y = particle->target_y * PARTICLE_POSITION_ONE;
+    particle->x = particle->target_x * PARTICLE_POSITION_SCALE + random_range(engine, -2, 2) * PARTICLE_POSITION_SCALE;
+    particle->y = particle->target_y * PARTICLE_POSITION_SCALE;
     if (spread_age) {
         particle->x += (int32_t)particle->velocity_x * particle->age_ms / 1000;
         particle->y += (int32_t)particle->velocity_y * particle->age_ms / 1000;
@@ -177,9 +188,10 @@ particle_engine_t* particle_engine_create(uint16_t width, uint16_t height) {
     }
     engine->width = width;
     engine->height = height;
-    engine->heat_width = (width + PARTICLE_HEAT_CELL_SIZE - 1U) / PARTICLE_HEAT_CELL_SIZE;
-    engine->heat_height = (height + PARTICLE_HEAT_CELL_SIZE - 1U) / PARTICLE_HEAT_CELL_SIZE;
-    engine->heat = heap_caps_calloc((size_t)engine->heat_width * engine->heat_height, sizeof(*engine->heat), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    engine->heat_width = (width + FLAME_BODY_CELL_SIZE_PX - 1U) / FLAME_BODY_CELL_SIZE_PX;
+    engine->heat_height = (height + FLAME_BODY_CELL_SIZE_PX - 1U) / FLAME_BODY_CELL_SIZE_PX;
+    const size_t cell_count = (size_t)engine->heat_width * engine->heat_height;
+    engine->heat = heap_caps_calloc(cell_count, sizeof(*engine->heat), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (engine->heat == NULL) {
         heap_caps_free(engine);
         return NULL;
@@ -211,7 +223,7 @@ void particle_engine_set_mask(particle_engine_t* engine, const clock_mask_t* mas
     if (!transition) {
         engine->mode = PARTICLE_MODE_FLAME;
         engine->transition_elapsed_ms = 0;
-        for (size_t index = 0; index < PARTICLE_COUNT; index++) {
+        for (size_t index = 0; index < FLAME_PARTICLE_COUNT; index++) {
             reset_flame_particle(engine, &engine->particles[index], index, true);
         }
         return;
@@ -219,11 +231,11 @@ void particle_engine_set_mask(particle_engine_t* engine, const clock_mask_t* mas
 
     engine->mode = PARTICLE_MODE_DISINTEGRATE;
     engine->transition_elapsed_ms = 0;
-    for (size_t index = 0; index < PARTICLE_COUNT; index++) {
+    for (size_t index = 0; index < FLAME_PARTICLE_COUNT; index++) {
         particle_t* particle = &engine->particles[index];
         set_particle_target(engine, particle, index);
-        particle->velocity_x = (int16_t)(random_range(engine, -75, 75) * PARTICLE_POSITION_ONE);
-        particle->velocity_y = (int16_t)(random_range(engine, -35, 12) * PARTICLE_POSITION_ONE);
+        particle->velocity_x = (int16_t)(random_range(engine, -75, 75) * PARTICLE_POSITION_SCALE);
+        particle->velocity_y = (int16_t)(random_range(engine, -35, 12) * PARTICLE_POSITION_SCALE);
     }
 }
 
@@ -236,14 +248,14 @@ void particle_engine_pulse_colon(particle_engine_t* engine) {
 static void update_flame(particle_engine_t* engine, particle_t* particle, size_t index, uint32_t elapsed_ms) {
     const int32_t elapsed = (int32_t)elapsed_ms;
     particle->age_ms = (uint16_t)(particle->age_ms + elapsed_ms);
-    if (particle->age_ms >= particle->life_ms || particle->y < -8 * PARTICLE_POSITION_ONE) {
+    if (particle->age_ms >= particle->life_ms || particle->y < -8 * PARTICLE_POSITION_SCALE) {
         reset_flame_particle(engine, particle, index, false);
         return;
     }
 
     particle->phase = (uint8_t)(particle->phase + particle->phase_step);
     const int16_t turbulence = particle->phase < 128U ? (int16_t)particle->phase - 64 : 191 - (int16_t)particle->phase;
-    const int32_t target_x = particle->target_x * PARTICLE_POSITION_ONE;
+    const int32_t target_x = particle->target_x * PARTICLE_POSITION_SCALE;
     particle->velocity_x += (int16_t)(((target_x - particle->x) * (int32_t)elapsed_ms) / 8000);
     particle->velocity_x += (int16_t)(turbulence * (int32_t)elapsed_ms / 12);
     particle->velocity_x = (int16_t)((int32_t)particle->velocity_x * 245 / 256);
@@ -254,18 +266,18 @@ static void update_flame(particle_engine_t* engine, particle_t* particle, size_t
 
 static void update_disintegrate(particle_engine_t* engine, particle_t* particle, uint32_t elapsed_ms) {
     const int32_t elapsed = (int32_t)elapsed_ms;
-    particle->velocity_y += (int16_t)(150 * PARTICLE_POSITION_ONE * elapsed / 1000);
+    particle->velocity_y += (int16_t)(150 * PARTICLE_POSITION_SCALE * elapsed / 1000);
     particle->x += (int32_t)particle->velocity_x * elapsed / 1000;
     particle->y += (int32_t)particle->velocity_y * elapsed / 1000;
 
-    if (particle->x < -16 * PARTICLE_POSITION_ONE || particle->x > (engine->width + 16) * PARTICLE_POSITION_ONE) {
+    if (particle->x < -16 * PARTICLE_POSITION_SCALE || particle->x > (engine->width + 16) * PARTICLE_POSITION_SCALE) {
         particle->velocity_x = (int16_t)-particle->velocity_x;
     }
 }
 
 static void update_attract(particle_engine_t* engine, particle_t* particle, uint32_t elapsed_ms) {
-    const int32_t target_x = particle->target_x * PARTICLE_POSITION_ONE;
-    const int32_t target_y = particle->target_y * PARTICLE_POSITION_ONE;
+    const int32_t target_x = particle->target_x * PARTICLE_POSITION_SCALE;
+    const int32_t target_y = particle->target_y * PARTICLE_POSITION_SCALE;
     particle->phase = (uint8_t)(particle->phase + particle->phase_step);
     const int16_t turbulence = particle->phase < 128U ? (int16_t)particle->phase - 64 : 191 - (int16_t)particle->phase;
 
@@ -275,10 +287,21 @@ static void update_attract(particle_engine_t* engine, particle_t* particle, uint
     (void)engine;
 }
 
+static uint8_t random_spark_size(particle_engine_t* engine) {
+    const uint32_t roll = particle_random(engine) % 8U;
+    if (roll < 2U) {
+        return FLAME_FINE_DETAIL_SIZE_PX;
+    }
+    if (roll == 7U) {
+        return FLAME_BODY_CELL_SIZE_PX;
+    }
+    return FLAME_DETAIL_SIZE_PX;
+}
+
 static void spark_emit(particle_engine_t* engine) {
-    const size_t first = particle_random(engine) % SPARK_COUNT;
-    for (size_t offset = 0; offset < SPARK_COUNT; offset++) {
-        flame_spark_t* spark = &engine->sparks[(first + offset) % SPARK_COUNT];
+    const size_t first = particle_random(engine) % RISING_SPARK_COUNT;
+    for (size_t offset = 0; offset < RISING_SPARK_COUNT; offset++) {
+        flame_spark_t* spark = &engine->sparks[(first + offset) % RISING_SPARK_COUNT];
         if (spark->active) {
             continue;
         }
@@ -286,12 +309,14 @@ static void spark_emit(particle_engine_t* engine) {
         int16_t x;
         int16_t y;
         sample_mask_upper_edge(engine, &x, &y);
+        const uint8_t size = random_spark_size(engine);
         *spark = (flame_spark_t){
-            .x = x * PARTICLE_POSITION_ONE,
-            .y = y * PARTICLE_POSITION_ONE,
-            .velocity_x = (int16_t)(random_range(engine, -8, 8) * PARTICLE_POSITION_ONE),
-            .velocity_y = (int16_t)(-random_range(engine, 75, 105) * PARTICLE_POSITION_ONE),
+            .x = x * PARTICLE_POSITION_SCALE,
+            .y = y * PARTICLE_POSITION_SCALE,
+            .velocity_x = (int16_t)(random_range(engine, -8, 8) * PARTICLE_POSITION_SCALE),
+            .velocity_y = (int16_t)(-random_range(engine, 75, 105) * PARTICLE_POSITION_SCALE),
             .life_ms = (uint16_t)random_range(engine, 900, 1400),
+            .size = size,
             .active = true,
         };
         return;
@@ -300,14 +325,14 @@ static void spark_emit(particle_engine_t* engine) {
 
 static void update_sparks(particle_engine_t* engine, uint32_t elapsed_ms) {
     const int32_t elapsed = (int32_t)elapsed_ms;
-    for (size_t index = 0; index < SPARK_COUNT; index++) {
+    for (size_t index = 0; index < RISING_SPARK_COUNT; index++) {
         flame_spark_t* spark = &engine->sparks[index];
         if (!spark->active) {
             continue;
         }
 
         spark->age_ms = (uint16_t)(spark->age_ms + elapsed_ms);
-        if (spark->age_ms >= spark->life_ms || spark->y < -(int32_t)PARTICLE_HEAT_CELL_SIZE * PARTICLE_POSITION_ONE) {
+        if (spark->age_ms >= spark->life_ms || spark->y < -(int32_t)FLAME_BODY_CELL_SIZE_PX * PARTICLE_POSITION_SCALE) {
             spark->active = false;
             continue;
         }
@@ -321,9 +346,9 @@ static void update_sparks(particle_engine_t* engine, uint32_t elapsed_ms) {
     }
 
     engine->spark_emit_elapsed_ms += elapsed_ms;
-    while (engine->spark_emit_elapsed_ms >= SPARK_EMIT_INTERVAL_MS) {
+    while (engine->spark_emit_elapsed_ms >= RISING_SPARK_EMIT_INTERVAL_MS) {
         spark_emit(engine);
-        engine->spark_emit_elapsed_ms -= SPARK_EMIT_INTERVAL_MS;
+        engine->spark_emit_elapsed_ms -= RISING_SPARK_EMIT_INTERVAL_MS;
     }
 }
 
@@ -343,12 +368,12 @@ void particle_engine_update(particle_engine_t* engine, uint32_t elapsed_ms) {
 
     if (engine->mode != PARTICLE_MODE_FLAME) {
         engine->transition_elapsed_ms += elapsed_ms;
-        if (engine->mode == PARTICLE_MODE_DISINTEGRATE && engine->transition_elapsed_ms >= PARTICLE_DISINTEGRATE_MS) {
+        if (engine->mode == PARTICLE_MODE_DISINTEGRATE && engine->transition_elapsed_ms >= MINUTE_CHANGE_DISINTEGRATE_MS) {
             engine->mode = PARTICLE_MODE_ATTRACT;
         }
     }
 
-    for (size_t index = 0; index < PARTICLE_COUNT; index++) {
+    for (size_t index = 0; index < FLAME_PARTICLE_COUNT; index++) {
         particle_t* particle = &engine->particles[index];
         if (engine->mode == PARTICLE_MODE_FLAME) {
             update_flame(engine, particle, index, elapsed_ms);
@@ -359,9 +384,9 @@ void particle_engine_update(particle_engine_t* engine, uint32_t elapsed_ms) {
         }
     }
 
-    if (engine->mode == PARTICLE_MODE_ATTRACT && engine->transition_elapsed_ms >= PARTICLE_TRANSITION_MS) {
+    if (engine->mode == PARTICLE_MODE_ATTRACT && engine->transition_elapsed_ms >= MINUTE_CHANGE_TOTAL_MS) {
         engine->mode = PARTICLE_MODE_FLAME;
-        for (size_t index = 0; index < PARTICLE_COUNT; index++) {
+        for (size_t index = 0; index < FLAME_PARTICLE_COUNT; index++) {
             particle_t* particle = &engine->particles[index];
             particle->age_ms = (uint16_t)(particle_random(engine) % 260U);
             particle->life_ms = (uint16_t)random_range(engine, 750, 1450);
@@ -397,9 +422,10 @@ static uint16_t flame_color(uint8_t level) {
 static uint8_t particle_level(const particle_engine_t* engine, const particle_t* particle) {
     uint32_t level;
     if (engine->mode == PARTICLE_MODE_DISINTEGRATE) {
-        level = 210U - (engine->transition_elapsed_ms * 100U / PARTICLE_DISINTEGRATE_MS);
+        level = 210U - (engine->transition_elapsed_ms * 100U / MINUTE_CHANGE_DISINTEGRATE_MS);
     } else if (engine->mode == PARTICLE_MODE_ATTRACT) {
-        level = 130U + (engine->transition_elapsed_ms - PARTICLE_DISINTEGRATE_MS) * 110U / (PARTICLE_TRANSITION_MS - PARTICLE_DISINTEGRATE_MS);
+        level = 130U + (engine->transition_elapsed_ms - MINUTE_CHANGE_DISINTEGRATE_MS) * 110U /
+                              (MINUTE_CHANGE_TOTAL_MS - MINUTE_CHANGE_DISINTEGRATE_MS);
     } else {
         const uint32_t progress = (uint32_t)particle->age_ms * 255U / particle->life_ms;
         if (progress < 42U) {
@@ -423,7 +449,7 @@ static void heat_add(particle_engine_t* engine, int32_t x, int32_t y, uint8_t le
         return;
     }
 
-    uint8_t* heat = &engine->heat[(uint32_t)(y / PARTICLE_HEAT_CELL_SIZE) * engine->heat_width + (uint32_t)(x / PARTICLE_HEAT_CELL_SIZE)];
+    uint8_t* heat = &engine->heat[(uint32_t)(y / FLAME_BODY_CELL_SIZE_PX) * engine->heat_width + (uint32_t)(x / FLAME_BODY_CELL_SIZE_PX)];
     if (level > *heat) {
         *heat = level;
     } else {
@@ -442,28 +468,52 @@ static void heat_decay(particle_engine_t* engine) {
 
 static void compose_scene(particle_engine_t* engine) {
     heat_decay(engine);
-    for (size_t index = 0; index < PARTICLE_COUNT; index++) {
+    for (size_t index = 0; index < FLAME_PARTICLE_COUNT; index++) {
         const particle_t* particle = &engine->particles[index];
-        const int32_t x = particle->x >> PARTICLE_POSITION_SHIFT;
-        const int32_t y = particle->y >> PARTICLE_POSITION_SHIFT;
+        const int32_t x = particle->x >> PARTICLE_POSITION_FRACTION_BITS;
+        const int32_t y = particle->y >> PARTICLE_POSITION_FRACTION_BITS;
         const uint8_t level = particle_level(engine, particle);
         heat_add(engine, x, y, level);
         if (level > 150U) {
-            heat_add(engine, x - PARTICLE_HEAT_CELL_SIZE, y, level / 3U);
-            heat_add(engine, x + PARTICLE_HEAT_CELL_SIZE, y, level / 3U);
+            heat_add(engine, x - FLAME_BODY_CELL_SIZE_PX, y, level / 3U);
+            heat_add(engine, x + FLAME_BODY_CELL_SIZE_PX, y, level / 3U);
         }
     }
 
     engine->scene_sprite_count = 0U;
-    for (size_t index = 0; index < SPARK_COUNT; index++) {
+    /* Detail sprites overlay the heat grid; they never cut holes in the flame body. */
+    for (size_t index = 0; index < FLAME_ACCENT_SPRITE_COUNT; index++) {
+        const size_t particle_index = index * FLAME_ACCENT_PARTICLE_STRIDE % FLAME_PARTICLE_COUNT;
+        const particle_t* particle = &engine->particles[particle_index];
+        engine->scene_sprites[engine->scene_sprite_count++] = (clock_scene_sprite_t){
+            .x = (int16_t)((particle->x >> PARTICLE_POSITION_FRACTION_BITS) - FLAME_ACCENT_SIZE_PX / 2U),
+            .y = (int16_t)((particle->y >> PARTICLE_POSITION_FRACTION_BITS) - FLAME_ACCENT_SIZE_PX / 2U),
+            .width = FLAME_ACCENT_SIZE_PX,
+            .height = FLAME_ACCENT_SIZE_PX,
+            .color = flame_color(particle_level(engine, particle)),
+        };
+    }
+    for (size_t index = 0; index < FLAME_DETAIL_SPRITE_COUNT; index++) {
+        const size_t particle_index = (FLAME_DETAIL_PARTICLE_START + index * FLAME_DETAIL_PARTICLE_STRIDE) % FLAME_PARTICLE_COUNT;
+        const particle_t* particle = &engine->particles[particle_index];
+        const uint8_t size = index % FLAME_FINE_DETAIL_EVERY_N == 0U ? FLAME_FINE_DETAIL_SIZE_PX : FLAME_DETAIL_SIZE_PX;
+        engine->scene_sprites[engine->scene_sprite_count++] = (clock_scene_sprite_t){
+            .x = (int16_t)((particle->x >> PARTICLE_POSITION_FRACTION_BITS) - size / 2U),
+            .y = (int16_t)((particle->y >> PARTICLE_POSITION_FRACTION_BITS) - size / 2U),
+            .width = size,
+            .height = size,
+            .color = flame_color(particle_level(engine, particle)),
+        };
+    }
+    for (size_t index = 0; index < RISING_SPARK_COUNT; index++) {
         const flame_spark_t* spark = &engine->sparks[index];
         if (spark->active) {
             const uint32_t progress = (uint32_t)spark->age_ms * 255U / spark->life_ms;
             engine->scene_sprites[engine->scene_sprite_count++] = (clock_scene_sprite_t){
-                .x = (int16_t)(spark->x >> PARTICLE_POSITION_SHIFT),
-                .y = (int16_t)(spark->y >> PARTICLE_POSITION_SHIFT),
-                .width = PARTICLE_HEAT_CELL_SIZE,
-                .height = PARTICLE_HEAT_CELL_SIZE,
+                .x = (int16_t)(spark->x >> PARTICLE_POSITION_FRACTION_BITS),
+                .y = (int16_t)(spark->y >> PARTICLE_POSITION_FRACTION_BITS),
+                .width = spark->size,
+                .height = spark->size,
                 .color = flame_color((uint8_t)(230U - progress * 80U / 255U)),
             };
         }
@@ -480,15 +530,16 @@ void particle_engine_get_scene(const particle_engine_t* engine, clock_scene_t* s
         .palette = engine->palette,
         .sprites = engine->scene_sprites,
         .sprite_count = engine->scene_sprite_count,
+        .sprite_capacity = FLAME_SCENE_SPRITE_CAPACITY,
         .cell_columns = engine->heat_width,
         .cell_rows = engine->heat_height,
         .cell_stride = engine->heat_width,
-        .cell_size = PARTICLE_HEAT_CELL_SIZE,
+        .cell_size = FLAME_BODY_CELL_SIZE_PX,
     };
 }
 
 size_t particle_engine_count(const particle_engine_t* engine) {
-    return engine == NULL ? 0 : PARTICLE_COUNT;
+    return engine == NULL ? 0 : FLAME_PARTICLE_COUNT;
 }
 
 size_t particle_engine_spark_count(const particle_engine_t* engine) {
@@ -497,7 +548,7 @@ size_t particle_engine_spark_count(const particle_engine_t* engine) {
     }
 
     size_t count = 0;
-    for (size_t index = 0; index < SPARK_COUNT; index++) {
+    for (size_t index = 0; index < RISING_SPARK_COUNT; index++) {
         if (engine->sparks[index].active) {
             count++;
         }

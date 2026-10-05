@@ -18,6 +18,7 @@ typedef struct {
     const uint16_t* palette;
     const clock_scene_sprite_t* sprites;
     size_t sprite_count;
+    size_t sprite_capacity;
     uint16_t cell_columns;
     uint16_t cell_rows;
     uint16_t cell_stride;

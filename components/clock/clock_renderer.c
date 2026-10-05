@@ -72,7 +72,7 @@ static bool IRAM_ATTR frame_buffer_complete_cb(esp_lcd_panel_handle_t panel, con
 static bool scene_matches_renderer(const clock_renderer_t* renderer, const clock_scene_t* scene) {
     return scene != NULL && scene->cells != NULL && scene->palette != NULL && scene->cell_columns == renderer->cell_columns &&
            scene->cell_rows == renderer->cell_rows && scene->cell_stride == renderer->cell_stride && scene->cell_size == renderer->cell_size &&
-           scene->sprite_count <= renderer->sprite_capacity;
+           scene->sprite_count <= renderer->sprite_capacity && (scene->sprite_count == 0U || scene->sprites != NULL);
 }
 
 static bool frame_count_reached(uint32_t current, uint32_t target) {
@@ -264,7 +264,13 @@ clock_renderer_t* clock_renderer_create(esp_lcd_panel_handle_t panel, uint16_t w
     renderer->cell_stride = initial_scene->cell_stride;
     renderer->cell_size = initial_scene->cell_size;
     renderer->cell_count = (size_t)renderer->cell_columns * renderer->cell_rows;
-    renderer->sprite_capacity = initial_scene->sprite_count > 16U ? initial_scene->sprite_count : 16U;
+    renderer->sprite_capacity = initial_scene->sprite_capacity;
+    if (renderer->sprite_capacity < initial_scene->sprite_count) {
+        renderer->sprite_capacity = initial_scene->sprite_count;
+    }
+    if (renderer->sprite_capacity == 0U) {
+        renderer->sprite_capacity = 1U;
+    }
     renderer->front_index = 0U;
     renderer->back_index = 1U;
     if (background != NULL) {
