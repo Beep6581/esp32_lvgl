@@ -130,6 +130,7 @@ typedef struct {
     building_clock_point_t position;
     building_clock_nav_source_kind_t source_kind;
     uint8_t source_id;
+    /* Index within the source: endpoint, stop, access point, or anchor. */
     uint8_t source_point_id;
 } building_clock_nav_node_t;
 
@@ -151,6 +152,9 @@ typedef struct {
     uint8_t from_node_id;
     uint8_t to_node_id;
     building_clock_nav_edge_kind_t kind;
+    /* The generated platform, ladder, route, lift, or attachment used. */
+    building_clock_nav_source_kind_t source_kind;
+    uint8_t source_id;
     uint16_t traversal_cost;
     uint8_t capacity;
     uint8_t flags;
