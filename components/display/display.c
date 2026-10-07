@@ -34,6 +34,9 @@ static const char* DISPLAY_NVS_TIMING_MODE_KEY = "timing_mode";
 
 static display_rgb_timing_t s_rgb_timing;
 static bool s_nvs_ready;
+static esp_lcd_panel_io_handle_t s_panel_io;
+static esp_lcd_panel_handle_t s_panel;
+static lv_display_t* s_lvgl_display;
 
 const display_rgb_timing_t* display_get_rgb_timing(void) {
     return &s_rgb_timing;
@@ -218,12 +221,17 @@ esp_err_t display_set_timing_mode_and_restart(display_timing_mode_t mode) {
 }
 
 static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
-    backlight_init_off();
-
-    if (direct_panel == NULL) {
-        const lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
-        ESP_ERROR_CHECK(lvgl_port_init(&lvgl_config));
+    if (direct_panel == NULL && s_lvgl_display != NULL) {
+        return s_lvgl_display;
     }
+
+    esp_lcd_panel_io_handle_t io_handle = s_panel_io;
+    esp_lcd_panel_handle_t panel_handle = s_panel;
+    if (panel_handle != NULL) {
+        goto panel_ready;
+    }
+
+    backlight_init_off();
 
     ESP_LOGI(TAG, "Install 3-wire SPI panel IO");
 
@@ -238,8 +246,6 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
     };
 
     esp_lcd_panel_io_3wire_spi_config_t gc9503_ctrl_3wire_cfg = GC9503_PANEL_IO_3WIRE_SPI_CONFIG(line_config, 0);
-
-    esp_lcd_panel_io_handle_t io_handle = NULL;
 
     ESP_ERROR_CHECK(esp_lcd_new_panel_io_3wire_spi(&gc9503_ctrl_3wire_cfg, &io_handle));
 
@@ -495,8 +501,6 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
                                                      .vendor_config = &vendor_config,
                                                      .flags = {.reset_active_high = 0}};
 
-    esp_lcd_panel_handle_t panel_handle = NULL;
-
     ESP_ERROR_CHECK(esp_lcd_new_panel_gc9503(io_handle, &panel_config, &panel_handle));
 
     // WT32S3-86S: LCD_RST is coupled to RGB_VSYNC (GPIO41) through RC/diode network.
@@ -506,11 +510,19 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
 
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
 
+    s_panel_io = io_handle;
+    s_panel = panel_handle;
+
+panel_ready:
+
     if (direct_panel != NULL) {
         *direct_panel = panel_handle;
-        ESP_LOGI(TAG, "Direct RGB panel ready, panel=%p", panel_handle);
+        ESP_LOGI(TAG, "RGB panel ready, panel=%p", panel_handle);
         return NULL;
     }
+
+    const lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
+    ESP_ERROR_CHECK(lvgl_port_init(&lvgl_config));
 
     ESP_ERROR_CHECK(display_backlight_on());
 
@@ -581,6 +593,7 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
 
     lv_display_t* disp = lvgl_port_add_disp_rgb(&display_config, &rgb_cfg);
     lv_display_set_default(disp);
+    s_lvgl_display = disp;
 
     ESP_LOGI(TAG, "LVGL display registered, disp=%p", disp);
 
@@ -595,4 +608,8 @@ esp_lcd_panel_handle_t display_init_direct(void) {
     esp_lcd_panel_handle_t panel = NULL;
     display_init_common(&panel);
     return panel;
+}
+
+esp_err_t display_prepare(void) {
+    return display_init_direct() != NULL ? ESP_OK : ESP_FAIL;
 }

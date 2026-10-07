@@ -2,6 +2,8 @@
 #include "i2c_bus.h"
 #include "sdkconfig.h"
 #include "touch.h"
+#include "wifi_manager.h"
+#include "wifi_qr_ui.h"
 
 #if CONFIG_APP_MODE_AIR_QUALITY
 #include "air_quality.h"
@@ -13,6 +15,9 @@
 #endif
 
 #include "esp_log.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /*
 // UART-485 pins
@@ -50,6 +55,30 @@ void app_main(void) {
              "Build config: LV_DEF_REFR_PERIOD=%d ms, LV_USE_SYSMON=%d, LV_USE_PERF_MONITOR=%d, PSRAM=%s/%d MHz, D-cache=%d KiB/%d B line, PSRAM XIP=%d",
              LV_DEF_REFR_PERIOD, LV_USE_SYSMON, LV_USE_PERF_MONITOR, APP_PSRAM_MODE, CONFIG_SPIRAM_SPEED, CONFIG_ESP32S3_DATA_CACHE_SIZE / 1024,
              CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, APP_PSRAM_XIP_ENABLED);
+
+    // Allocate the RGB DMA bounce buffers before Wi-Fi fragments internal RAM.
+    ESP_ERROR_CHECK(display_prepare());
+
+    bool provisioning_required = false;
+    ESP_ERROR_CHECK(wifi_manager_prepare(&provisioning_required));
+    if (provisioning_required) {
+        lv_display_t* provisioning_display = display_init();
+        if (provisioning_display == NULL) {
+            ESP_LOGE(TAG, "display_init failed during Wi-Fi provisioning");
+            return;
+        }
+
+        ESP_ERROR_CHECK(wifi_manager_start());
+        char dpp_uri[WIFI_MANAGER_DPP_URI_CAPACITY];
+        ESP_ERROR_CHECK(wifi_manager_wait_for_dpp_uri(dpp_uri, sizeof(dpp_uri)));
+        ESP_ERROR_CHECK(wifi_qr_ui_show(provisioning_display, dpp_uri));
+        ESP_ERROR_CHECK(wifi_manager_wait_for_connection());
+        ESP_ERROR_CHECK(wifi_manager_finish_provisioning());
+
+        ESP_LOGI(TAG, "Wi-Fi provisioning complete; restarting into the selected application mode");
+        vTaskDelay(pdMS_TO_TICKS(100));
+        esp_restart();
+    }
 
 #if !CONFIG_APP_MODE_CLOCK
     ESP_ERROR_CHECK(i2c_bus_init());
@@ -89,4 +118,6 @@ void app_main(void) {
 
     ESP_ERROR_CHECK(touch_start());
 #endif
+
+    ESP_ERROR_CHECK(wifi_manager_start());
 }

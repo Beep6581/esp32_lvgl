@@ -30,6 +30,7 @@ typedef struct {
 
 lv_display_t* display_init(void);
 esp_lcd_panel_handle_t display_init_direct(void);
+esp_err_t display_prepare(void);
 esp_err_t display_backlight_on(void);
 const display_rgb_timing_t* display_get_rgb_timing(void);
 esp_err_t display_set_timing_mode_and_restart(display_timing_mode_t mode);
