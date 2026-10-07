@@ -240,7 +240,6 @@ typedef struct {
 typedef struct {
     building_clock_point_t position;
     uint8_t nav_node_id;
-    uint8_t staging_area_id;
 } building_clock_route_stop_t;
 
 typedef struct {
@@ -310,19 +309,9 @@ typedef struct {
     uint8_t temp_attachment_set_count;
     building_clock_temp_attachment_set_t temp_attachment_sets[BUILDING_CLOCK_MAX_TEMP_ATTACHMENT_SETS];
 
-    /* Derived from the geometry above after generation and validation. */
+    /* Derived from candidate geometry before complete validation. */
     building_clock_nav_graph_t navigation;
 } building_clock_world_t;
-
-typedef struct {
-    uint64_t state;
-} building_clock_random_stream_t;
-
-typedef struct {
-    building_clock_random_stream_t scheduling;
-    building_clock_random_stream_t behavior;
-    building_clock_random_stream_t cosmetic;
-} building_clock_runtime_random_streams_t;
 
 typedef enum {
     BUILDING_CLOCK_DIGIT_STABLE = 0,
@@ -466,7 +455,8 @@ typedef enum {
 } building_clock_job_kind_t;
 
 typedef enum {
-    BUILDING_CLOCK_JOB_PENDING = 0,
+    BUILDING_CLOCK_JOB_UNUSED = 0,
+    BUILDING_CLOCK_JOB_PENDING,
     BUILDING_CLOCK_JOB_RESERVED,
     BUILDING_CLOCK_JOB_ACTIVE,
     BUILDING_CLOCK_JOB_BLOCKED,
@@ -490,24 +480,46 @@ typedef enum {
     BUILDING_CLOCK_MACHINERY_LIFT,
 } building_clock_machinery_kind_t;
 
+typedef enum {
+    BUILDING_CLOCK_JOB_SUBJECT_NONE = 0,
+    BUILDING_CLOCK_JOB_SUBJECT_LOAD,
+    BUILDING_CLOCK_JOB_SUBJECT_DEBRIS,
+    BUILDING_CLOCK_JOB_SUBJECT_TEMP_STRUCTURE,
+    BUILDING_CLOCK_JOB_SUBJECT_DIGIT_SECTION,
+    BUILDING_CLOCK_JOB_SUBJECT_CART,
+    BUILDING_CLOCK_JOB_SUBJECT_CRANE,
+    BUILDING_CLOCK_JOB_SUBJECT_LIFT,
+} building_clock_job_subject_kind_t;
+
+/*
+ * object_id identifies a load, debris item, temporary structure, or machinery
+ * slot. digit_id and section_id are used only for a digit-section subject.
+ */
+typedef struct {
+    building_clock_job_subject_kind_t kind;
+    uint8_t object_id;
+    uint8_t digit_id;
+    uint8_t section_id;
+} building_clock_job_subject_t;
+
 typedef struct {
     building_clock_job_kind_t kind;
     building_clock_job_status_t status;
+    building_clock_job_subject_t subject;
     uint8_t priority;
     uint8_t target_node_id;
-    uint8_t digit_id;
-    uint8_t section_id;
     building_clock_material_kind_t required_material;
-    building_clock_machinery_kind_t machinery_kind;
-    uint8_t machinery_id;
+    building_clock_machinery_kind_t required_machinery_kind;
+    uint8_t required_machinery_id;
     uint16_t required_worker_capabilities;
-    uint32_t earliest_start_ms;
-    uint32_t desired_completion_ms;
+    uint64_t earliest_start_elapsed_ms;
+    uint64_t desired_completion_elapsed_ms;
     uint8_t reserved_worker_id;
 } building_clock_job_t;
 
 typedef enum {
-    BUILDING_CLOCK_TEMP_STRUCTURE_PLANNED = 0,
+    BUILDING_CLOCK_TEMP_STRUCTURE_UNUSED = 0,
+    BUILDING_CLOCK_TEMP_STRUCTURE_PLANNED,
     BUILDING_CLOCK_TEMP_STRUCTURE_BUILDING,
     BUILDING_CLOCK_TEMP_STRUCTURE_ACTIVE,
     BUILDING_CLOCK_TEMP_STRUCTURE_REMOVING,
@@ -527,7 +539,8 @@ typedef struct {
 } building_clock_material_inventory_t;
 
 typedef enum {
-    BUILDING_CLOCK_LOAD_AT_DEPOT = 0,
+    BUILDING_CLOCK_LOAD_UNUSED = 0,
+    BUILDING_CLOCK_LOAD_AT_DEPOT,
     BUILDING_CLOCK_LOAD_STAGED,
     BUILDING_CLOCK_LOAD_CARRIED,
     BUILDING_CLOCK_LOAD_ON_CART,
@@ -550,7 +563,8 @@ typedef struct {
 } building_clock_load_t;
 
 typedef enum {
-    BUILDING_CLOCK_DEBRIS_FALLING = 0,
+    BUILDING_CLOCK_DEBRIS_UNUSED = 0,
+    BUILDING_CLOCK_DEBRIS_FALLING,
     BUILDING_CLOCK_DEBRIS_SETTLED,
     BUILDING_CLOCK_DEBRIS_RECOVERABLE,
     BUILDING_CLOCK_DEBRIS_RESERVED,
@@ -668,27 +682,33 @@ typedef struct {
 /* Mutable runtime state. It owns no generated-world geometry. */
 typedef struct {
     uint64_t elapsed_ms;
-    building_clock_runtime_random_streams_t random_streams;
     building_clock_digit_state_t digits[BUILDING_CLOCK_DIGIT_COUNT];
     building_clock_colon_state_t colon;
     building_clock_date_t date;
 
+    /* Workers form a fixed dense roster; their array indices are stable IDs. */
     uint8_t worker_count;
     building_clock_worker_t workers[BUILDING_CLOCK_MAX_WORKERS];
-    uint8_t job_count;
+
+    /*
+     * Referenced slots are reused only after their status becomes UNUSED.
+     * Each used count is the number of non-UNUSED slots, not an array end.
+     */
+    uint8_t used_job_slot_count;
     building_clock_job_t jobs[BUILDING_CLOCK_MAX_JOBS];
-    uint8_t temp_structure_count;
+    uint8_t used_temp_structure_slot_count;
     building_clock_temp_structure_t temp_structures[BUILDING_CLOCK_MAX_TEMP_STRUCTURES];
 
     building_clock_material_inventory_t depot_inventory[BUILDING_CLOCK_MAX_MATERIAL_DEPOTS];
     building_clock_material_inventory_t staging_inventory[BUILDING_CLOCK_MAX_STAGING_AREAS];
-    uint8_t load_count;
+    uint8_t used_load_slot_count;
     building_clock_load_t loads[BUILDING_CLOCK_MAX_LOADS];
-    uint8_t debris_count;
+    uint8_t used_debris_slot_count;
     building_clock_debris_t debris[BUILDING_CLOCK_MAX_DEBRIS_PIECES];
     uint8_t falling_section_count;
     building_clock_falling_section_t falling_sections[BUILDING_CLOCK_MAX_FALLING_SECTIONS];
 
+    /* Machinery arrays mirror immutable world slots and are never compacted. */
     uint8_t cart_count;
     building_clock_cart_t carts[BUILDING_CLOCK_MAX_CARTS];
     uint8_t crane_count;

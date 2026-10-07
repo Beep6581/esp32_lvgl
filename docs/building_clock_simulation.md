@@ -156,8 +156,10 @@ For each candidate world, the generator performs these steps:
 7. Generate cart routes on suitable continuous spans.
 8. Place worker spawn points on safe, connected surfaces.
 9. Add a bounded amount of optional scaffolding and support structure.
-10. Derive the navigation graph from the resulting geometry.
-11. Validate the complete candidate.
+10. Run inexpensive preliminary geometry and composition checks.
+11. Derive the navigation graph from the resulting geometry.
+12. Run complete read-only validation, including reachability and construction
+    access checks.
 
 Compatible choices should be randomized independently where possible:
 
@@ -205,9 +207,12 @@ number. Rejecting a candidate therefore remains reproducible.
 
 ## 7. World validation
 
-Validation is a separate read-only pass over the finished candidate. It returns
-an explicit failure reason. The generator must discard a failed candidate and
-try another derived seed; it must not patch arbitrary broken geometry.
+Complete validation is a separate read-only pass over a candidate whose
+navigation graph has already been derived. It returns an explicit failure
+reason. Inexpensive geometry and composition checks may reject clearly invalid
+candidates before graph derivation. Any candidate rejected by complete
+validation is discarded and regenerated from another derived seed; it must not
+be patched into validity.
 
 ### 7.1 Geometry checks
 
@@ -262,7 +267,8 @@ level.
 
 ## 8. Navigation model
 
-The navigation graph is built from the accepted world description.
+The navigation graph is derived from each candidate's generated geometry before
+complete validation. An accepted world retains that derived graph.
 
 Node types include:
 
@@ -692,14 +698,16 @@ choreography.
 
 1. Define the fixed-capacity semantic world and simulation data structures.
 2. Implement deterministic seed streams and boot/debug seed selection.
-3. Implement constrained generation and the read-only rejection validator.
-4. Test generation, validation, reproducibility, and variation on the host.
-5. Derive and test navigation graphs from accepted worlds.
-6. Implement the headless simulation and transition state machines.
-7. Verify deterministic transitions, rollovers, and time jumps without graphics.
-8. Define the renderer-neutral scene snapshot.
-9. Integrate the building clock as a separate application mode.
-10. Implement and profile the renderer only after its direction is ready.
+3. Implement constrained candidate geometry and preliminary checks.
+4. Derive navigation graphs from candidate geometry.
+5. Implement complete read-only validation and whole-candidate rejection.
+6. Test generation, validation, reproducibility, variation, and navigation on
+   the host.
+7. Implement the headless simulation and transition state machines.
+8. Verify deterministic transitions, rollovers, and time jumps without graphics.
+9. Define the renderer-neutral scene snapshot.
+10. Integrate the building clock as a separate application mode.
+11. Implement and profile the renderer only after its direction is ready.
 
 This sequence keeps procedural generation and game behavior testable without
 disturbing the current display work.
