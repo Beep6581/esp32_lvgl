@@ -269,16 +269,27 @@ typedef struct {
 typedef struct {
     uint64_t root_seed;
     uint64_t world_layout_seed;
+    uint64_t candidate_seed;
     uint64_t construction_scheduling_seed;
     uint64_t worker_behavior_seed;
     uint64_t cosmetic_seed;
     uint32_t generator_version;
-    uint16_t accepted_attempt;
+    uint16_t generation_attempt;
 } building_clock_replay_metadata_t;
+
+typedef enum {
+    BUILDING_CLOCK_TOPOLOGY_CONTINUOUS_LOWER_BRANCHES = 0,
+    BUILDING_CLOCK_TOPOLOGY_SPLIT_LOWER_RAISED_BRIDGE,
+    BUILDING_CLOCK_TOPOLOGY_ASYMMETRIC_LOOP,
+    BUILDING_CLOCK_TOPOLOGY_TWIN_TOWERS,
+    BUILDING_CLOCK_TOPOLOGY_CENTRAL_ROUTE_MACHINERY,
+    BUILDING_CLOCK_TOPOLOGY_COUNT,
+} building_clock_topology_family_t;
 
 /* Filled by generation, then treated as immutable by validation and runtime. */
 typedef struct {
     building_clock_replay_metadata_t replay;
+    building_clock_topology_family_t topology_family;
     building_clock_rect_t colon_envelope;
     building_clock_rect_t date_band;
 
