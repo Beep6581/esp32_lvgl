@@ -205,6 +205,17 @@ rules change incompatibly, increment that version.
 Candidate attempts are derived deterministically from the root seed and attempt
 number. Rejecting a candidate therefore remains reproducible.
 
+The Building Clock uses PCG32 for stream stepping. It has small state, uses only
+defined fixed-width unsigned integer operations, and is inexpensive enough for
+layout and behavior decisions on ESP32-S3. It is not used for cryptography.
+SplitMix64's finalizer derives stable per-purpose seeds from the root seed and
+numeric stream identifiers. Each purpose owns a separate PCG32 state, so draws
+from one stream do not change another stream.
+
+Normal boot seed selection reads one 64-bit root seed with ESP-IDF's
+`esp_fill_random()`. A fixed-seed configuration bypasses that entropy read for
+replay. Application-mode wiring and logging are deliberately deferred.
+
 ## 7. World validation
 
 Complete validation is a separate read-only pass over a candidate whose

@@ -268,9 +268,9 @@ typedef struct {
 
 typedef struct {
     uint64_t root_seed;
-    uint64_t world_seed;
-    uint64_t scheduling_seed;
-    uint64_t behavior_seed;
+    uint64_t world_layout_seed;
+    uint64_t construction_scheduling_seed;
+    uint64_t worker_behavior_seed;
     uint64_t cosmetic_seed;
     uint32_t generator_version;
     uint16_t accepted_attempt;
