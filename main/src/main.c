@@ -3,15 +3,20 @@
 #include "sdkconfig.h"
 #include "touch.h"
 #include "wifi_manager.h"
-#include "wifi_qr_ui.h"
 
 #if CONFIG_APP_MODE_AIR_QUALITY
 #include "air_quality.h"
 #include "ui.h"
 #elif CONFIG_APP_MODE_SCREEN_DIAGNOSTICS
+#include "system_ui.h"
 #include "ui.h"
 #elif CONFIG_APP_MODE_CLOCK
 #include "clock.h"
+#include "wifi_qr_ui.h"
+#endif
+
+#if CONFIG_APP_MODE_AIR_QUALITY
+#include "system_ui.h"
 #endif
 
 #include "esp_log.h"
@@ -61,6 +66,8 @@ void app_main(void) {
 
     bool provisioning_required = false;
     ESP_ERROR_CHECK(wifi_manager_prepare(&provisioning_required));
+
+#if CONFIG_APP_MODE_CLOCK
     if (provisioning_required) {
         lv_display_t* provisioning_display = display_init();
         if (provisioning_display == NULL) {
@@ -75,10 +82,11 @@ void app_main(void) {
         ESP_ERROR_CHECK(wifi_manager_wait_for_connection());
         ESP_ERROR_CHECK(wifi_manager_finish_provisioning());
 
-        ESP_LOGI(TAG, "Wi-Fi provisioning complete; restarting into the selected application mode");
+        ESP_LOGI(TAG, "Wi-Fi provisioning complete; restarting into Clock mode");
         vTaskDelay(pdMS_TO_TICKS(100));
         esp_restart();
     }
+#endif
 
 #if !CONFIG_APP_MODE_CLOCK
     ESP_ERROR_CHECK(i2c_bus_init());
@@ -117,6 +125,7 @@ void app_main(void) {
 #endif
 
     ESP_ERROR_CHECK(touch_start());
+    ESP_ERROR_CHECK(system_ui_init(disp, provisioning_required));
 #endif
 
     ESP_ERROR_CHECK(wifi_manager_start());
