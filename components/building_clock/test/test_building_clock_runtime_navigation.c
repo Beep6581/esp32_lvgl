@@ -169,6 +169,7 @@ static void test_maximum_route_length(void) {
 static void test_reservations(void) {
     building_clock_world_t world;
     initialize_graph(&world, 3U);
+    world.navigation.nodes[2].kind = BUILDING_CLOCK_NAV_NODE_CART_STOP;
     add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_CLIMB, 1U, 1U, BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL, BUILDING_CLOCK_INVALID_ID);
     add_edge(&world, 1U, 2U, BUILDING_CLOCK_NAV_EDGE_WALK, 1U, 2U, BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL, BUILDING_CLOCK_INVALID_ID);
     world.temp_attachment_set_count = 1U;
@@ -188,7 +189,7 @@ static void test_reservations(void) {
     expect_true(building_clock_navigation_reserve_edge(&world, &runtime, 1U, 0U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "first worker acquires capacity-two edge");
     expect_true(building_clock_navigation_reserve_edge(&world, &runtime, 1U, 3U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "second worker acquires capacity-two edge");
     expect_true(building_clock_navigation_reserve_edge(&world, &runtime, 1U, 4U) == BUILDING_CLOCK_RESERVATION_UNAVAILABLE, "capacity-two edge rejects third worker");
-    expect_true(building_clock_navigation_node_capacity(&world, 2U) == 2U, "node capacity derives from incident capacity-two edge");
+    expect_true(building_clock_navigation_node_capacity(&world, 2U) == 2U, "cart-stop node permits two occupants");
     expect_true(building_clock_navigation_reserve_node(&world, &runtime, 2U, 0U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "first worker acquires capacity-two node");
     expect_true(building_clock_navigation_reserve_node(&world, &runtime, 2U, 3U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "second worker acquires capacity-two node");
     expect_true(building_clock_navigation_reserve_node(&world, &runtime, 2U, 4U) == BUILDING_CLOCK_RESERVATION_UNAVAILABLE, "capacity-two node rejects third worker");
@@ -213,6 +214,34 @@ static void test_reservations(void) {
     expect_true(building_clock_navigation_reserve_edge(&world, &runtime, 0U, 0U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "route edge can be reserved independently");
     expect_true(building_clock_find_route(&world, &runtime, &request, &after) == BUILDING_CLOCK_ROUTE_OK && memcmp(&before, &after, sizeof(before)) == 0,
                 "reservation occupancy does not alter deterministic topology search");
+}
+
+static void test_semantic_node_capacity(void) {
+    building_clock_world_t world;
+    initialize_graph(&world, 8U);
+    world.navigation.nodes[0].kind = BUILDING_CLOCK_NAV_NODE_PLATFORM_ENDPOINT;
+    world.navigation.nodes[1].kind = BUILDING_CLOCK_NAV_NODE_LADDER_TOP;
+    world.navigation.nodes[2].kind = BUILDING_CLOCK_NAV_NODE_SAFE_WAITING;
+    world.navigation.nodes[3].kind = BUILDING_CLOCK_NAV_NODE_MACHINERY_CONTROL;
+    world.navigation.nodes[4].kind = BUILDING_CLOCK_NAV_NODE_CART_STOP;
+    world.navigation.nodes[5].kind = BUILDING_CLOCK_NAV_NODE_LIFT_STOP;
+    world.navigation.nodes[6].kind = BUILDING_CLOCK_NAV_NODE_DIGIT_WORK;
+    world.navigation.nodes[7].kind = BUILDING_CLOCK_NAV_NODE_TEMP_ATTACHMENT;
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_CLIMB, 1U, 1U, BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL, BUILDING_CLOCK_INVALID_ID);
+
+    expect_true(building_clock_navigation_node_capacity(&world, 0U) == BUILDING_CLOCK_MAX_WORKERS, "capacity-one edge does not narrow ordinary platform occupancy");
+    expect_true(building_clock_navigation_node_capacity(&world, 1U) == BUILDING_CLOCK_MAX_WORKERS, "ladder endpoint occupancy remains separate from ladder traversal capacity");
+    expect_true(building_clock_navigation_node_capacity(&world, 2U) == 1U, "safe waiting node is capacity one");
+    expect_true(building_clock_navigation_node_capacity(&world, 3U) == 1U, "machinery control node is capacity one");
+    expect_true(building_clock_navigation_node_capacity(&world, 4U) == 2U, "cart stop has capacity two");
+    expect_true(building_clock_navigation_node_capacity(&world, 5U) == 3U, "lift stop has capacity three");
+    expect_true(building_clock_navigation_node_capacity(&world, 6U) == 1U, "digit work node is capacity one");
+    expect_true(building_clock_navigation_node_capacity(&world, 7U) == 1U, "temporary attachment node is capacity one");
+
+    building_clock_navigation_runtime_t runtime;
+    building_clock_navigation_runtime_init(&runtime);
+    expect_true(building_clock_navigation_reserve_node(&world, &runtime, 0U, 0U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "first worker occupies ordinary platform node");
+    expect_true(building_clock_navigation_reserve_node(&world, &runtime, 0U, 1U) == BUILDING_CLOCK_RESERVATION_ACQUIRED, "second worker may share ordinary platform node");
 }
 
 typedef struct {
@@ -309,6 +338,7 @@ int main(void) {
     test_equal_cost_tie_breaking();
     test_maximum_route_length();
     test_reservations();
+    test_semantic_node_capacity();
     test_accepted_world_integration();
 
     if (failures != 0U) {

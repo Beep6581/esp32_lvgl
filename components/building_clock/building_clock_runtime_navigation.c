@@ -245,18 +245,19 @@ uint8_t building_clock_navigation_node_capacity(const building_clock_world_t* wo
     if (world == NULL || !graph_counts_valid(&world->navigation) || node_id >= world->navigation.node_count) {
         return 0U;
     }
-    uint8_t capacity = BUILDING_CLOCK_MAX_WORKERS;
-    bool has_incident_edge = false;
-    for (uint16_t edge_id = 0U; edge_id < world->navigation.edge_count; edge_id++) {
-        const building_clock_nav_edge_t* edge = &world->navigation.edges[edge_id];
-        if (edge->from_node_id == node_id || edge->to_node_id == node_id) {
-            has_incident_edge = true;
-            if (edge->capacity < capacity) {
-                capacity = edge->capacity;
-            }
-        }
+    switch (world->navigation.nodes[node_id].kind) {
+    case BUILDING_CLOCK_NAV_NODE_SAFE_WAITING:
+    case BUILDING_CLOCK_NAV_NODE_DIGIT_WORK:
+    case BUILDING_CLOCK_NAV_NODE_MACHINERY_CONTROL:
+    case BUILDING_CLOCK_NAV_NODE_TEMP_ATTACHMENT:
+        return 1U;
+    case BUILDING_CLOCK_NAV_NODE_CART_STOP:
+        return 2U;
+    case BUILDING_CLOCK_NAV_NODE_LIFT_STOP:
+        return 3U;
+    default:
+        return BUILDING_CLOCK_MAX_WORKERS;
     }
-    return has_incident_edge ? capacity : 1U;
 }
 
 static uint8_t owner_count(uint16_t owner_mask) {

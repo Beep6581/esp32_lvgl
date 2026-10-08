@@ -46,6 +46,7 @@ extern "C" {
 #define BUILDING_CLOCK_MAX_CARTS 2
 #define BUILDING_CLOCK_MAX_HAZARDS BUILDING_CLOCK_DIGIT_COUNT
 #define BUILDING_CLOCK_MAX_WORKER_ROUTE_NODES BUILDING_CLOCK_MAX_NAV_NODES
+#define BUILDING_CLOCK_MAX_WORKER_ROUTE_EDGES (BUILDING_CLOCK_MAX_WORKER_ROUTE_NODES - 1U)
 
 #define BUILDING_CLOCK_INVALID_ID UINT8_MAX
 #define BUILDING_CLOCK_INVALID_EDGE_ID UINT16_MAX
@@ -442,9 +443,12 @@ typedef struct {
     uint8_t current_node_id;
     uint8_t destination_node_id;
     uint16_t reserved_edge_id;
+    uint8_t reserved_destination_node_id;
     uint8_t route_node_count;
+    uint8_t route_edge_count;
     uint8_t route_node_index;
     uint8_t route_node_ids[BUILDING_CLOCK_MAX_WORKER_ROUTE_NODES];
+    uint8_t route_edge_ids[BUILDING_CLOCK_MAX_WORKER_ROUTE_EDGES];
     uint16_t edge_progress_per_mille;
     uint8_t action_phase;
     uint32_t state_elapsed_ms;
@@ -527,6 +531,7 @@ typedef struct {
     building_clock_machinery_kind_t required_machinery_kind;
     uint8_t required_machinery_id;
     uint16_t required_worker_capabilities;
+    uint32_t action_duration_ms;
     uint64_t earliest_start_elapsed_ms;
     uint64_t desired_completion_elapsed_ms;
     uint8_t reserved_worker_id;

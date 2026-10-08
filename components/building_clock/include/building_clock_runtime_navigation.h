@@ -71,7 +71,7 @@ building_clock_route_status_t building_clock_find_route(const building_clock_wor
                                                         building_clock_route_t* route);
 const char* building_clock_route_status_name(building_clock_route_status_t status);
 
-/* A node's reservation capacity is the minimum capacity of its incident edges. */
+/* Node occupancy capacity is derived from semantic node kind, not edge capacity. */
 uint8_t building_clock_navigation_node_capacity(const building_clock_world_t* world, uint8_t node_id);
 
 building_clock_reservation_status_t building_clock_navigation_reserve_node(const building_clock_world_t* world, building_clock_navigation_runtime_t* runtime, uint8_t node_id, uint8_t worker_id);

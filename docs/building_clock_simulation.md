@@ -325,16 +325,24 @@ instantaneous; the retained ride-edge ID lets the later worker state machine
 wait for and reserve the machinery. Large-load requests exclude every edge not
 marked as load-capable.
 
-Narrow ladders and ledges have capacity one. Runtime navigation stores fixed
-owner bit masks for every graph edge and node. Edge capacity comes directly
-from the immutable graph; node capacity is conservatively derived as the
-minimum capacity of its incident edges. Acquiring an already-owned resource is
-idempotent. Reservations are non-preemptive, so the later simulation must
-process same-update requests in ascending stable worker-ID order. Explicit
-per-owner release and full reservation reset support cancellation cleanup. If a
-reservation remains unavailable, a worker may later wait, choose a different
-job, or turn around. These conflicts create useful unscripted-looking behavior
-without general collision avoidance.
+Runtime navigation stores fixed owner bit masks for every graph edge and node.
+Edge capacity comes directly from the immutable graph and constrains traversal.
+Node occupancy is a separate semantic rule: ordinary platform, junction,
+ladder-end, staging, depot, debris, and spawn nodes allow the full bounded crew;
+safe-waiting, digit-work, machinery-control, and temporary-attachment nodes are
+capacity one; cart stops allow two workers; and lift stops allow three. A
+capacity-one ladder therefore does not make its platform endpoints capacity
+one.
+
+Acquiring an already-owned resource is idempotent. Before movement, all workers
+that are ready to depart release their source-node occupancy. They then request
+the route edge and destination node in ascending stable worker-ID order. If the
+destination is unavailable, the edge reservation is rolled back and the worker
+waits. This avoids hold-and-wait cycles while keeping contention deterministic.
+Workers leaving exclusive work points move to the nearest ordinary crew-capacity
+node before becoming idle. Explicit per-owner release and full reservation
+reset support cancellation cleanup. These conflicts create useful
+unscripted-looking behavior without general collision avoidance.
 
 Temporary structures add only predefined validated edges. Removing a temporary
 structure first requires that no worker is using its nodes or edges. Runtime
@@ -436,6 +444,7 @@ Jobs are small explicit records in a fixed-capacity queue. A job contains:
 - required material or equipment;
 - earliest start and desired completion milestone;
 - required worker capability;
+- bounded action duration;
 - reservation owner; and
 - current status.
 
@@ -504,6 +513,14 @@ Low-rate incidental events make workers appear less mechanical:
 
 Incidental events have strict time limits and cannot block milestone-critical
 work.
+
+The first headless worker layer implements patrol, inspect, and secure/hammer
+jobs. Idle workers choose compatible pending jobs by priority, then route cost,
+then stable job-slot ID. Routes retain both node and edge IDs so parallel edge
+semantics remain unambiguous. Walking, climbing, waiting, inspection, and
+hammering advance from elapsed milliseconds. Cart and lift edges remain
+topologically visible but are not immediately traversable until their later
+machinery state machines exist.
 
 ## 13. Hazards and debris
 
@@ -660,6 +677,11 @@ Updates are bounded so a long task delay cannot cause unbounded physics or job
 processing. Character pose changes should retain an intentionally stepped
 old-game cadence even if simulation updates occur more frequently.
 
+The initial headless step boundary accepts at most 1000 milliseconds per call
+and reports when a larger delta is clamped. It processes accepted time in
+50-millisecond deterministic quanta and limits the number of state transitions
+performed by one worker in one quantum.
+
 At initial startup, the current digits begin complete. Workers then enter normal
 activity. This avoids replaying a minute transition every boot.
 
@@ -745,11 +767,13 @@ choreography.
 7. Test generation, validation, reproducibility, variation, and navigation on
    the host.
 8. Implement bounded route finding and navigation reservations.
-9. Implement the headless simulation and transition state machines.
-10. Verify deterministic transitions, rollovers, and time jumps without graphics.
-11. Define the renderer-neutral scene snapshot.
-12. Integrate the building clock as a separate application mode.
-13. Implement and profile the renderer only after its direction is ready.
+9. Implement the first headless worker/job, movement, action, and contention
+   layer.
+10. Implement digit construction and minute-transition state machines.
+11. Verify deterministic transitions, rollovers, and time jumps without graphics.
+12. Define the renderer-neutral scene snapshot.
+13. Integrate the building clock as a separate application mode.
+14. Implement and profile the renderer only after its direction is ready.
 
 This sequence keeps procedural generation and game behavior testable without
 disturbing the current display work.
