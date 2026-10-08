@@ -312,16 +312,35 @@ direction, traversal cost, capacity, and whether carrying a large load is
 allowed.
 
 Route finding occurs when a worker accepts or must replan a job, not on every
-simulation update. The graph is small enough for a bounded simple search. Common
-service routes may be cached after generation if profiling justifies it.
+simulation update. It uses fixed-capacity Dijkstra search over the generated
+graph and the stored traversal costs. Equal-cost choices prefer fewer edges,
+then the lower predecessor node ID, then the lower edge ID. Selection of the
+next equal-cost search node uses the lower node ID. This makes routing stable
+across host and ESP32 builds without relying on pointer or incidental iteration
+order. A route contains at most 96 nodes and 95 edges.
 
-Narrow ladders and ledges have capacity one. Workers reserve them briefly. If a
-reservation remains unavailable, a worker may wait, choose a different job, or
-turn around. These conflicts create useful unscripted-looking behavior without
-general collision avoidance.
+Route requests explicitly choose whether cart and lift topology may be planned.
+Finding such a route does not mean the machinery is ready or that traversal is
+instantaneous; the retained ride-edge ID lets the later worker state machine
+wait for and reserve the machinery. Large-load requests exclude every edge not
+marked as load-capable.
+
+Narrow ladders and ledges have capacity one. Runtime navigation stores fixed
+owner bit masks for every graph edge and node. Edge capacity comes directly
+from the immutable graph; node capacity is conservatively derived as the
+minimum capacity of its incident edges. Acquiring an already-owned resource is
+idempotent. Reservations are non-preemptive, so the later simulation must
+process same-update requests in ascending stable worker-ID order. Explicit
+per-owner release and full reservation reset support cancellation cleanup. If a
+reservation remains unavailable, a worker may later wait, choose a different
+job, or turn around. These conflicts create useful unscripted-looking behavior
+without general collision avoidance.
 
 Temporary structures add only predefined validated edges. Removing a temporary
-structure first requires that no worker is using its nodes or edges.
+structure first requires that no worker is using its nodes or edges. Runtime
+navigation owns an attachment activation mask and includes a temporary edge
+only when both the route request permits temporary connections and that
+attachment is active. The immutable world graph is never modified.
 
 ## 9. Clock and digit state
 
@@ -725,11 +744,12 @@ choreography.
 6. Implement deterministic retry and validated grammar-fallback selection.
 7. Test generation, validation, reproducibility, variation, and navigation on
    the host.
-8. Implement the headless simulation and transition state machines.
-9. Verify deterministic transitions, rollovers, and time jumps without graphics.
-10. Define the renderer-neutral scene snapshot.
-11. Integrate the building clock as a separate application mode.
-12. Implement and profile the renderer only after its direction is ready.
+8. Implement bounded route finding and navigation reservations.
+9. Implement the headless simulation and transition state machines.
+10. Verify deterministic transitions, rollovers, and time jumps without graphics.
+11. Define the renderer-neutral scene snapshot.
+12. Integrate the building clock as a separate application mode.
+13. Implement and profile the renderer only after its direction is ready.
 
 This sequence keeps procedural generation and game behavior testable without
 disturbing the current display work.

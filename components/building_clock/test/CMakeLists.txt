@@ -106,3 +106,20 @@ target_compile_definitions(
 )
 
 add_test(NAME building_clock_invalid_fallback_tests COMMAND building_clock_invalid_fallback_tests)
+
+add_executable(
+    building_clock_runtime_navigation_tests
+    "test_building_clock_runtime_navigation.c"
+    ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_runtime_navigation.c"
+)
+
+target_include_directories(
+    building_clock_runtime_navigation_tests
+    PRIVATE "../include"
+)
+
+target_compile_features(building_clock_runtime_navigation_tests PRIVATE c_std_11)
+target_compile_options(building_clock_runtime_navigation_tests PRIVATE -Wall -Wextra -Werror)
+
+add_test(NAME building_clock_runtime_navigation_tests COMMAND building_clock_runtime_navigation_tests)

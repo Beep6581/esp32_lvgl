@@ -5,6 +5,7 @@ idf_component_register(
         "building_clock_generator.c"
         "building_clock_navigation.c"
         "building_clock_random.c"
+        "building_clock_runtime_navigation.c"
         "building_clock_seed.c"
         "building_clock_validation.c"
         "building_clock_world_selection.c"
