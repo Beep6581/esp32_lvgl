@@ -271,10 +271,20 @@ construction may make an active area busier for a limited time.
 
 ### 7.5 Retry and fallback
 
-Generation gets a small fixed number of attempts. If all attempts fail, use a
-known-valid grammar family with a known-valid seed and log the failure. This is
-still an instance of the generator grammar, not a separately hand-authored
-level.
+World selection runs at most four normal candidate attempts, numbered zero
+through three. Each attempt is independently derived from the requested root
+seed, generator version, and attempt number, then passes through preliminary
+validation, navigation derivation, and complete validation. Selection records
+the stage and explicit reason for every rejected attempt so application wiring
+can log the diagnostics without coupling generation to ESP logging.
+
+If all four normal attempts fail, selection runs root seed
+`0xbb67ae8584caa73b`, generator version 1, attempt 0 through that same pipeline.
+This combination is a known-valid instance of the normal generator grammar,
+not a separately hand-authored level. If it stops passing after an intentional
+generator or validation change, the fallback configuration must be updated to
+another verified grammar instance. A failed fallback is a hard error and no
+candidate world is returned.
 
 ## 8. Navigation model
 
@@ -712,13 +722,14 @@ choreography.
 3. Implement constrained candidate geometry and preliminary checks.
 4. Derive navigation graphs from candidate geometry.
 5. Implement complete read-only validation and whole-candidate rejection.
-6. Test generation, validation, reproducibility, variation, and navigation on
+6. Implement deterministic retry and validated grammar-fallback selection.
+7. Test generation, validation, reproducibility, variation, and navigation on
    the host.
-7. Implement the headless simulation and transition state machines.
-8. Verify deterministic transitions, rollovers, and time jumps without graphics.
-9. Define the renderer-neutral scene snapshot.
-10. Integrate the building clock as a separate application mode.
-11. Implement and profile the renderer only after its direction is ready.
+8. Implement the headless simulation and transition state machines.
+9. Verify deterministic transitions, rollovers, and time jumps without graphics.
+10. Define the renderer-neutral scene snapshot.
+11. Integrate the building clock as a separate application mode.
+12. Implement and profile the renderer only after its direction is ready.
 
 This sequence keeps procedural generation and game behavior testable without
 disturbing the current display work.
