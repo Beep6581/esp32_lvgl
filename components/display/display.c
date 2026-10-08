@@ -11,6 +11,7 @@
 #include <stdbool.h>
 
 #include "esp_err.h"
+#include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_system.h"
 
@@ -137,6 +138,13 @@ esp_err_t display_backlight_on(void) {
         return ESP_OK;
     }
     return gpio_set_level(BOARD_LCD_BL_GPIO, 1);
+}
+
+esp_err_t display_backlight_off(void) {
+    if (BOARD_LCD_BL_GPIO == GPIO_NUM_NC) {
+        return ESP_OK;
+    }
+    return gpio_set_level(BOARD_LCD_BL_GPIO, 0);
 }
 
 static esp_err_t display_nvs_init(void) {
@@ -521,7 +529,8 @@ panel_ready:
         return NULL;
     }
 
-    const lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_config.task_stack_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_config));
 
     ESP_ERROR_CHECK(display_backlight_on());

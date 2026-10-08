@@ -15,6 +15,10 @@
 #define SYSTEM_UI_BUTTON_WIDTH 188
 #define SYSTEM_UI_BUTTON_HEIGHT 42
 #define SYSTEM_UI_BUTTON_GAP 10
+#define SYSTEM_UI_STATUS_PANEL_X 16
+#define SYSTEM_UI_STATUS_PANEL_Y 52
+#define SYSTEM_UI_STATUS_PANEL_WIDTH (BOARD_LCD_HRES - (SYSTEM_UI_STATUS_PANEL_X * 2))
+#define SYSTEM_UI_STATUS_PANEL_HEIGHT 154
 
 #define SYSTEM_UI_COLOR_BG 0x101010
 #define SYSTEM_UI_COLOR_PANEL 0x202020
@@ -39,6 +43,7 @@ static lv_display_t* s_display;
 static lv_indev_t* s_pointer_indev;
 static lv_obj_t* s_settings_screen;
 static lv_obj_t* s_previous_screen;
+static lv_obj_t* s_status_panel;
 static lv_obj_t* s_state_label;
 static lv_obj_t* s_network_label;
 static lv_obj_t* s_ip_label;
@@ -46,6 +51,7 @@ static lv_obj_t* s_internet_label;
 static lv_obj_t* s_external_ip_label;
 static lv_obj_t* s_qr;
 static lv_obj_t* s_button_panel;
+static lv_obj_t* s_forget_dialog;
 static lv_timer_t* s_update_timer;
 static wifi_manager_status_t s_last_status;
 static lv_point_t s_press_point;
@@ -61,6 +67,8 @@ static const char* state_text(wifi_manager_state_t state) {
             return "No saved network";
         case WIFI_MANAGER_STATE_DISCONNECTED:
             return "Disconnected";
+        case WIFI_MANAGER_STATE_OFFLINE:
+            return "Offline";
         case WIFI_MANAGER_STATE_CONNECTING:
             return "Connecting";
         case WIFI_MANAGER_STATE_PROVISIONING:
@@ -126,6 +134,51 @@ static void leave_settings(void) {
     close_settings();
 }
 
+static void close_forget_dialog(void) {
+    if (s_forget_dialog == NULL) {
+        return;
+    }
+    lv_msgbox_close_async(s_forget_dialog);
+    s_forget_dialog = NULL;
+}
+
+static void forget_cancel_event_cb(lv_event_t* event) {
+    (void)event;
+    close_forget_dialog();
+}
+
+static void forget_confirm_event_cb(lv_event_t* event) {
+    (void)event;
+
+    const esp_err_t err = wifi_manager_forget_network();
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "failed to forget Wi-Fi network: %s", esp_err_to_name(err));
+    }
+    close_forget_dialog();
+}
+
+static void show_forget_confirmation(void) {
+    if (s_forget_dialog != NULL) {
+        return;
+    }
+
+    s_forget_dialog = lv_msgbox_create(NULL);
+    lv_obj_set_size(s_forget_dialog, 380, 190);
+    lv_obj_set_style_bg_color(s_forget_dialog, lv_color_hex(SYSTEM_UI_COLOR_PANEL), 0);
+    lv_obj_set_style_text_color(s_forget_dialog, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
+
+    lv_msgbox_add_title(s_forget_dialog, "Forget network?");
+    lv_msgbox_add_text(s_forget_dialog, "Are you sure?\nSaved Wi-Fi credentials will be erased.");
+
+    lv_obj_t* cancel_button = lv_msgbox_add_footer_button(s_forget_dialog, "Cancel");
+    lv_obj_set_style_bg_color(cancel_button, lv_color_hex(SYSTEM_UI_COLOR_BUTTON), 0);
+    lv_obj_add_event_cb(cancel_button, forget_cancel_event_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t* forget_button = lv_msgbox_add_footer_button(s_forget_dialog, "Forget");
+    lv_obj_set_style_bg_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_DANGER), 0);
+    lv_obj_add_event_cb(forget_button, forget_confirm_event_cb, LV_EVENT_CLICKED, NULL);
+}
+
 static void action_event_cb(lv_event_t* event) {
     const system_ui_action_t action = (system_ui_action_t)(uintptr_t)lv_event_get_user_data(event);
     esp_err_t err = ESP_OK;
@@ -153,7 +206,7 @@ static void action_event_cb(lv_event_t* event) {
             err = wifi_manager_disconnect();
             break;
         case SYSTEM_UI_ACTION_FORGET:
-            err = wifi_manager_forget_network();
+            show_forget_confirmation();
             break;
         case SYSTEM_UI_ACTION_REFRESH:
             err = wifi_manager_refresh_internet_status();
@@ -195,8 +248,8 @@ static void update_actions(const wifi_manager_status_t* status) {
         case WIFI_MANAGER_STATE_CONNECTED_INTERNET_UNAVAILABLE:
             create_action_button("Disconnect", SYSTEM_UI_ACTION_DISCONNECT, false, count++);
             create_action_button("Configure Wi-Fi", SYSTEM_UI_ACTION_CONFIGURE, false, count++);
-            create_action_button("Forget Network", SYSTEM_UI_ACTION_FORGET, true, count++);
             create_action_button("Refresh Status", SYSTEM_UI_ACTION_REFRESH, false, count++);
+            create_action_button("Forget Network", SYSTEM_UI_ACTION_FORGET, true, count++);
             break;
 
         case WIFI_MANAGER_STATE_PROVISIONING:
@@ -232,6 +285,16 @@ static void update_actions(const wifi_manager_status_t* status) {
             }
             break;
 
+        case WIFI_MANAGER_STATE_OFFLINE:
+            create_action_button("Retry", SYSTEM_UI_ACTION_RETRY, false, count++);
+            create_action_button("Configure Wi-Fi", SYSTEM_UI_ACTION_CONFIGURE, false, count++);
+            if (status->has_saved_config) {
+                // Reserve the left column so the destructive action remains on the right.
+                count++;
+                create_action_button("Forget Network", SYSTEM_UI_ACTION_FORGET, true, count++);
+            }
+            break;
+
         case WIFI_MANAGER_STATE_NO_SAVED_CONFIG:
         case WIFI_MANAGER_STATE_NOT_STARTED:
         default:
@@ -247,7 +310,7 @@ static void update_actions(const wifi_manager_status_t* status) {
 }
 
 static void update_status_labels(const wifi_manager_status_t* status) {
-    lv_label_set_text(s_state_label, state_text(status->state));
+    lv_label_set_text_fmt(s_state_label, "Status: %s", state_text(status->state));
     lv_label_set_text_fmt(s_network_label, "Network: %s", status->ssid[0] != '\0' ? status->ssid : "-");
     lv_label_set_text_fmt(s_ip_label, "Internal IP: %s", status->internal_ip[0] != '\0' ? status->internal_ip : "-");
 
@@ -308,6 +371,10 @@ static void input_event_cb(lv_event_t* event) {
         return;
     }
 
+    if (s_forget_dialog != NULL) {
+        return;
+    }
+
     if (code == LV_EVENT_GESTURE_DOWN && !s_settings_open && s_press_point.y <= SYSTEM_UI_TOP_EDGE_HEIGHT) {
         open_settings(false);
     } else if (code == LV_EVENT_GESTURE_UP && s_settings_open) {
@@ -336,6 +403,16 @@ static lv_obj_t* create_label(lv_obj_t* parent, int32_t y, uint32_t color) {
     return label;
 }
 
+static lv_obj_t* create_status_label(int32_t y, uint32_t color) {
+    lv_obj_t* label = lv_label_create(s_status_panel);
+    lv_obj_set_width(label, SYSTEM_UI_STATUS_PANEL_WIDTH - 32);
+    lv_obj_set_pos(label, 16, y);
+    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
+    return label;
+}
+
 esp_err_t system_ui_init(lv_display_t* display, bool open_initially) {
     if (display == NULL || s_display != NULL) {
         return ESP_ERR_INVALID_ARG;
@@ -357,14 +434,23 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially) {
     lv_obj_set_scrollable(s_settings_screen, false);
 
     lv_obj_t* title = create_label(s_settings_screen, 12, SYSTEM_UI_COLOR_TEXT);
-    lv_label_set_text(title, "System configuration");
+    lv_label_set_text(title, "Wi-Fi Configuration");
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
 
-    s_state_label = create_label(s_settings_screen, 44, SYSTEM_UI_COLOR_TEXT);
-    s_network_label = create_label(s_settings_screen, 75, SYSTEM_UI_COLOR_MUTED);
-    s_ip_label = create_label(s_settings_screen, 106, SYSTEM_UI_COLOR_MUTED);
-    s_internet_label = create_label(s_settings_screen, 137, SYSTEM_UI_COLOR_MUTED);
-    s_external_ip_label = create_label(s_settings_screen, 168, SYSTEM_UI_COLOR_MUTED);
+    s_status_panel = lv_obj_create(s_settings_screen);
+    lv_obj_set_size(s_status_panel, SYSTEM_UI_STATUS_PANEL_WIDTH, SYSTEM_UI_STATUS_PANEL_HEIGHT);
+    lv_obj_set_pos(s_status_panel, SYSTEM_UI_STATUS_PANEL_X, SYSTEM_UI_STATUS_PANEL_Y);
+    lv_obj_set_style_bg_color(s_status_panel, lv_color_hex(SYSTEM_UI_COLOR_PANEL), 0);
+    lv_obj_set_style_border_width(s_status_panel, 0, 0);
+    lv_obj_set_style_pad_all(s_status_panel, 0, 0);
+    lv_obj_set_style_radius(s_status_panel, 4, 0);
+    lv_obj_set_scrollable(s_status_panel, false);
+
+    s_state_label = create_status_label(10, SYSTEM_UI_COLOR_TEXT);
+    s_network_label = create_status_label(37, SYSTEM_UI_COLOR_MUTED);
+    s_ip_label = create_status_label(64, SYSTEM_UI_COLOR_MUTED);
+    s_internet_label = create_status_label(91, SYSTEM_UI_COLOR_MUTED);
+    s_external_ip_label = create_status_label(118, SYSTEM_UI_COLOR_MUTED);
 
     s_qr = lv_qrcode_create(s_settings_screen);
     lv_qrcode_set_size(s_qr, SYSTEM_UI_QR_SIZE);

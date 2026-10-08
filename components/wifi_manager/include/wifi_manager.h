@@ -3,8 +3,6 @@
 #pragma once
 
 #include <stdbool.h>
-#include <stddef.h>
-
 #include "esp_err.h"
 
 #define WIFI_MANAGER_DPP_URI_CAPACITY 512U
@@ -15,6 +13,7 @@ typedef enum {
     WIFI_MANAGER_STATE_NOT_STARTED,
     WIFI_MANAGER_STATE_NO_SAVED_CONFIG,
     WIFI_MANAGER_STATE_DISCONNECTED,
+    WIFI_MANAGER_STATE_OFFLINE,
     WIFI_MANAGER_STATE_CONNECTING,
     WIFI_MANAGER_STATE_PROVISIONING,
     WIFI_MANAGER_STATE_PROVISIONING_FAILED,
@@ -38,10 +37,6 @@ typedef struct {
 esp_err_t wifi_manager_prepare(bool* provisioning_required);
 esp_err_t wifi_manager_start(void);
 void wifi_manager_get_status(wifi_manager_status_t* status);
-
-esp_err_t wifi_manager_wait_for_dpp_uri(char* uri, size_t uri_capacity);
-esp_err_t wifi_manager_wait_for_connection(void);
-esp_err_t wifi_manager_finish_provisioning(void);
 
 esp_err_t wifi_manager_retry(void);
 esp_err_t wifi_manager_start_provisioning(void);
