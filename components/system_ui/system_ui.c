@@ -17,6 +17,8 @@
 #define SYSTEM_UI_QR_SIZE 290
 #define SYSTEM_UI_BUTTON_WIDTH 188
 #define SYSTEM_UI_BUTTON_HEIGHT 42
+#define SYSTEM_UI_DIALOG_BUTTON_WIDTH 184
+#define SYSTEM_UI_DIALOG_BUTTON_HEIGHT 38
 #define SYSTEM_UI_BUTTON_GAP 10
 #define SYSTEM_UI_STATUS_PANEL_X 0
 #define SYSTEM_UI_STATUS_PANEL_Y 60
@@ -173,6 +175,10 @@ static void show_forget_confirmation(void) {
     }
 
     s_forget_dialog = lv_msgbox_create(NULL);
+    lv_obj_t* backdrop = lv_obj_get_parent(s_forget_dialog);
+    lv_obj_set_style_bg_color(backdrop, lv_color_hex(SYSTEM_UI_COLOR_OUTER), 0);
+    lv_obj_set_style_bg_opa(backdrop, LV_OPA_90, 0);
+
     lv_obj_set_size(s_forget_dialog, 380, 190);
     lv_obj_set_style_bg_color(s_forget_dialog, lv_color_hex(SYSTEM_UI_COLOR_WORK), 0);
     lv_obj_set_style_bg_opa(s_forget_dialog, LV_OPA_COVER, 0);
@@ -189,6 +195,7 @@ static void show_forget_confirmation(void) {
     lv_obj_set_style_text_font(text, &lv_font_unscii_16, 0);
 
     lv_obj_t* cancel_button = lv_msgbox_add_footer_button(s_forget_dialog, "CANCEL");
+    lv_obj_set_size(cancel_button, SYSTEM_UI_DIALOG_BUTTON_WIDTH, SYSTEM_UI_DIALOG_BUTTON_HEIGHT);
     lv_obj_set_style_bg_color(cancel_button, lv_color_hex(SYSTEM_UI_COLOR_WORK), 0);
     lv_obj_set_style_border_color(cancel_button, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
     lv_obj_set_style_border_width(cancel_button, 2, 0);
@@ -198,6 +205,7 @@ static void show_forget_confirmation(void) {
     lv_obj_add_event_cb(cancel_button, forget_cancel_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t* forget_button = lv_msgbox_add_footer_button(s_forget_dialog, "FORGET");
+    lv_obj_set_size(forget_button, SYSTEM_UI_DIALOG_BUTTON_WIDTH, SYSTEM_UI_DIALOG_BUTTON_HEIGHT);
     lv_obj_set_style_bg_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_OUTER), 0);
     lv_obj_set_style_text_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_WORK), 0);
     lv_obj_set_style_border_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
