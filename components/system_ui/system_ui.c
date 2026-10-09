@@ -1,6 +1,7 @@
 /* Version: 2026-10-07 */
 
 #include "system_ui.h"
+#include "c64_palette.h"
 #include "system_gesture.h"
 
 #include <stdint.h>
@@ -25,9 +26,9 @@
 #define SYSTEM_UI_STATUS_PANEL_WIDTH (SYSTEM_UI_WORK_WIDTH - (SYSTEM_UI_STATUS_PANEL_X * 2))
 #define SYSTEM_UI_STATUS_PANEL_HEIGHT 128
 
-#define SYSTEM_UI_COLOR_OUTER 0x7C71DA
-#define SYSTEM_UI_COLOR_WORK 0x3E32A2
-#define SYSTEM_UI_COLOR_TEXT 0xBBB5FF
+#define SYSTEM_UI_COLOR_OUTER C64_COLOR_14_LIGHT_BLUE // 0x7C71DA
+#define SYSTEM_UI_COLOR_WORK 0x3E32A2                 // C64_COLOR_6_BLUE is too blue
+#define SYSTEM_UI_COLOR_TEXT C64_COLOR_14_LIGHT_BLUE  // 0xBBB5FF
 #define SYSTEM_UI_COLOR_MUTED 0x9D96EC
 #define SYSTEM_UI_COLOR_BUTTON_PRESSED 0x574AB9
 
@@ -507,10 +508,10 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_c
     lv_obj_set_scrollable(s_status_panel, false);
 
     s_state_label = create_status_label(8, SYSTEM_UI_COLOR_TEXT);
-    s_network_label = create_status_label(32, SYSTEM_UI_COLOR_MUTED);
-    s_ip_label = create_status_label(56, SYSTEM_UI_COLOR_MUTED);
-    s_internet_label = create_status_label(80, SYSTEM_UI_COLOR_MUTED);
-    s_external_ip_label = create_status_label(104, SYSTEM_UI_COLOR_MUTED);
+    s_network_label = create_status_label(32, SYSTEM_UI_COLOR_TEXT);
+    s_ip_label = create_status_label(56, SYSTEM_UI_COLOR_TEXT);
+    s_internet_label = create_status_label(80, SYSTEM_UI_COLOR_TEXT);
+    s_external_ip_label = create_status_label(104, SYSTEM_UI_COLOR_TEXT);
 
     s_qr = lv_qrcode_create(s_work_area);
     lv_qrcode_set_size(s_qr, SYSTEM_UI_QR_SIZE);
@@ -526,7 +527,7 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_c
     lv_obj_set_style_pad_all(s_button_panel, 0, 0);
     lv_obj_set_scrollable(s_button_panel, false);
 
-    lv_obj_t* instruction = create_label(s_work_area, SYSTEM_UI_WORK_HEIGHT - 22, SYSTEM_UI_COLOR_MUTED);
+    lv_obj_t* instruction = create_label(s_work_area, SYSTEM_UI_WORK_HEIGHT - 22, SYSTEM_UI_COLOR_TEXT);
     lv_label_set_text(instruction, "SWIPE UP TO RETURN");
     lv_obj_set_style_text_font(instruction, &lv_font_unscii_16, 0);
 
