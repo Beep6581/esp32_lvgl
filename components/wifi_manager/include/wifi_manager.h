@@ -36,6 +36,7 @@ typedef struct {
 
 esp_err_t wifi_manager_prepare(bool* provisioning_required);
 esp_err_t wifi_manager_start(void);
+void wifi_manager_prepare_for_restart(void);
 void wifi_manager_get_status(wifi_manager_status_t* status);
 
 esp_err_t wifi_manager_retry(void);

@@ -1,6 +1,7 @@
 /* Version: 2026-10-07 */
 
 #include "system_ui.h"
+#include "system_gesture.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -10,7 +11,6 @@
 #include "esp_lvgl_port.h"
 #include "wifi_manager.h"
 
-#define SYSTEM_UI_TOP_EDGE_HEIGHT 36
 #define SYSTEM_UI_QR_SIZE 290
 #define SYSTEM_UI_BUTTON_WIDTH 188
 #define SYSTEM_UI_BUTTON_HEIGHT 42
@@ -58,6 +58,7 @@ static lv_point_t s_press_point;
 static char s_last_qr_uri[WIFI_MANAGER_DPP_URI_CAPACITY];
 static bool s_settings_open;
 static bool s_initial_setup_open;
+static system_ui_close_callback_t s_close_callback;
 
 static const char* state_text(wifi_manager_state_t state) {
     switch (state) {
@@ -104,9 +105,13 @@ static void close_settings(void) {
     if (!s_settings_open || s_previous_screen == NULL) {
         return;
     }
-    lv_screen_load(s_previous_screen);
     s_settings_open = false;
     s_initial_setup_open = false;
+    if (s_close_callback != NULL) {
+        s_close_callback();
+        return;
+    }
+    lv_screen_load(s_previous_screen);
 }
 
 static void open_settings(bool initial_setup) {
@@ -375,7 +380,7 @@ static void input_event_cb(lv_event_t* event) {
         return;
     }
 
-    if (code == LV_EVENT_GESTURE_DOWN && !s_settings_open && s_press_point.y <= SYSTEM_UI_TOP_EDGE_HEIGHT) {
+    if (code == LV_EVENT_GESTURE_DOWN && !s_settings_open && s_press_point.y <= SYSTEM_SETTINGS_TOP_EDGE_HEIGHT) {
         open_settings(false);
     } else if (code == LV_EVENT_GESTURE_UP && s_settings_open) {
         leave_settings();
@@ -413,7 +418,7 @@ static lv_obj_t* create_status_label(int32_t y, uint32_t color) {
     return label;
 }
 
-esp_err_t system_ui_init(lv_display_t* display, bool open_initially) {
+esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_close_callback_t close_callback) {
     if (display == NULL || s_display != NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -426,6 +431,7 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially) {
     }
 
     s_display = display;
+    s_close_callback = close_callback;
     s_settings_screen = lv_obj_create(NULL);
     lv_obj_set_style_bg_color(s_settings_screen, lv_color_hex(SYSTEM_UI_COLOR_BG), 0);
     lv_obj_set_style_bg_opa(s_settings_screen, LV_OPA_COVER, 0);
@@ -478,7 +484,9 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially) {
 
     update_timer_cb(NULL);
     if (open_initially) {
-        open_settings(true);
+        // A close callback identifies the Clock configuration shell, which must
+        // remain open after its existing network reconnects.
+        open_settings(close_callback == NULL);
     }
     lvgl_port_unlock();
 

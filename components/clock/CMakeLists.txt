@@ -18,4 +18,6 @@ idf_component_register(
         heap
         esp_timer
         lvgl__lvgl
+        system_ui
+        touch
 )

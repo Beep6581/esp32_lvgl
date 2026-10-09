@@ -940,6 +940,18 @@ esp_err_t wifi_manager_start(void) {
     return ESP_OK;
 }
 
+void wifi_manager_prepare_for_restart(void) {
+    if (s_lock == NULL) {
+        return;
+    }
+
+    lock();
+    // A software restart stops Wi-Fi. Suppress reconnect handling for the
+    // resulting disconnect event without changing credentials or UI state.
+    s_intentional_disconnect = true;
+    unlock();
+}
+
 void wifi_manager_get_status(wifi_manager_status_t* status) {
     if (status == NULL) {
         return;

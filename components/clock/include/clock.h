@@ -9,7 +9,9 @@
 extern "C" {
 #endif
 
-esp_err_t clock_start(esp_lcd_panel_handle_t panel);
+typedef void (*clock_settings_callback_t)(void);
+
+esp_err_t clock_start(esp_lcd_panel_handle_t panel, clock_settings_callback_t settings_callback);
 
 #ifdef __cplusplus
 }

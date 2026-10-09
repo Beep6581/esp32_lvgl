@@ -5,6 +5,8 @@
 #include "clock_layout.h"
 #include "clock_renderer.h"
 #include "particle_engine.h"
+#include "system_gesture.h"
+#include "touch.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -21,6 +23,7 @@
 #define CLOCK_TASK_STACK_SIZE 8192U
 #define CLOCK_TASK_PRIORITY 5U
 #define CLOCK_VALID_YEAR 2020
+#define CLOCK_TOUCH_POLL_PERIOD_US 30000LL
 
 typedef struct {
     uint32_t frame_count;
@@ -38,6 +41,7 @@ typedef struct {
     uint32_t late_completions;
     uint32_t submission_races;
     uint32_t dirty_tiles;
+    uint32_t touch_polls;
 } clock_metrics_t;
 
 typedef struct {
@@ -50,6 +54,12 @@ typedef struct {
     int64_t metrics_start_us;
     time_t displayed_minute;
     int displayed_second;
+    int64_t last_touch_poll_us;
+    uint16_t touch_start_y;
+    clock_settings_callback_t settings_callback;
+    bool touch_was_pressed;
+    bool settings_swipe_tracking;
+    bool settings_requested;
     bool time_warning_logged;
 } clock_context_t;
 
@@ -99,11 +109,13 @@ static void log_metrics(clock_context_t* clock, int64_t now_us) {
 
     const uint32_t frame_count = metrics->frame_count;
     const uint32_t fps = (uint32_t)((uint64_t)frame_count * 1000000ULL / elapsed_us);
+    const uint32_t touch_poll_rate = (uint32_t)((uint64_t)metrics->touch_polls * 1000000ULL / elapsed_us);
     const uint32_t average_dirty_pixels = (uint32_t)(metrics->dirty_pixels / frame_count);
     const uint32_t screen_pixels = BOARD_LCD_HRES * BOARD_LCD_VRES;
     ESP_LOGI(TAG,
-             "particles=%u sparks=%u FPS=%lu sim=%luus wait=%luus sync=%luus dirty=%luus render=%luus total=%luus/%luus max, tiles=%lu, dirty=%lu px (%lu%%)/%lu max, deferred=%lu late=%lu submit_race=%lu discarded=%lu, internal_free=%u, psram_free=%u",
+             "particles=%u sparks=%u FPS=%lu touch=%luHz sim=%luus wait=%luus sync=%luus dirty=%luus render=%luus total=%luus/%luus max, tiles=%lu, dirty=%lu px (%lu%%)/%lu max, deferred=%lu late=%lu submit_race=%lu discarded=%lu, internal_free=%u, psram_free=%u",
              (unsigned)particle_engine_count(clock->particles), (unsigned)particle_engine_spark_count(clock->particles), (unsigned long)fps,
+             (unsigned long)touch_poll_rate,
              (unsigned long)(metrics->simulation_us / frame_count), (unsigned long)(metrics->wait_us / frame_count),
              (unsigned long)(metrics->sync_us / frame_count), (unsigned long)(metrics->dirty_us / frame_count),
              (unsigned long)(metrics->render_us / frame_count), (unsigned long)(metrics->total_us / frame_count), (unsigned long)metrics->worst_total_us,
@@ -115,6 +127,44 @@ static void log_metrics(clock_context_t* clock, int64_t now_us) {
 
     clock->metrics = (clock_metrics_t){0};
     clock->metrics_start_us = now_us;
+}
+
+static void poll_settings_gesture(clock_context_t* clock, int64_t now_us) {
+    if (clock->settings_callback == NULL || clock->settings_requested ||
+        now_us - clock->last_touch_poll_us < CLOCK_TOUCH_POLL_PERIOD_US) {
+        return;
+    }
+    clock->last_touch_poll_us = now_us;
+
+    touch_sample_t sample;
+    const esp_err_t err = touch_read(&sample);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "touch read failed: %s", esp_err_to_name(err));
+        clock->touch_was_pressed = false;
+        clock->settings_swipe_tracking = false;
+        return;
+    }
+    clock->metrics.touch_polls++;
+
+    if (!sample.pressed) {
+        clock->touch_was_pressed = false;
+        clock->settings_swipe_tracking = false;
+        return;
+    }
+
+    if (!clock->touch_was_pressed) {
+        clock->touch_was_pressed = true;
+        clock->touch_start_y = sample.y;
+        clock->settings_swipe_tracking = sample.y <= SYSTEM_SETTINGS_TOP_EDGE_HEIGHT;
+        return;
+    }
+
+    if (clock->settings_swipe_tracking &&
+        (uint32_t)sample.y >= (uint32_t)clock->touch_start_y + SYSTEM_SETTINGS_SWIPE_MIN_DISTANCE) {
+        clock->settings_requested = true;
+        ESP_LOGI(TAG, "top-edge swipe detected; opening system configuration");
+        clock->settings_callback();
+    }
 }
 
 static esp_err_t update_clock_scene(clock_context_t* clock, uint32_t elapsed_ms) {
@@ -154,6 +204,7 @@ static void clock_task(void* argument) {
             elapsed_ms = 1U;
         }
         clock->last_frame_us = frame_start_us;
+        poll_settings_gesture(clock, frame_start_us);
 
         const int64_t simulation_start_us = esp_timer_get_time();
         esp_err_t err = update_clock_scene(clock, elapsed_ms);
@@ -190,7 +241,7 @@ static void clock_cleanup(clock_context_t* clock) {
     *clock = (clock_context_t){0};
 }
 
-esp_err_t clock_start(esp_lcd_panel_handle_t panel) {
+esp_err_t clock_start(esp_lcd_panel_handle_t panel, clock_settings_callback_t settings_callback) {
     if (panel == NULL) {
         return ESP_ERR_INVALID_ARG;
     }
@@ -239,7 +290,9 @@ esp_err_t clock_start(esp_lcd_panel_handle_t panel) {
 
     s_clock.displayed_minute = now / 60;
     s_clock.displayed_second = local_time.tm_sec;
+    s_clock.settings_callback = settings_callback;
     s_clock.last_frame_us = esp_timer_get_time();
+    s_clock.last_touch_poll_us = s_clock.last_frame_us;
     s_clock.metrics_start_us = s_clock.last_frame_us;
 
     if (xTaskCreate(clock_task, "clock", CLOCK_TASK_STACK_SIZE, &s_clock, CLOCK_TASK_PRIORITY, &s_clock.task) != pdPASS) {

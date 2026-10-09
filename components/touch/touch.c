@@ -27,37 +27,58 @@ void touch_set_point_callback(touch_point_callback_t callback) {
     s_point_callback = callback;
 }
 
-static void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
-    (void)indev;
+esp_err_t touch_read(touch_sample_t* sample) {
+    if (sample == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_touch == NULL) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    *sample = (touch_sample_t){0};
 
     esp_err_t err = esp_lcd_touch_read_data(s_touch);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "esp_lcd_touch_read_data failed: %s", esp_err_to_name(err));
-        data->state = LV_INDEV_STATE_RELEASED;
-        return;
+        return err;
     }
 
     esp_lcd_touch_point_data_t point = {0};
     uint8_t point_count = 0;
     err = esp_lcd_touch_get_data(s_touch, &point, &point_count, 1);
     if (err != ESP_OK) {
-        ESP_LOGW(TAG, "esp_lcd_touch_get_data failed: %s", esp_err_to_name(err));
+        return err;
+    }
+
+    if (point_count > 0) {
+        sample->pressed = true;
+        sample->x = point.x;
+        sample->y = point.y;
+    }
+    return ESP_OK;
+}
+
+static void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
+    (void)indev;
+
+    touch_sample_t sample;
+    const esp_err_t err = touch_read(&sample);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "touch read failed: %s", esp_err_to_name(err));
         data->state = LV_INDEV_STATE_RELEASED;
         return;
     }
 
-    if (point_count > 0) {
-        data->point.x = point.x;
-        data->point.y = point.y;
+    if (sample.pressed) {
+        data->point.x = sample.x;
+        data->point.y = sample.y;
         data->state = LV_INDEV_STATE_PRESSED;
 
-        if (!s_was_pressed || point.x != s_last_x || point.y != s_last_y) {
-            ESP_LOGI(TAG, "touch: x=%u y=%u", (unsigned)point.x, (unsigned)point.y);
+        if (!s_was_pressed || sample.x != s_last_x || sample.y != s_last_y) {
+            ESP_LOGI(TAG, "touch: x=%u y=%u", (unsigned)sample.x, (unsigned)sample.y);
             if (s_point_callback != NULL) {
-                s_point_callback(point.x, point.y);
+                s_point_callback(sample.x, sample.y);
             }
-            s_last_x = point.x;
-            s_last_y = point.y;
+            s_last_x = sample.x;
+            s_last_y = sample.y;
         }
         s_was_pressed = true;
     } else {
@@ -66,8 +87,8 @@ static void touch_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
     }
 }
 
-esp_err_t touch_start(void) {
-    if (s_touch_indev != NULL) {
+esp_err_t touch_init(void) {
+    if (s_touch != NULL) {
         return ESP_OK;
     }
 
@@ -110,6 +131,21 @@ esp_err_t touch_start(void) {
         return err;
     }
 
+    ESP_LOGI(TAG, "FT6336U touch ready at I2C address 0x%02x",
+             ESP_LCD_TOUCH_IO_I2C_FT6336U_ADDRESS);
+    return ESP_OK;
+}
+
+esp_err_t touch_start(void) {
+    if (s_touch_indev != NULL) {
+        return ESP_OK;
+    }
+
+    esp_err_t err = touch_init();
+    if (err != ESP_OK) {
+        return err;
+    }
+
     lv_display_t* disp = lv_display_get_default();
     if (disp == NULL) {
         ESP_LOGE(TAG, "LVGL default display is not initialized");
@@ -130,7 +166,5 @@ esp_err_t touch_start(void) {
         return ESP_ERR_NO_MEM;
     }
 
-    ESP_LOGI(TAG, "FT6336U touch ready at I2C address 0x%02x",
-             ESP_LCD_TOUCH_IO_I2C_FT6336U_ADDRESS);
     return ESP_OK;
 }

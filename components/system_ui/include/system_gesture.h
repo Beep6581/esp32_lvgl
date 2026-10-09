@@ -1,0 +1,6 @@
+/* Version: 2026-10-09 */
+
+#pragma once
+
+#define SYSTEM_SETTINGS_TOP_EDGE_HEIGHT 36U
+#define SYSTEM_SETTINGS_SWIPE_MIN_DISTANCE 64U

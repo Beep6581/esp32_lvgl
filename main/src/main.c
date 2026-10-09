@@ -42,17 +42,41 @@ static const char* TAG = "main";
 
 #if CONFIG_APP_MODE_CLOCK
 #define CLOCK_OFFLINE_RESTART_MAGIC 0x434C4F46U
+#define CLOCK_SETTINGS_RESTART_MAGIC 0x434C5354U
 
-static RTC_NOINIT_ATTR uint32_t s_clock_offline_restart;
+static RTC_NOINIT_ATTR uint32_t s_clock_restart_marker;
 
 static bool wifi_setup_is_complete(wifi_manager_state_t state) {
     return state == WIFI_MANAGER_STATE_CONNECTED_INTERNET_AVAILABLE || state == WIFI_MANAGER_STATE_CONNECTED_INTERNET_UNAVAILABLE;
 }
 
-static bool consume_clock_offline_restart(void) {
-    const bool start_offline = s_clock_offline_restart == CLOCK_OFFLINE_RESTART_MAGIC;
-    s_clock_offline_restart = 0U;
-    return start_offline;
+static uint32_t consume_clock_restart_marker(void) {
+    const uint32_t marker = s_clock_restart_marker;
+    s_clock_restart_marker = 0U;
+    return marker;
+}
+
+static void restart_with_clock_marker(uint32_t marker, uint32_t delay_ms) {
+    s_clock_restart_marker = marker;
+    wifi_manager_prepare_for_restart();
+    (void)display_backlight_off();
+    vTaskDelay(pdMS_TO_TICKS(delay_ms));
+    esp_restart();
+}
+
+static void open_clock_settings(void) {
+    ESP_LOGI(TAG, "restarting into Clock configuration");
+    restart_with_clock_marker(CLOCK_SETTINGS_RESTART_MAGIC, 100U);
+}
+
+static void return_to_clock(void) {
+    wifi_manager_status_t status;
+    wifi_manager_get_status(&status);
+
+    const bool stay_offline = status.state == WIFI_MANAGER_STATE_OFFLINE || status.state == WIFI_MANAGER_STATE_DISCONNECTED ||
+                              status.state == WIFI_MANAGER_STATE_NO_SAVED_CONFIG;
+    ESP_LOGI(TAG, "returning to Clock mode%s", stay_offline ? " offline" : "");
+    restart_with_clock_marker(stay_offline ? CLOCK_OFFLINE_RESTART_MAGIC : 0U, 100U);
 }
 
 static void wait_for_clock_setup_result(void) {
@@ -62,16 +86,11 @@ static void wait_for_clock_setup_result(void) {
 
         if (wifi_setup_is_complete(status.state)) {
             ESP_LOGI(TAG, "Wi-Fi setup complete; restarting into Clock mode");
-            (void)display_backlight_off();
-            vTaskDelay(pdMS_TO_TICKS(250));
-            esp_restart();
+            restart_with_clock_marker(0U, 250U);
         }
         if (status.state == WIFI_MANAGER_STATE_OFFLINE) {
             ESP_LOGI(TAG, "offline mode selected; restarting into Clock mode");
-            s_clock_offline_restart = CLOCK_OFFLINE_RESTART_MAGIC;
-            (void)display_backlight_off();
-            vTaskDelay(pdMS_TO_TICKS(100));
-            esp_restart();
+            restart_with_clock_marker(CLOCK_OFFLINE_RESTART_MAGIC, 100U);
         }
 
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -95,7 +114,9 @@ static void wait_for_clock_setup_result(void) {
 
 void app_main(void) {
 #if CONFIG_APP_MODE_CLOCK
-    const bool clock_start_offline = consume_clock_offline_restart();
+    const uint32_t clock_restart_marker = consume_clock_restart_marker();
+    const bool clock_start_offline = clock_restart_marker == CLOCK_OFFLINE_RESTART_MAGIC;
+    const bool clock_open_settings = clock_restart_marker == CLOCK_SETTINGS_RESTART_MAGIC;
 #endif
 
     ESP_LOGI(TAG,
@@ -108,10 +129,10 @@ void app_main(void) {
 
     bool provisioning_required = false;
     ESP_ERROR_CHECK(wifi_manager_prepare(&provisioning_required));
+    ESP_ERROR_CHECK(i2c_bus_init());
 
 #if CONFIG_APP_MODE_CLOCK
-    if (provisioning_required && !clock_start_offline) {
-        ESP_ERROR_CHECK(i2c_bus_init());
+    if ((provisioning_required && !clock_start_offline) || clock_open_settings) {
         lv_display_t* provisioning_display = display_init();
         if (provisioning_display == NULL) {
             ESP_LOGE(TAG, "display_init failed during Wi-Fi provisioning");
@@ -119,14 +140,14 @@ void app_main(void) {
         }
 
         ESP_ERROR_CHECK(touch_start());
-        ESP_ERROR_CHECK(system_ui_init(provisioning_display, true));
+        ESP_ERROR_CHECK(system_ui_init(provisioning_display, true, clock_open_settings ? return_to_clock : NULL));
         ESP_ERROR_CHECK(wifi_manager_start());
+        if (clock_open_settings) {
+            ESP_LOGI(TAG, "Clock configuration screen ready");
+            return;
+        }
         wait_for_clock_setup_result();
     }
-#endif
-
-#if !CONFIG_APP_MODE_CLOCK
-    ESP_ERROR_CHECK(i2c_bus_init());
 #endif
 
 #if CONFIG_APP_MODE_AIR_QUALITY
@@ -144,7 +165,8 @@ void app_main(void) {
         ESP_LOGE(TAG, "display_init_direct failed");
         return;
     }
-    ESP_ERROR_CHECK(clock_start(panel));
+    ESP_ERROR_CHECK(touch_init());
+    ESP_ERROR_CHECK(clock_start(panel, open_clock_settings));
     ESP_ERROR_CHECK(display_backlight_on());
 #else
     lv_display_t* disp = display_init();
@@ -162,7 +184,7 @@ void app_main(void) {
 #endif
 
     ESP_ERROR_CHECK(touch_start());
-    ESP_ERROR_CHECK(system_ui_init(disp, provisioning_required));
+    ESP_ERROR_CHECK(system_ui_init(disp, provisioning_required, NULL));
 #endif
 
 #if CONFIG_APP_MODE_CLOCK

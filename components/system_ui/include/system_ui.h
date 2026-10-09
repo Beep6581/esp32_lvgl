@@ -7,4 +7,6 @@
 #include "esp_err.h"
 #include "lvgl.h"
 
-esp_err_t system_ui_init(lv_display_t* display, bool open_initially);
+typedef void (*system_ui_close_callback_t)(void);
+
+esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_close_callback_t close_callback);
