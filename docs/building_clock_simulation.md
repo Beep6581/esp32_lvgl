@@ -687,7 +687,8 @@ minute collapse jobs.
 
 ## 19. Renderer-neutral scene snapshot
 
-The simulation exposes a read-only snapshot containing semantic objects:
+`building_clock_scene_capture()` exposes a bounded read-only snapshot containing
+semantic objects:
 
 - accepted immutable world description;
 - current and target time digits;
@@ -700,9 +701,17 @@ The simulation exposes a read-only snapshot containing semantic objects:
 - colon state; and
 - formatted date tokens with semantic color roles.
 
+The accepted world remains immutable and is referenced by the snapshot. Mutable
+simulation state, navigation reservations, and diagnostic metrics are copied so
+the consumer sees one coherent scene and cannot mutate simulation ownership by
+editing its copy. Snapshot storage is supplied by the caller; capture performs
+no allocation.
+
 The snapshot does not contain pixels, draw callbacks, sprite formats, tile
 indices, framebuffer pointers, or dirty regions. A later presentation layer may
-interpret the same snapshot using whichever rendering design is selected.
+interpret the same snapshot using whichever rendering design is selected. The
+SDL2 host viewer under `components/building_clock/host` is the first such
+consumer and deliberately does not establish the firmware rendering design.
 
 ## 20. Update model and time discontinuities
 
@@ -809,10 +818,11 @@ choreography.
    layer.
 10. Implement preparation, evacuation, semantic collapse, settling, and the
     post-collapse clearing handoff.
-11. Implement reconstruction, materials, and machinery transition behavior.
-12. Verify deterministic reconstruction, rollovers, and time jumps without
+11. Define the renderer-neutral scene snapshot and evaluate the current world
+    and collapse behavior in the host viewer.
+12. Implement reconstruction, materials, and machinery transition behavior.
+13. Verify deterministic reconstruction, rollovers, and time jumps without
     graphics.
-13. Define the renderer-neutral scene snapshot.
 14. Integrate the building clock as a separate application mode.
 15. Implement and profile the renderer only after its direction is ready.
 
