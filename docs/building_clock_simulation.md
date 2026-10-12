@@ -325,6 +325,11 @@ instantaneous; the retained ride-edge ID lets the later worker state machine
 wait for and reserve the machinery. Large-load requests exclude every edge not
 marked as load-capable.
 
+Until the cart and lift runtime state machines exist, the first worker layer
+sets `allow_machinery_edges` to false. A destination reachable only through a
+ride edge is therefore topologically connected but remains pending rather than
+being assigned to a worker that cannot execute the route.
+
 Runtime navigation stores fixed owner bit masks for every graph edge and node.
 Edge capacity comes directly from the immutable graph and constrains traversal.
 Node occupancy is a separate semantic rule: ordinary platform, junction,
@@ -389,6 +394,13 @@ A section can be absent, staged, in transit, placed, secured, failed, falling,
 or debris. A few loose bricks may accompany a section for visual character, but
 the simulation does not account for every brick.
 
+The first transition layer accepts an explicit HH:MM value without depending
+on an RTC or operating system. The first value establishes four stable digits.
+A later value starts `PREPARING` only for changed positions, retains the old
+numeral in `outgoing`, and creates an absent structural plan for the target in
+`incoming`. It currently implements the lifecycle through `CLEARING`; accepting
+another target while reconstruction is unresolved is deliberately deferred.
+
 ## 10. Build pacing
 
 Pacing is data, not scattered transition constants. A pacing profile defines:
@@ -432,6 +444,13 @@ is ahead, workers inspect, hammer, wait, or prepare future material.
 Multi-digit transitions stagger collapses by a short configurable interval and
 increase crews and equipment use. They do not multiply entity counts without a
 fixed bound.
+
+The provisional headless-collapse profile keeps all early timing in one data
+record: 500 ms preparation, 250 ms minimum evacuation, 200 ms between section
+failures, 700 ms base fall time, 500 ms settling, and 300 ms staggering between
+changed digits. These short test-oriented values establish the state-machine
+boundary; the later full-minute choreography can replace the profile without
+rewriting transition rules.
 
 ## 11. Job system
 
@@ -527,6 +546,15 @@ machinery state machines exist.
 Each collapsing digit activates a predefined hazard volume and safe retreat
 nodes from the generated world.
 
+An active hazard is a simulation rule rather than a display flag. Pending jobs
+inside it are cancelled, active routes that enter or cross it are interrupted,
+and new ordinary routes crossing it are not assigned. Workers in danger release
+job and traversal reservations and use permanent, currently traversable routes
+toward the generated retreat nodes. Safety routes never assume that a cart or
+lift is immediately available. Transition cancellation clears section and
+temporary-structure job-owner references before a stable job slot can be
+recycled.
+
 Collapse operates at structural-section scale:
 
 - supports fail first;
@@ -535,6 +563,14 @@ Collapse operates at structural-section scale:
 - sections bounce or rotate only enough to communicate weight;
 - pieces settle into the digit's assigned debris bay; and
 - settled debris becomes clearing jobs.
+
+The initial collapse implementation fails foundation and lower supports first,
+then middle, upper, and top sections. Each active falling-section record stores
+its source digit/section, coarse position and velocity, rotation, elapsed time,
+duration, and destination debris bay. Settling converts it to one bounded
+semantic debris record in the generated bay and marks the outgoing structural
+section as debris. No renderer physics or individual-brick simulation is part
+of this state.
 
 Workers inside a hazard volume immediately suspend non-safety work and route to
 a safe node. Nearby workers may stop and watch after reaching safety.
@@ -677,10 +713,12 @@ Updates are bounded so a long task delay cannot cause unbounded physics or job
 processing. Character pose changes should retain an intentionally stepped
 old-game cadence even if simulation updates occur more frequently.
 
-The initial headless step boundary accepts at most 1000 milliseconds per call
-and reports when a larger delta is clamped. It processes accepted time in
-50-millisecond deterministic quanta and limits the number of state transitions
-performed by one worker in one quantum.
+The initial headless step boundary accepts at most 1000 milliseconds per call.
+It returns explicit requested, processed, and unconsumed durations. The caller
+retains and resubmits `unconsumed_ms`, so elapsed time is bounded without being
+silently discarded. Accepted time is processed in 50-millisecond deterministic
+quanta, with a fixed limit on state transitions performed by one worker in one
+quantum.
 
 At initial startup, the current digits begin complete. Workers then enter normal
 activity. This avoids replaying a minute transition every boot.
@@ -769,11 +807,14 @@ choreography.
 8. Implement bounded route finding and navigation reservations.
 9. Implement the first headless worker/job, movement, action, and contention
    layer.
-10. Implement digit construction and minute-transition state machines.
-11. Verify deterministic transitions, rollovers, and time jumps without graphics.
-12. Define the renderer-neutral scene snapshot.
-13. Integrate the building clock as a separate application mode.
-14. Implement and profile the renderer only after its direction is ready.
+10. Implement preparation, evacuation, semantic collapse, settling, and the
+    post-collapse clearing handoff.
+11. Implement reconstruction, materials, and machinery transition behavior.
+12. Verify deterministic reconstruction, rollovers, and time jumps without
+    graphics.
+13. Define the renderer-neutral scene snapshot.
+14. Integrate the building clock as a separate application mode.
+15. Implement and profile the renderer only after its direction is ready.
 
 This sequence keeps procedural generation and game behavior testable without
 disturbing the current display work.

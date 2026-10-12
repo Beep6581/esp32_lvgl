@@ -255,7 +255,69 @@ static void test_deterministic_replay_and_step_bound(void) {
     const uint64_t before = first.state.elapsed_ms;
     const building_clock_simulation_step_result_t result = building_clock_simulation_step(&first, &world, BUILDING_CLOCK_SIMULATION_MAX_STEP_MS + 5000U);
     expect_true(result.status == BUILDING_CLOCK_SIMULATION_DELTA_CLAMPED && result.processed_ms == BUILDING_CLOCK_SIMULATION_MAX_STEP_MS, "large elapsed-time request is explicitly bounded");
+    expect_true(result.unconsumed_ms == 5000U, "bounded step explicitly reports every unconsumed millisecond");
     expect_true(first.state.elapsed_ms == before + BUILDING_CLOCK_SIMULATION_MAX_STEP_MS, "bounded step advances only processed elapsed time");
+
+    uint32_t backlog_ms = result.unconsumed_ms;
+    uint32_t resubmitted_ms = 0U;
+    while (backlog_ms > 0U) {
+        const building_clock_simulation_step_result_t backlog_result = building_clock_simulation_step(&first, &world, backlog_ms);
+        resubmitted_ms += backlog_result.processed_ms;
+        backlog_ms = backlog_result.unconsumed_ms;
+    }
+    expect_true(resubmitted_ms == 5000U && first.state.elapsed_ms == before + 6000U, "caller can deterministically resubmit the complete elapsed-time backlog");
+}
+
+static void test_machinery_route_is_not_assigned(void) {
+    building_clock_world_t world;
+    initialize_world(&world, 2U);
+    add_spawn(&world, 0U);
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_RIDE_LIFT, 10U, 2U);
+
+    building_clock_simulation_t simulation;
+    expect_true(building_clock_simulation_init(&simulation, &world, 1U) == BUILDING_CLOCK_SIMULATION_OK, "machinery-only fixture initializes");
+    const building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_PATROL, 1U, 0U, 100U);
+    uint8_t job_id;
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &job_id) == BUILDING_CLOCK_SIMULATION_OK, "machinery-only target job is added");
+    const building_clock_route_request_t topology_request = {
+        .start_node_id = 0U,
+        .destination_node_id = 1U,
+        .allow_temporary_connections = false,
+        .carries_large_load = false,
+        .allow_machinery_edges = true,
+    };
+    building_clock_route_t topology_route;
+    expect_true(building_clock_find_route(&world, &simulation.navigation, &topology_request, &topology_route) == BUILDING_CLOCK_ROUTE_OK,
+                "machinery-only destination remains topologically reachable when machinery planning is allowed");
+    run_for(&simulation, &world, 500U, 50U);
+
+    expect_true(simulation.state.jobs[job_id].status == BUILDING_CLOCK_JOB_PENDING, "job remains pending when only an unimplemented machinery traversal reaches it");
+    expect_true(simulation.state.workers[0].state == BUILDING_CLOCK_WORKER_IDLE && simulation.state.workers[0].current_job_id == BUILDING_CLOCK_INVALID_ID,
+                "worker is not assigned a route it cannot execute");
+    expect_true(simulation.metrics.jobs_started == 0U && simulation.metrics.route_failures > 0U, "machinery-only topology is distinguished from runtime traversability");
+}
+
+static void test_active_hazard_blocks_ordinary_route(void) {
+    building_clock_world_t world;
+    initialize_world(&world, 2U);
+    world.navigation.nodes[0].position = (building_clock_point_t){.x = 0, .y = 50};
+    world.navigation.nodes[1].position = (building_clock_point_t){.x = 100, .y = 50};
+    add_spawn(&world, 0U);
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_WALK, 10U, 2U);
+
+    building_clock_simulation_t simulation;
+    expect_true(building_clock_simulation_init(&simulation, &world, 1U) == BUILDING_CLOCK_SIMULATION_OK, "hazard-route fixture initializes");
+    simulation.state.hazard_count = 1U;
+    simulation.state.hazards[0] = (building_clock_hazard_t){
+        .kind = BUILDING_CLOCK_HAZARD_DIGIT_COLLAPSE,
+        .area = {.x = 40, .y = 40, .width = 20U, .height = 20U},
+    };
+    const building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_PATROL, 1U, 0U, 100U);
+    uint8_t job_id;
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &job_id) == BUILDING_CLOCK_SIMULATION_OK, "job beyond active hazard is accepted as pending work");
+    run_for(&simulation, &world, 500U, 50U);
+
+    expect_true(simulation.state.jobs[job_id].status == BUILDING_CLOCK_JOB_PENDING && simulation.metrics.jobs_started == 0U, "ordinary worker is not assigned a route crossing an active hazard");
 }
 
 static uint8_t append_generated_targets(const building_clock_world_t* world, uint8_t targets[BUILDING_CLOCK_MAX_JOBS]) {
@@ -382,6 +444,8 @@ int main(void) {
     test_deterministic_contention();
     test_cancellation_and_slot_reuse();
     test_deterministic_replay_and_step_bound();
+    test_machinery_route_is_not_assigned();
+    test_active_hazard_blocks_ordinary_route();
     test_generated_world_integration();
     test_long_run();
 

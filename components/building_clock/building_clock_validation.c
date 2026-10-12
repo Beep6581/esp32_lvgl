@@ -461,7 +461,7 @@ static building_clock_prevalidation_result_t validate_composition(const building
     for (uint8_t digit = 0; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
         protected_area += (uint64_t)world->digit_work_areas[digit].envelope.width * world->digit_work_areas[digit].envelope.height;
     }
-    const uint64_t construction_area = (uint64_t)BUILDING_CLOCK_WORLD_WIDTH * world->date_band.y - protected_area;
+    const uint64_t construction_area = (uint64_t)BUILDING_CLOCK_WORLD_WIDTH * (uint16_t)world->date_band.y - protected_area;
     if (construction_area == 0U || occupied_area * 100U > construction_area * MAX_OCCUPIED_PERCENT) {
         return result(BUILDING_CLOCK_PREVALIDATION_NEGATIVE_SPACE, BUILDING_CLOCK_VALIDATION_NO_ITEM);
     }

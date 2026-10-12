@@ -14,14 +14,26 @@ extern "C" {
 #define BUILDING_CLOCK_SIMULATION_MAX_STEP_MS 1000U
 #define BUILDING_CLOCK_SIMULATION_QUANTUM_MS 50U
 
+typedef struct {
+    uint32_t preparation_ms;
+    uint32_t minimum_evacuation_ms;
+    uint32_t section_failure_interval_ms;
+    uint32_t falling_section_ms;
+    uint32_t settling_ms;
+    uint32_t changed_digit_stagger_ms;
+} building_clock_transition_pacing_t;
+
 typedef enum {
     BUILDING_CLOCK_SIMULATION_OK = 0,
     BUILDING_CLOCK_SIMULATION_DELTA_CLAMPED,
     BUILDING_CLOCK_SIMULATION_INVALID_ARGUMENT,
     BUILDING_CLOCK_SIMULATION_INVALID_WORLD,
     BUILDING_CLOCK_SIMULATION_INVALID_STATE,
+    BUILDING_CLOCK_SIMULATION_INVALID_TIME,
+    BUILDING_CLOCK_SIMULATION_TRANSITION_ACTIVE,
     BUILDING_CLOCK_SIMULATION_CAPACITY_EXCEEDED,
     BUILDING_CLOCK_SIMULATION_UNSUPPORTED_JOB,
+    BUILDING_CLOCK_SIMULATION_UNSAFE_TARGET,
 } building_clock_simulation_status_t;
 
 typedef struct {
@@ -44,13 +56,24 @@ typedef struct {
     uint32_t reservation_conflicts;
     uint32_t edge_reservations_acquired;
     uint32_t node_reservations_acquired;
+    uint32_t clock_changes_started;
+    uint32_t digits_changed;
+    uint32_t workers_evacuated;
+    uint32_t jobs_interrupted;
+    uint32_t debris_created;
+    uint32_t evacuation_failures;
+    uint32_t transition_capacity_delays;
     uint8_t peak_active_workers;
+    uint8_t peak_falling_sections;
+    uint8_t peak_debris_pieces;
 } building_clock_simulation_metrics_t;
 
 typedef struct {
     building_clock_simulation_state_t state;
     building_clock_navigation_runtime_t navigation;
     building_clock_random_t worker_random;
+    building_clock_random_t transition_random;
+    building_clock_transition_pacing_t pacing;
     building_clock_simulation_metrics_t metrics;
 } building_clock_simulation_t;
 
@@ -58,6 +81,7 @@ typedef struct {
     building_clock_simulation_status_t status;
     uint32_t requested_ms;
     uint32_t processed_ms;
+    uint32_t unconsumed_ms;
 } building_clock_simulation_step_result_t;
 
 building_clock_simulation_status_t building_clock_simulation_init(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_count);
@@ -65,6 +89,10 @@ building_clock_simulation_status_t building_clock_simulation_add_job(building_cl
                                                                      uint8_t* job_id);
 building_clock_simulation_status_t building_clock_simulation_cancel_job(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id);
 building_clock_simulation_status_t building_clock_simulation_recycle_job(building_clock_simulation_t* simulation, uint8_t job_id);
+building_clock_simulation_status_t building_clock_simulation_set_time(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t hour, uint8_t minute);
+bool building_clock_simulation_transition_active(const building_clock_simulation_t* simulation);
+
+/* The caller retains and later resubmits step_result.unconsumed_ms. */
 building_clock_simulation_step_result_t building_clock_simulation_step(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint32_t elapsed_ms);
 const char* building_clock_simulation_status_name(building_clock_simulation_status_t status);
 

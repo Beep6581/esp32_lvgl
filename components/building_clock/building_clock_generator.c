@@ -326,7 +326,8 @@ static void add_cart_route(candidate_builder_t* builder, uint8_t platform_id) {
     route->stop_count = (uint8_t)random_u32(builder, 2U, 5U);
     for (uint8_t index = 0; index < route->stop_count; index++) {
         const int32_t span = route_end - route_start;
-        int16_t x = (int16_t)(route_start + (span * index) / (route->stop_count - 1U));
+        const int32_t offset = (span * index) / (int32_t)(route->stop_count - 1U);
+        int16_t x = (int16_t)((int32_t)route_start + offset);
         if (index > 0U && index + 1U < route->stop_count) {
             x = (int16_t)(x + random_i16(builder, -5, 6));
         }

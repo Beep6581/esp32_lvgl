@@ -386,6 +386,7 @@ typedef struct {
     building_clock_digit_lifecycle_t lifecycle;
     building_clock_digit_structure_t outgoing;
     building_clock_digit_structure_t incoming;
+    uint32_t transition_delay_ms;
     uint32_t lifecycle_elapsed_ms;
 } building_clock_digit_state_t;
 
@@ -432,6 +433,13 @@ typedef enum {
     BUILDING_CLOCK_FACING_RIGHT,
 } building_clock_facing_t;
 
+typedef enum {
+    BUILDING_CLOCK_WORKER_ROUTE_NONE = 0,
+    BUILDING_CLOCK_WORKER_ROUTE_JOB,
+    BUILDING_CLOCK_WORKER_ROUTE_IDLE_EGRESS,
+    BUILDING_CLOCK_WORKER_ROUTE_EVACUATION,
+} building_clock_worker_route_purpose_t;
+
 typedef struct {
     building_clock_worker_role_t preferred_role;
     uint16_t capabilities;
@@ -447,6 +455,8 @@ typedef struct {
     uint8_t route_node_count;
     uint8_t route_edge_count;
     uint8_t route_node_index;
+    building_clock_worker_route_purpose_t route_purpose;
+    uint8_t evacuation_digit_id;
     uint8_t route_node_ids[BUILDING_CLOCK_MAX_WORKER_ROUTE_NODES];
     uint8_t route_edge_ids[BUILDING_CLOCK_MAX_WORKER_ROUTE_EDGES];
     uint16_t edge_progress_per_mille;
@@ -598,6 +608,7 @@ typedef struct {
     building_clock_point_t position;
     building_clock_vector_t velocity;
     uint8_t source_digit_id;
+    uint8_t source_section_id;
     uint8_t debris_bay_id;
     uint8_t reserved_worker_id;
 } building_clock_debris_t;
@@ -609,7 +620,10 @@ typedef struct {
     int16_t angle_degrees;
     int16_t angular_velocity_degrees_per_second;
     uint8_t source_digit_id;
+    uint8_t source_section_id;
     uint8_t target_debris_bay_id;
+    uint32_t elapsed_ms;
+    uint32_t duration_ms;
 } building_clock_falling_section_t;
 
 typedef enum {
@@ -702,6 +716,11 @@ typedef struct {
 /* Mutable runtime state. It owns no generated-world geometry. */
 typedef struct {
     uint64_t elapsed_ms;
+    bool clock_initialized;
+    uint8_t current_hour;
+    uint8_t current_minute;
+    uint8_t target_hour;
+    uint8_t target_minute;
     building_clock_digit_state_t digits[BUILDING_CLOCK_DIGIT_COUNT];
     building_clock_colon_state_t colon;
     building_clock_date_t date;
