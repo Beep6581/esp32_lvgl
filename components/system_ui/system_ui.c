@@ -33,8 +33,8 @@
 #define SYSTEM_UI_COLOR_BUTTON_PRESSED 0x574AB9
 
 // Keep QR colors independent from the terminal palette for later experiments.
-#define SYSTEM_UI_QR_DARK_COLOR 0x000000
-#define SYSTEM_UI_QR_LIGHT_COLOR 0xFFFFFF
+#define SYSTEM_UI_QR_DARK_COLOR SYSTEM_UI_COLOR_WORK
+#define SYSTEM_UI_QR_LIGHT_COLOR C64_COLOR_7_YELLOW
 
 typedef enum {
     SYSTEM_UI_ACTION_RETRY,
