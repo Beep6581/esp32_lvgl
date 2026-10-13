@@ -387,7 +387,10 @@ typedef struct {
     building_clock_digit_structure_t outgoing;
     building_clock_digit_structure_t incoming;
     uint32_t transition_delay_ms;
+    uint32_t evacuation_lead_ms;
     uint32_t lifecycle_elapsed_ms;
+    uint8_t finishing_job_id;
+    bool finishing_complete;
 } building_clock_digit_state_t;
 
 typedef enum {
@@ -536,7 +539,9 @@ typedef struct {
     building_clock_job_status_t status;
     building_clock_job_subject_t subject;
     uint8_t priority;
+    uint8_t source_node_id;
     uint8_t target_node_id;
+    bool source_action_complete;
     building_clock_material_kind_t required_material;
     building_clock_machinery_kind_t required_machinery_kind;
     uint8_t required_machinery_id;
@@ -615,10 +620,12 @@ typedef struct {
 
 typedef struct {
     building_clock_section_kind_t section_kind;
+    building_clock_point_t start_position;
+    building_clock_point_t landing_position;
     building_clock_point_t position;
-    building_clock_vector_t velocity;
     int16_t angle_degrees;
     int16_t angular_velocity_degrees_per_second;
+    uint16_t progress_per_mille;
     uint8_t source_digit_id;
     uint8_t source_section_id;
     uint8_t target_debris_bay_id;

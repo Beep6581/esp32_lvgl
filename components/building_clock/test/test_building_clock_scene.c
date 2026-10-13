@@ -16,6 +16,10 @@ static void expect_true(bool condition, const char* description) {
     }
 }
 
+static bool point_in_rect(building_clock_point_t point, building_clock_rect_t rect) {
+    return point.x >= rect.x && point.y >= rect.y && point.x < (int32_t)rect.x + rect.width && point.y < (int32_t)rect.y + rect.height;
+}
+
 static void make_scene(building_clock_world_t* world, building_clock_simulation_t* simulation) {
     const building_clock_world_selection_result_t selection = building_clock_select_world(world, UINT64_C(0x243f6a8885a308d3), BUILDING_CLOCK_GENERATOR_VERSION);
     expect_true(selection.status == BUILDING_CLOCK_WORLD_SELECTION_ACCEPTED || selection.status == BUILDING_CLOCK_WORLD_SELECTION_ACCEPTED_FALLBACK, "scene test world is accepted");
@@ -92,7 +96,12 @@ static void test_collapse_scene_contents(void) {
             }
         }
         for (uint8_t falling = 0U; falling < snapshot.state.falling_section_count; falling++) {
-            expect_true(snapshot.state.falling_sections[falling].source_digit_id < BUILDING_CLOCK_DIGIT_COUNT, "falling section references a valid digit");
+            const building_clock_falling_section_t* section = &snapshot.state.falling_sections[falling];
+            expect_true(section->source_digit_id < BUILDING_CLOCK_DIGIT_COUNT, "falling section references a valid digit");
+            if (section->source_digit_id < BUILDING_CLOCK_DIGIT_COUNT && section->target_debris_bay_id < world.debris_bay_count) {
+                expect_true(point_in_rect(section->landing_position, world.debris_bays[section->target_debris_bay_id].area), "snapshot exposes a valid semantic landing target");
+                expect_true(section->progress_per_mille <= 1000U, "snapshot exposes bounded fall progress");
+            }
         }
     }
     expect_true(saw_hazard && saw_falling && saw_debris, "snapshot exposes hazard, falling-section, and settled-debris phases");

@@ -279,7 +279,8 @@ the stage and explicit reason for every rejected attempt so application wiring
 can log the diagnostics without coupling generation to ESP logging.
 
 If all four normal attempts fail, selection runs root seed
-`0xbb67ae8584caa73b`, generator version 1, attempt 0 through that same pipeline.
+`0xbb67ae8584caa73b`, generator version 2, attempt 0 through that same pipeline.
+Version 2 records the debris-aware lower-support placement grammar.
 This combination is a known-valid instance of the normal generator grammar,
 not a separately hand-authored level. If it stops passing after an intentional
 generator or validation change, the fallback configuration must be updated to
@@ -398,8 +399,10 @@ The first transition layer accepts an explicit HH:MM value without depending
 on an RTC or operating system. The first value establishes four stable digits.
 A later value starts `PREPARING` only for changed positions, retains the old
 numeral in `outgoing`, and creates an absent structural plan for the target in
-`incoming`. It currently implements the lifecycle through `CLEARING`; accepting
-another target while reconstruction is unresolved is deliberately deferred.
+`incoming`. Changed digits now continue through clearing, dependency-ordered
+reconstruction, inspection, `COMPLETE`, and promotion back to `STABLE`.
+Accepting another target while a transition is active remains deliberately
+disallowed; a completed simulation can immediately accept the following target.
 
 ## 10. Build pacing
 
@@ -445,12 +448,20 @@ Multi-digit transitions stagger collapses by a short configurable interval and
 increase crews and equipment use. They do not multiply entity counts without a
 fixed bound.
 
-The provisional headless-collapse profile keeps all early timing in one data
-record: 500 ms preparation, 250 ms minimum evacuation, 200 ms between section
-failures, 700 ms base fall time, 500 ms settling, and 300 ms staggering between
-changed digits. These short test-oriented values establish the state-machine
-boundary; the later full-minute choreography can replace the profile without
-rewriting transition rules.
+The headless profile keeps all timing in one data record. Evacuation is not a
+fixed observation timeout: before a target is scheduled, the simulation can
+report the required lead time from actual worker-to-retreat routes. The lead is
+the longest traversal duration plus a fixed safety margin and a bounded
+per-worker contention allowance. Scheduling the target activates its hazard so
+evacuation can start during preparation. Collapse waits for both the computed
+deadline and actual worker safety, so unexpected contention delays collapse
+rather than allowing it to pass through a worker.
+
+The current reconstruction profile reserves minimum phase durations of 5
+seconds for clearing, 5 seconds for foundation work, 10 seconds for lower and
+middle structure, 10 seconds for upper recognizable structure, and 4 seconds
+for finishing. These are centralized pacing values; section readiness and job
+completion, not elapsed time alone, advance the lifecycle.
 
 ## 11. Job system
 
@@ -458,6 +469,7 @@ Jobs are small explicit records in a fixed-capacity queue. A job contains:
 
 - type;
 - priority;
+- optional material source navigation node;
 - target navigation node;
 - associated digit and section, if any;
 - required material or equipment;
@@ -533,11 +545,15 @@ Low-rate incidental events make workers appear less mechanical:
 Incidental events have strict time limits and cannot block milestone-critical
 work.
 
-The first headless worker layer implements patrol, inspect, and secure/hammer
-jobs. Idle workers choose compatible pending jobs by priority, then route cost,
-then stable job-slot ID. Routes retain both node and edge IDs so parallel edge
-semantics remain unambiguous. Walking, climbing, waiting, inspection, and
-hammering advance from elapsed milliseconds. Cart and lift edges remain
+The headless worker layer implements patrol, inspect, clear-debris,
+temporary-access installation, section transport, placement, and
+secure/hammer jobs. A section job first routes to its staging source, marks the
+prefabricated load carried, then routes to the real digit work point. Placement
+and securing are consecutive visible actions owned by the same stable job,
+which avoids an artificial second commute without collapsing them into one
+instant state change. Idle workers choose compatible pending jobs by priority,
+then route cost, then stable job-slot ID. Routes retain both node and edge IDs
+so parallel edge semantics remain unambiguous. Cart and lift edges remain
 topologically visible but are not immediately traversable until their later
 machinery state machines exist.
 
@@ -566,9 +582,13 @@ Collapse operates at structural-section scale:
 
 The initial collapse implementation fails foundation and lower supports first,
 then middle, upper, and top sections. Each active falling-section record stores
-its source digit/section, coarse position and velocity, rotation, elapsed time,
-duration, and destination debris bay. Settling converts it to one bounded
-semantic debris record in the generated bay and marks the outgoing structural
+its source digit/section, start position, preselected landing position, current
+coarse position, normalized progress, rotation, elapsed time, duration, and
+destination debris bay. The landing position is chosen once when the fall
+begins from a small deterministic pile grid inside that digit's generated bay.
+Horizontal position advances linearly while vertical progress uses a bounded
+integer acceleration curve. Settling converts the section to one semantic
+debris record at that same landing position and marks the outgoing structural
 section as debris. No renderer physics or individual-brick simulation is part
 of this state.
 
@@ -604,6 +624,13 @@ Typical flow is:
 4. A required section becomes available as a prefabricated load.
 5. Workers or machinery move that load to the digit.
 6. Placement and securing jobs complete the section.
+
+The current first reconstruction pass clears semantic debris into recoverable
+depot inventory and obtains bounded prefabricated section loads from the
+off-screen depot supply at the digit's assigned staging area. A worker visibly
+carries each load from staging to a lower or upper construction access point.
+This keeps the action spatially coherent without requiring strict conservation
+or a cart/crane state machine yet.
 
 If the required material would miss its pacing milestone, an off-screen supply
 delivery may provide it. This is preferable to making workers visibly cheat.
@@ -820,8 +847,9 @@ choreography.
     post-collapse clearing handoff.
 11. Define the renderer-neutral scene snapshot and evaluate the current world
     and collapse behavior in the host viewer.
-12. Implement reconstruction, materials, and machinery transition behavior.
-13. Verify deterministic reconstruction, rollovers, and time jumps without
+12. Implement the first reconstruction, material transport, and temporary
+    access behavior; retain machinery traversal for a later refinement.
+13. Verify deterministic reconstruction and rollovers without
     graphics.
 14. Integrate the building clock as a separate application mode.
 15. Implement and profile the renderer only after its direction is ready.

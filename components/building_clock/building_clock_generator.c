@@ -233,6 +233,41 @@ static void generate_topology(candidate_builder_t* builder) {
     add_side_ladders(builder);
 }
 
+static bool support_column_clears_debris_bays(const building_clock_world_t* world, int16_t x, uint16_t width) {
+    const int32_t right = (int32_t)x + width;
+    for (uint8_t bay_id = 0U; bay_id < world->debris_bay_count; bay_id++) {
+        const building_clock_rect_t bay = world->debris_bays[bay_id].area;
+        if (x < (int32_t)bay.x + bay.width && bay.x < right) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static int16_t choose_lower_support_x(candidate_builder_t* builder, int16_t minimum, int16_t maximum_exclusive, uint16_t width) {
+    uint16_t valid_count = 0U;
+    for (int16_t x = minimum; x < maximum_exclusive; x++) {
+        if (support_column_clears_debris_bays(builder->world, x, width)) {
+            valid_count++;
+        }
+    }
+    if (valid_count == 0U) {
+        return -1;
+    }
+
+    uint16_t selected = (uint16_t)building_clock_random_bounded(&builder->random, valid_count);
+    for (int16_t x = minimum; x < maximum_exclusive; x++) {
+        if (!support_column_clears_debris_bays(builder->world, x, width)) {
+            continue;
+        }
+        if (selected == 0U) {
+            return x;
+        }
+        selected--;
+    }
+    return -1;
+}
+
 static void generate_supports(candidate_builder_t* builder) {
     const building_clock_topology_family_t family = builder->world->topology_family;
     const int16_t left_top_y = builder->world->platforms[builder->top_left_platform_id].surface_y;
@@ -249,9 +284,11 @@ static void generate_supports(candidate_builder_t* builder) {
 
     const uint8_t lower_supports = family == BUILDING_CLOCK_TOPOLOGY_SPLIT_LOWER_RAISED_BRIDGE ? 2U : 1U;
     for (uint8_t index = 0; index < lower_supports; index++) {
-        const int16_t x = index == 0U ? random_i16(builder, 104, 132) : random_i16(builder, 332, 360);
-        (void)add_support(builder, random_chance(builder, 1U, 2U) ? BUILDING_CLOCK_SUPPORT_FRAME : BUILDING_CLOCK_SUPPORT_BRACE, x, builder->lower_y, (uint16_t)random_i16(builder, 8, 13),
-                          (uint16_t)(411 - builder->lower_y));
+        const uint16_t width = (uint16_t)random_i16(builder, 8, 13);
+        const int16_t x = index == 0U ? choose_lower_support_x(builder, 104, 144, width) : choose_lower_support_x(builder, 305, 360, width);
+        if (x >= 0) {
+            (void)add_support(builder, random_chance(builder, 1U, 2U) ? BUILDING_CLOCK_SUPPORT_FRAME : BUILDING_CLOCK_SUPPORT_BRACE, x, builder->lower_y, width, (uint16_t)(411 - builder->lower_y));
+        }
     }
 
     for (uint8_t support_id = 0; support_id < builder->world->major_support_count; support_id++) {
@@ -539,10 +576,10 @@ void building_clock_generate_candidate(building_clock_world_t* world, uint64_t r
     world->date_band = (building_clock_rect_t){.x = 0, .y = DATE_BAND_Y, .width = BUILDING_CLOCK_WORLD_WIDTH, .height = 60};
 
     generate_topology(&builder);
+    generate_locations(&builder);
     generate_supports(&builder);
     generate_crane_and_lift(&builder);
     generate_cart_routes(&builder);
-    generate_locations(&builder);
     generate_worker_spawns(&builder);
     generate_digit_work_areas(&builder);
 }

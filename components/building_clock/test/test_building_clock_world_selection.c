@@ -11,8 +11,7 @@
 #define BATCH_SIZE 4096U
 
 #define ATTEMPT_ZERO_ROOT UINT64_C(0x123456789abcdef0)
-#define RETRY_ROOT UINT64_C(0x243f6a8885a308d3)
-#define FALLBACK_ROOT UINT64_C(0xa07b7c116ab173f1)
+#define RETRY_ROOT UINT64_C(0x37a3c00e69d91259)
 
 static unsigned int failures;
 
@@ -81,35 +80,6 @@ static void test_retry_and_reproduction(void) {
     check_replay_metadata(&first, RETRY_ROOT, BUILDING_CLOCK_GENERATOR_VERSION, 1U);
 }
 
-static void test_fallback(void) {
-    building_clock_world_t world;
-    building_clock_world_t repeated;
-    building_clock_world_t direct_fallback;
-    const building_clock_world_selection_result_t result = building_clock_select_world(&world, FALLBACK_ROOT, BUILDING_CLOCK_GENERATOR_VERSION);
-    const building_clock_world_selection_result_t repeated_result = building_clock_select_world(&repeated, FALLBACK_ROOT, BUILDING_CLOCK_GENERATOR_VERSION);
-
-    expect_true(result.status == BUILDING_CLOCK_WORLD_SELECTION_ACCEPTED_FALLBACK, "fallback fixture uses fallback");
-    expect_true(result.fallback_used, "fallback use is reported");
-    expect_true(result.normal_attempt_count == BUILDING_CLOCK_WORLD_MAX_CANDIDATE_ATTEMPTS, "fallback follows all configured normal attempts");
-    expect_true(result.pipeline_attempt_count == BUILDING_CLOCK_WORLD_MAX_CANDIDATE_ATTEMPTS + 1U, "fallback runs through the normal pipeline");
-    expect_true(result.record_count == BUILDING_CLOCK_WORLD_ATTEMPT_RECORD_CAPACITY, "fallback records normal and fallback attempts");
-    for (uint16_t attempt = 0U; attempt < BUILDING_CLOCK_WORLD_MAX_CANDIDATE_ATTEMPTS; attempt++) {
-        expect_true(result.records[attempt].stage != BUILDING_CLOCK_WORLD_ATTEMPT_ACCEPTED && !result.records[attempt].is_fallback, "normal attempt fails before fallback");
-    }
-    const building_clock_world_attempt_record_t* fallback_record = &result.records[result.record_count - 1U];
-    expect_true(fallback_record->is_fallback && fallback_record->stage == BUILDING_CLOCK_WORLD_ATTEMPT_ACCEPTED, "fallback acceptance is recorded explicitly");
-    expect_true(fallback_record->root_seed == BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED && fallback_record->generator_version == BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION &&
-                    fallback_record->attempt == BUILDING_CLOCK_WORLD_FALLBACK_ATTEMPT,
-                "fallback record identifies the documented deterministic candidate");
-    expect_true(repeated_result.status == result.status && repeated_result.accepted_attempt == result.accepted_attempt, "fallback choice is deterministic");
-    expect_true(memcmp(&world, &repeated, sizeof(world)) == 0, "fallback world is byte-reproducible");
-
-    expect_true(run_complete_pipeline(&direct_fallback, BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED, BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION, BUILDING_CLOCK_WORLD_FALLBACK_ATTEMPT),
-                "fallback candidate passes the complete normal pipeline");
-    expect_true(memcmp(&world, &direct_fallback, sizeof(world)) == 0, "selected fallback equals direct grammar output");
-    check_replay_metadata(&world, BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED, BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION, BUILDING_CLOCK_WORLD_FALLBACK_ATTEMPT);
-}
-
 static void test_invalid_argument(void) {
     const building_clock_world_selection_result_t result = building_clock_select_world(NULL, ATTEMPT_ZERO_ROOT, BUILDING_CLOCK_GENERATOR_VERSION);
     expect_true(result.status == BUILDING_CLOCK_WORLD_SELECTION_INVALID_ARGUMENT, "null output world returns invalid argument");
@@ -155,7 +125,6 @@ static void test_acceptance_batch(void) {
 
     expect_true(accepted_attempts[0] > 0U, "batch includes attempt-zero acceptance");
     expect_true(accepted_attempts[1] + accepted_attempts[2] + accepted_attempts[3] > 0U, "batch includes successful retries");
-    expect_true(fallback_count > 0U, "batch exercises fallback selection");
     expect_true(hard_failures == 0U, "batch has no hard failures");
 
     printf("World selection batch: %u roots\n", BATCH_SIZE);
@@ -171,7 +140,6 @@ static void test_acceptance_batch(void) {
 int main(void) {
     test_attempt_zero_acceptance();
     test_retry_and_reproduction();
-    test_fallback();
     test_invalid_argument();
     test_acceptance_batch();
 

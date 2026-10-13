@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#define INVALID_FALLBACK_ROOT UINT64_C(0x6a09e667f3bcc909)
+#define INVALID_FALLBACK_ROOT UINT64_C(0x37a3c00e69d91259)
 
 static unsigned int failures;
 

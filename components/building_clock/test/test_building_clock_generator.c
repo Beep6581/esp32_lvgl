@@ -221,6 +221,8 @@ static void test_generation_batch(void) {
     uint16_t signature_count = 0U;
     uint32_t passed = 0U;
     uint32_t rejected = 0U;
+    uint32_t split_candidates = 0U;
+    uint32_t split_debris_clearance_failures = 0U;
     uint32_t reasons[BUILDING_CLOCK_PREVALIDATION_NEGATIVE_SPACE + 1U] = {0};
 
     for (uint32_t index = 0; index < BATCH_SIZE; index++) {
@@ -235,6 +237,9 @@ static void test_generation_batch(void) {
 
         if (world.topology_family < BUILDING_CLOCK_TOPOLOGY_COUNT) {
             topology_seen[world.topology_family] = true;
+        }
+        if (world.topology_family == BUILDING_CLOCK_TOPOLOGY_SPLIT_LOWER_RAISED_BRIDGE) {
+            split_candidates++;
         }
         crane_left_seen |= world.crane_count > 0U && world.cranes[0].base_position.x < BUILDING_CLOCK_WORLD_WIDTH / 2;
         crane_right_seen |= world.crane_count > 0U && world.cranes[0].base_position.x > BUILDING_CLOCK_WORLD_WIDTH / 2;
@@ -271,6 +276,9 @@ static void test_generation_batch(void) {
             passed++;
         } else {
             rejected++;
+            if (world.topology_family == BUILDING_CLOCK_TOPOLOGY_SPLIT_LOWER_RAISED_BRIDGE && validation.reason == BUILDING_CLOCK_PREVALIDATION_DEBRIS_FALL_SPACE) {
+                split_debris_clearance_failures++;
+            }
             if ((uint32_t)validation.reason <= BUILDING_CLOCK_PREVALIDATION_NEGATIVE_SPACE) {
                 reasons[validation.reason]++;
             }
@@ -291,6 +299,7 @@ static void test_generation_batch(void) {
     expect_true(lift_seen && no_lift_seen, "batch varies optional lift presence");
     expect_true(minimum_lower_y < maximum_lower_y, "batch varies platform levels");
     expect_true(signature_count >= 64U, "batch contains many distinct geometry signatures");
+    expect_true(split_candidates > 0U && split_debris_clearance_failures == 0U, "split/bridge lower supports preserve generated debris fall corridors");
 
     printf("Generator batch: %u candidates, %" PRIu32 " preliminary pass, %" PRIu32 " preliminary reject, %u topology families, %u distinct signatures\n", BATCH_SIZE, passed, rejected, topology_count,
            signature_count);

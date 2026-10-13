@@ -17,10 +17,23 @@ extern "C" {
 typedef struct {
     uint32_t preparation_ms;
     uint32_t minimum_evacuation_ms;
+    uint32_t evacuation_margin_ms;
+    uint32_t evacuation_contention_ms_per_worker;
     uint32_t section_failure_interval_ms;
     uint32_t falling_section_ms;
     uint32_t settling_ms;
     uint32_t changed_digit_stagger_ms;
+    uint32_t clearing_minimum_ms;
+    uint32_t foundation_minimum_ms;
+    uint32_t structure_minimum_ms;
+    uint32_t recognizable_minimum_ms;
+    uint32_t finishing_minimum_ms;
+    uint32_t debris_clear_action_ms;
+    uint32_t section_place_action_ms;
+    uint32_t section_secure_action_ms;
+    uint32_t finishing_action_ms;
+    uint32_t temporary_install_action_ms;
+    uint32_t complete_hold_ms;
 } building_clock_transition_pacing_t;
 
 typedef enum {
@@ -63,7 +76,15 @@ typedef struct {
     uint32_t debris_created;
     uint32_t evacuation_failures;
     uint32_t transition_capacity_delays;
+    uint32_t debris_cleared;
+    uint32_t sections_staged;
+    uint32_t sections_placed;
+    uint32_t sections_secured;
+    uint32_t digits_completed;
+    uint32_t maximum_evacuation_lead_ms;
     uint8_t peak_active_workers;
+    uint8_t peak_job_slots;
+    uint8_t peak_load_slots;
     uint8_t peak_falling_sections;
     uint8_t peak_debris_pieces;
 } building_clock_simulation_metrics_t;
@@ -90,6 +111,8 @@ building_clock_simulation_status_t building_clock_simulation_add_job(building_cl
 building_clock_simulation_status_t building_clock_simulation_cancel_job(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id);
 building_clock_simulation_status_t building_clock_simulation_recycle_job(building_clock_simulation_t* simulation, uint8_t job_id);
 building_clock_simulation_status_t building_clock_simulation_set_time(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t hour, uint8_t minute);
+building_clock_simulation_status_t building_clock_simulation_required_transition_lead(const building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t hour, uint8_t minute,
+                                                                                      uint32_t* required_ms);
 bool building_clock_simulation_transition_active(const building_clock_simulation_t* simulation);
 
 /* The caller retains and later resubmits step_result.unconsumed_ms. */

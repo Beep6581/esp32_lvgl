@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define BUILDING_CLOCK_GENERATOR_VERSION 1U
+#define BUILDING_CLOCK_GENERATOR_VERSION 2U
 
 uint64_t building_clock_candidate_seed(uint64_t root_seed, uint32_t generator_version, uint16_t attempt);
 

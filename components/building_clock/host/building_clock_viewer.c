@@ -265,13 +265,14 @@ static SDL_Rect section_rect(building_clock_rect_t envelope, building_clock_sect
 static void draw_structure(SDL_Renderer* renderer, building_clock_rect_t envelope, const building_clock_digit_structure_t* structure, bool incoming) {
     for (uint8_t index = 0U; index < structure->section_count; index++) {
         const building_clock_section_state_t* section = &structure->sections[index];
-        if (section->status == BUILDING_CLOCK_SECTION_ABSENT || section->status == BUILDING_CLOCK_SECTION_FALLING || section->status == BUILDING_CLOCK_SECTION_DEBRIS) {
+        if (section->status == BUILDING_CLOCK_SECTION_ABSENT || section->status == BUILDING_CLOCK_SECTION_STAGED || section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT ||
+            section->status == BUILDING_CLOCK_SECTION_FALLING || section->status == BUILDING_CLOCK_SECTION_DEBRIS) {
             continue;
         }
-        SDL_Color color = incoming ? COLOR_LADDER : COLOR_MASONRY;
+        SDL_Color color = COLOR_MASONRY;
         if (section->status == BUILDING_CLOCK_SECTION_FAILED) {
             color = COLOR_MASONRY_DARK;
-        } else if (section->status == BUILDING_CLOCK_SECTION_STAGED || section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT) {
+        } else if (incoming && section->status == BUILDING_CLOCK_SECTION_PLACED) {
             color = COLOR_STEEL;
         }
         const SDL_Rect rect = section_rect(envelope, section->kind);
@@ -281,6 +282,18 @@ static void draw_structure(SDL_Renderer* renderer, building_clock_rect_t envelop
         for (int x = rect.x + 6; x < rect.x + rect.w; x += 8) {
             (void)SDL_RenderDrawLine(renderer, x, rect.y, x, rect.y + rect.h - 1);
         }
+    }
+}
+
+static void draw_loads(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
+    for (uint8_t load_id = 0U; load_id < BUILDING_CLOCK_MAX_LOADS; load_id++) {
+        const building_clock_load_t* load = &scene->state.loads[load_id];
+        if (load->status != BUILDING_CLOCK_LOAD_STAGED && load->status != BUILDING_CLOCK_LOAD_CARRIED) {
+            continue;
+        }
+        const SDL_Color color = load->status == BUILDING_CLOCK_LOAD_CARRIED ? COLOR_LADDER : COLOR_STEEL;
+        fill_rect(renderer, load->position.x - 4, load->position.y - 7, 9, 5, color);
+        outline_rect(renderer, (building_clock_rect_t){.x = (int16_t)(load->position.x - 4), .y = (int16_t)(load->position.y - 7), .width = 9, .height = 5}, COLOR_MASONRY_DARK);
     }
 }
 
@@ -298,11 +311,16 @@ static void draw_digits(SDL_Renderer* renderer, const building_clock_scene_snaps
     fill_rect(renderer, colon.x + colon.width / 2 - 4, colon.y + 2 * colon.height / 3 - 4, 8, 8, COLOR_MASONRY);
 }
 
-static void draw_falling_and_debris(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
+static void draw_falling_and_debris(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene, bool show_trajectories) {
     for (uint8_t index = 0U; index < scene->state.falling_section_count; index++) {
         const building_clock_falling_section_t* section = &scene->state.falling_sections[index];
         if (section->source_digit_id >= BUILDING_CLOCK_DIGIT_COUNT) {
             continue;
+        }
+        if (show_trajectories) {
+            set_color(renderer, COLOR_MASONRY_DARK);
+            (void)SDL_RenderDrawLine(renderer, section->start_position.x, section->start_position.y, section->landing_position.x, section->landing_position.y);
+            outline_rect(renderer, (building_clock_rect_t){.x = (int16_t)(section->landing_position.x - 3), .y = (int16_t)(section->landing_position.y - 2), .width = 7, .height = 4}, COLOR_DEBUG);
         }
         const building_clock_rect_t envelope = scene->world->digit_work_areas[section->source_digit_id].envelope;
         const bool vertical = section->section_kind == BUILDING_CLOCK_SECTION_UPPER_LEFT_PIER || section->section_kind == BUILDING_CLOCK_SECTION_UPPER_RIGHT_PIER ||
@@ -453,7 +471,8 @@ static void render_scene(SDL_Renderer* renderer, viewer_t* viewer) {
     draw_navigation(renderer, &viewer->scene, &viewer->overlays);
     draw_digits(renderer, &viewer->scene);
     draw_temp_structures(renderer, &viewer->scene);
-    draw_falling_and_debris(renderer, &viewer->scene);
+    draw_falling_and_debris(renderer, &viewer->scene, viewer->overlays.hazards);
+    draw_loads(renderer, &viewer->scene);
     draw_debug_areas(renderer, &viewer->scene, &viewer->overlays);
     for (uint8_t worker = 0U; worker < viewer->scene.state.worker_count; worker++) {
         draw_worker(renderer, &viewer->scene, worker, viewer->overlays.navigation || viewer->overlays.worker_routes);
@@ -514,6 +533,9 @@ static void add_demo_jobs(viewer_t* viewer, uint8_t desired_count) {
 }
 
 static void refresh_demo_jobs(viewer_t* viewer) {
+    if (building_clock_simulation_transition_active(&viewer->simulation)) {
+        return;
+    }
     for (uint8_t job = 0U; job < BUILDING_CLOCK_MAX_JOBS; job++) {
         const building_clock_job_status_t status = viewer->simulation.state.jobs[job].status;
         if (status == BUILDING_CLOCK_JOB_COMPLETE || status == BUILDING_CLOCK_JOB_CANCELLED) {
@@ -563,7 +585,9 @@ static bool reset_viewer(viewer_t* viewer, bool select_world) {
     }
     viewer->simulation.state.date = (building_clock_date_t){.year = 1984U, .month = 10U, .day = 26U, .weekday = 5U};
     viewer->next_job_refresh_ms = 1000U;
-    add_demo_jobs(viewer, 18U);
+    if (viewer->scenario == SCENARIO_STABLE) {
+        add_demo_jobs(viewer, 18U);
+    }
     if (viewer->scenario != SCENARIO_STABLE && building_clock_simulation_set_time(&viewer->simulation, &viewer->world, to_hour, to_minute) != BUILDING_CLOCK_SIMULATION_OK) {
         return false;
     }
@@ -581,7 +605,7 @@ static void advance_viewer(viewer_t* viewer, uint32_t elapsed_ms) {
         if (result.processed_ms == 0U) {
             break;
         }
-        remaining = result.unconsumed_ms;
+        remaining -= result.processed_ms;
         if (viewer->simulation.state.elapsed_ms >= viewer->next_job_refresh_ms) {
             refresh_demo_jobs(viewer);
             viewer->next_job_refresh_ms = viewer->simulation.state.elapsed_ms + 1000U;
@@ -734,23 +758,15 @@ static int run_diagnostics(uint32_t count) {
                diagnostics.attempted[family], diagnostics.stages[family][BUILDING_CLOCK_WORLD_ATTEMPT_PREVALIDATION_FAILED], diagnostics.stages[family][BUILDING_CLOCK_WORLD_ATTEMPT_NAVIGATION_FAILED],
                diagnostics.stages[family][BUILDING_CLOCK_WORLD_ATTEMPT_COMPLETE_VALIDATION_FAILED], diagnostics.stages[family][BUILDING_CLOCK_WORLD_ATTEMPT_ACCEPTED], diagnostics.accepted[family],
                diagnostics.example_seed[family]);
-        building_clock_prevalidation_reason_t preliminary_reason = BUILDING_CLOCK_PREVALIDATION_OK;
         for (building_clock_prevalidation_reason_t reason = BUILDING_CLOCK_PREVALIDATION_NULL_WORLD; reason <= BUILDING_CLOCK_PREVALIDATION_NEGATIVE_SPACE; reason++) {
-            if (diagnostics.preliminary_reasons[family][reason] > diagnostics.preliminary_reasons[family][preliminary_reason]) {
-                preliminary_reason = reason;
+            if (diagnostics.preliminary_reasons[family][reason] != 0U) {
+                printf("  preliminary: %s (%" PRIu32 ")\n", building_clock_prevalidation_reason_name(reason), diagnostics.preliminary_reasons[family][reason]);
             }
         }
-        if (preliminary_reason != BUILDING_CLOCK_PREVALIDATION_OK) {
-            printf("  dominant preliminary: %s (%" PRIu32 ")\n", building_clock_prevalidation_reason_name(preliminary_reason), diagnostics.preliminary_reasons[family][preliminary_reason]);
-        }
-        building_clock_complete_validation_reason_t complete_reason = BUILDING_CLOCK_COMPLETE_VALIDATION_OK;
         for (building_clock_complete_validation_reason_t reason = BUILDING_CLOCK_COMPLETE_VALIDATION_NULL_WORLD; reason <= BUILDING_CLOCK_COMPLETE_VALIDATION_DEBRIS_FOUNDATION_CONFLICT; reason++) {
-            if (diagnostics.complete_reasons[family][reason] > diagnostics.complete_reasons[family][complete_reason]) {
-                complete_reason = reason;
+            if (diagnostics.complete_reasons[family][reason] != 0U) {
+                printf("  complete: %s (%" PRIu32 ")\n", building_clock_complete_validation_reason_name(reason), diagnostics.complete_reasons[family][reason]);
             }
-        }
-        if (complete_reason != BUILDING_CLOCK_COMPLETE_VALIDATION_OK) {
-            printf("  dominant complete: %s (%" PRIu32 ")\n", building_clock_complete_validation_reason_name(complete_reason), diagnostics.complete_reasons[family][complete_reason]);
         }
     }
     const uint32_t accepted_count = count - diagnostics.hard_failure_count;
