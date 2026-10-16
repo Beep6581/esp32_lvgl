@@ -1,7 +1,7 @@
-/* Version: 2026-10-07 */
-
 #include "system_ui.h"
 #include "c64_palette.h"
+#include "include/lvgl/font/lv_text.h"
+#include "include/lvgl/widgets/lv_label.h"
 #include "system_gesture.h"
 
 #include <stdint.h>
@@ -46,6 +46,11 @@ typedef enum {
     SYSTEM_UI_ACTION_REFRESH,
 } system_ui_action_t;
 
+typedef enum {
+    SYSTEM_UI_PAGE_WIFI,
+    SYSTEM_UI_PAGE_C64COLORS,
+} system_ui_page_t;
+
 static const char* TAG = "system_ui";
 
 static lv_display_t* s_display;
@@ -69,6 +74,7 @@ static char s_last_qr_uri[WIFI_MANAGER_DPP_URI_CAPACITY];
 static bool s_settings_open;
 static bool s_initial_setup_open;
 static system_ui_close_callback_t s_close_callback;
+static lv_obj_t* s_settings_pages;
 
 static const char* state_text(wifi_manager_state_t state) {
     switch (state) {
@@ -100,6 +106,30 @@ static const char* state_text(wifi_manager_state_t state) {
         return "UNKNOWN";
     }
 }
+
+typedef struct {
+    const char* name;
+    uint32_t color;
+} c64_palette_entry_t;
+
+static const c64_palette_entry_t s_c64_palette[] = {
+    {"BLACK", C64_COLOR_0_BLACK},
+    {"WHITE", C64_COLOR_1_WHITE},
+    {"RED", C64_COLOR_2_RED},
+    {"CYAN", C64_COLOR_3_CYAN},
+    {"PURPLE", C64_COLOR_4_PURPLE},
+    {"GREEN", C64_COLOR_5_GREEN},
+    {"BLUE", C64_COLOR_6_BLUE},
+    {"YELLOW", C64_COLOR_7_YELLOW},
+    {"ORANGE", C64_COLOR_8_ORANGE},
+    {"BROWN", C64_COLOR_9_BROWN},
+    {"LIGHT RED", C64_COLOR_10_LIGHT_RED},
+    {"DARK GRAY", C64_COLOR_11_DARK_GRAY},
+    {"MEDIUM GRAY", C64_COLOR_12_MEDIUM_GRAY},
+    {"LIGHT GREEN", C64_COLOR_13_LIGHT_GREEN},
+    {"LIGHT BLUE", C64_COLOR_14_LIGHT_BLUE},
+    {"LIGHT GRAY", C64_COLOR_15_LIGHT_GRAY},
+};
 
 static bool state_is_connected(wifi_manager_state_t state) {
     return state == WIFI_MANAGER_STATE_CONNECTED_CHECKING_INTERNET || state == WIFI_MANAGER_STATE_CONNECTED_INTERNET_AVAILABLE || state == WIFI_MANAGER_STATE_CONNECTED_INTERNET_UNAVAILABLE;
@@ -439,13 +469,13 @@ static lv_indev_t* find_pointer_input(lv_display_t* display) {
     return NULL;
 }
 
-static lv_obj_t* create_label(lv_obj_t* parent, int32_t y, uint32_t color) {
+static lv_obj_t* create_label(lv_obj_t* parent, int32_t y, lv_text_align_t align, uint32_t color) {
     lv_obj_t* label = lv_label_create(parent);
     lv_obj_set_width(label, SYSTEM_UI_WORK_WIDTH);
     lv_obj_set_pos(label, 0, y);
     lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
     lv_obj_set_style_text_font(label, &lv_font_unscii_16, 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_align(label, align, 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     return label;
 }
@@ -459,6 +489,77 @@ static lv_obj_t* create_status_label(int32_t y, uint32_t color) {
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     return label;
+}
+
+static void style_settings_page(lv_obj_t* page) {
+    lv_obj_set_scrollable(page, false);
+    lv_obj_set_style_bg_opa(page, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(page, 0, 0);
+    lv_obj_set_style_pad_all(page, 0, 0);
+    lv_obj_set_style_radius(page, 0, 0);
+}
+
+static void create_c64_colors_page(lv_obj_t* page) {
+    lv_obj_t* basic = create_label(page, 8, LV_TEXT_ALIGN_LEFT, SYSTEM_UI_COLOR_TEXT);
+    lv_label_set_text(basic, "10 FOR C=0 to 15\n"
+                             "20 POKE 646,C\n"
+                             "30 PRINT C;\" \";CHR$(18);\"     \";CHR$(146)\n"
+                             "40 NEXT\n"
+                             "50 POKE 646,14\n"
+                             "RUN\n"
+                             "");
+
+    for (uint8_t i = 0; i < 16; i++) {
+        uint32_t offset_y = 8 + (17 * (i + 7)); // UNSCII chars occupy 16x17 cells. i + 7 because of basic above
+        lv_obj_t* row = create_label(page, offset_y, LV_TEXT_ALIGN_LEFT, s_c64_palette[i].color);
+        lv_label_set_text_fmt(row, "%3u       %s", (unsigned)i, s_c64_palette[i].name);
+
+        lv_obj_t* rect = lv_obj_create(page);
+        lv_obj_set_size(rect, 16 * 4, 17);
+        lv_obj_set_pos(rect, 68, offset_y);
+        lv_obj_set_style_bg_color(rect, lv_color_hex(s_c64_palette[i].color), 0);
+        lv_obj_set_style_bg_opa(rect, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(rect, 0, 0);
+        lv_obj_set_style_radius(rect, 0, 0);
+        lv_obj_set_scrollbar_mode(rect, LV_SCROLLBAR_MODE_OFF);
+    }
+};
+
+static void create_wifi_config_page(lv_obj_t* page) {
+    lv_obj_t* title = create_label(page, 12, LV_TEXT_ALIGN_CENTER, SYSTEM_UI_COLOR_TEXT);
+    lv_label_set_text(title, "**** CONFIGURATION ****\n"
+                             "WI-FI");
+
+    s_status_panel = lv_obj_create(page);
+    lv_obj_set_size(s_status_panel, SYSTEM_UI_STATUS_PANEL_WIDTH, SYSTEM_UI_STATUS_PANEL_HEIGHT);
+    lv_obj_set_pos(s_status_panel, SYSTEM_UI_STATUS_PANEL_X, SYSTEM_UI_STATUS_PANEL_Y);
+    lv_obj_set_style_bg_opa(s_status_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_color(s_status_panel, lv_color_hex(SYSTEM_UI_COLOR_MUTED), 0);
+    lv_obj_set_style_border_width(s_status_panel, 0, 0);
+    lv_obj_set_style_pad_all(s_status_panel, 0, 0);
+    lv_obj_set_style_radius(s_status_panel, 0, 0);
+    lv_obj_set_style_shadow_width(s_status_panel, 0, 0);
+    lv_obj_set_scrollable(s_status_panel, false);
+
+    s_state_label = create_status_label(8, SYSTEM_UI_COLOR_TEXT);
+    s_network_label = create_status_label(32, SYSTEM_UI_COLOR_TEXT);
+    s_ip_label = create_status_label(56, SYSTEM_UI_COLOR_TEXT);
+    s_internet_label = create_status_label(80, SYSTEM_UI_COLOR_TEXT);
+    s_external_ip_label = create_status_label(104, SYSTEM_UI_COLOR_TEXT);
+
+    s_qr = lv_qrcode_create(page);
+    lv_qrcode_set_size(s_qr, SYSTEM_UI_QR_SIZE);
+    lv_qrcode_set_dark_color(s_qr, lv_color_hex(SYSTEM_UI_QR_DARK_COLOR));
+    lv_qrcode_set_light_color(s_qr, lv_color_hex(SYSTEM_UI_QR_LIGHT_COLOR));
+    lv_qrcode_set_quiet_zone(s_qr, true);
+    lv_obj_align(s_qr, LV_ALIGN_CENTER, 0, -8);
+    lv_obj_set_hidden(s_qr, true);
+
+    s_button_panel = lv_obj_create(page);
+    lv_obj_set_style_bg_opa(s_button_panel, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(s_button_panel, 0, 0);
+    lv_obj_set_style_pad_all(s_button_panel, 0, 0);
+    lv_obj_set_scrollable(s_button_panel, false);
 }
 
 esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_close_callback_t close_callback) {
@@ -493,43 +594,32 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_c
     lv_obj_set_style_shadow_width(s_work_area, 0, 0);
     lv_obj_set_scrollable(s_work_area, false);
 
-    lv_obj_t* title = create_label(s_work_area, 12, SYSTEM_UI_COLOR_TEXT);
-    lv_label_set_text(title, "**** CONFIGURATION ****\nWI-FI");
+    s_settings_pages = lv_tabview_create(s_work_area);
+    lv_obj_set_size(s_settings_pages, SYSTEM_UI_WORK_WIDTH, SYSTEM_UI_WORK_HEIGHT);
+    lv_obj_set_pos(s_settings_pages, 0, 0);
+    lv_obj_set_style_bg_opa(s_settings_pages, 0, 0);
+    lv_obj_set_style_border_width(s_settings_pages, 0, 0);
+    lv_obj_set_style_pad_all(s_settings_pages, 0, 0);
 
-    s_status_panel = lv_obj_create(s_work_area);
-    lv_obj_set_size(s_status_panel, SYSTEM_UI_STATUS_PANEL_WIDTH, SYSTEM_UI_STATUS_PANEL_HEIGHT);
-    lv_obj_set_pos(s_status_panel, SYSTEM_UI_STATUS_PANEL_X, SYSTEM_UI_STATUS_PANEL_Y);
-    lv_obj_set_style_bg_opa(s_status_panel, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_color(s_status_panel, lv_color_hex(SYSTEM_UI_COLOR_MUTED), 0);
-    lv_obj_set_style_border_width(s_status_panel, 0, 0);
-    lv_obj_set_style_pad_all(s_status_panel, 0, 0);
-    lv_obj_set_style_radius(s_status_panel, 0, 0);
-    lv_obj_set_style_shadow_width(s_status_panel, 0, 0);
-    lv_obj_set_scrollable(s_status_panel, false);
+    lv_tabview_set_tab_bar_position(s_settings_pages, LV_DIR_TOP);
+    lv_tabview_set_tab_bar_size(s_settings_pages, 0);
 
-    s_state_label = create_status_label(8, SYSTEM_UI_COLOR_TEXT);
-    s_network_label = create_status_label(32, SYSTEM_UI_COLOR_TEXT);
-    s_ip_label = create_status_label(56, SYSTEM_UI_COLOR_TEXT);
-    s_internet_label = create_status_label(80, SYSTEM_UI_COLOR_TEXT);
-    s_external_ip_label = create_status_label(104, SYSTEM_UI_COLOR_TEXT);
+    lv_obj_t* content = lv_tabview_get_content(s_settings_pages);
+    lv_obj_set_style_pad_all(content, 0, 0);
+    lv_obj_set_style_pad_column(content, 0, 0);
+    lv_obj_set_scrollbar_mode(content, LV_SCROLLBAR_MODE_OFF);
 
-    s_qr = lv_qrcode_create(s_work_area);
-    lv_qrcode_set_size(s_qr, SYSTEM_UI_QR_SIZE);
-    lv_qrcode_set_dark_color(s_qr, lv_color_hex(SYSTEM_UI_QR_DARK_COLOR));
-    lv_qrcode_set_light_color(s_qr, lv_color_hex(SYSTEM_UI_QR_LIGHT_COLOR));
-    lv_qrcode_set_quiet_zone(s_qr, true);
-    lv_obj_align(s_qr, LV_ALIGN_CENTER, 0, -8);
-    lv_obj_set_hidden(s_qr, true);
+    lv_obj_t* wifi_page = lv_tabview_add_tab(s_settings_pages, "Wi-Fi");
+    lv_obj_t* colors_page = lv_tabview_add_tab(s_settings_pages, "Colors");
 
-    s_button_panel = lv_obj_create(s_work_area);
-    lv_obj_set_style_bg_opa(s_button_panel, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(s_button_panel, 0, 0);
-    lv_obj_set_style_pad_all(s_button_panel, 0, 0);
-    lv_obj_set_scrollable(s_button_panel, false);
+    style_settings_page(wifi_page);
+    style_settings_page(colors_page);
 
-    lv_obj_t* instruction = create_label(s_work_area, SYSTEM_UI_WORK_HEIGHT - 22, SYSTEM_UI_COLOR_TEXT);
+    create_wifi_config_page(wifi_page);
+    create_c64_colors_page(colors_page);
+
+    lv_obj_t* instruction = create_label(s_work_area, SYSTEM_UI_WORK_HEIGHT - 22, LV_TEXT_ALIGN_CENTER, SYSTEM_UI_COLOR_TEXT);
     lv_label_set_text(instruction, "SWIPE UP TO RETURN");
-    lv_obj_set_style_text_font(instruction, &lv_font_unscii_16, 0);
 
     s_last_status.state = (wifi_manager_state_t)-1;
     s_update_timer = lv_timer_create(update_timer_cb, 250, NULL);

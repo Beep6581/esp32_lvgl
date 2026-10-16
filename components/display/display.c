@@ -29,6 +29,8 @@
 
 #include "bitwalk.h"
 
+#define DISPLAY_LVGL_TASK_STACK_SIZE 10240
+
 static const char* TAG = "display";
 static const char* DISPLAY_NVS_NAMESPACE = "display";
 static const char* DISPLAY_NVS_TIMING_MODE_KEY = "timing_mode";
@@ -530,6 +532,7 @@ panel_ready:
     }
 
     lvgl_port_cfg_t lvgl_config = ESP_LVGL_PORT_INIT_CONFIG();
+    lvgl_config.task_stack = DISPLAY_LVGL_TASK_STACK_SIZE;
     lvgl_config.task_stack_caps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
     ESP_ERROR_CHECK(lvgl_port_init(&lvgl_config));
 

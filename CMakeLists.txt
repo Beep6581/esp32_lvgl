@@ -2,10 +2,14 @@ cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(hello_lvgl)
 
-# --------
+idf_build_set_property(
+    COMPILE_OPTIONS
+    "-Wno-error=unused-const-variable"
+    APPEND
+)
+
 # Fix compile_commands to not generate clang errors.
 # Warning race condition: must run after compile_commands.json is generated.
-
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
