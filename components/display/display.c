@@ -29,7 +29,7 @@
 
 #include "bitwalk.h"
 
-#define DISPLAY_LVGL_TASK_STACK_SIZE 10240
+#define DISPLAY_LVGL_TASK_STACK_SIZE 10240 // system_ui tabview overflowed with default 7168-byte stack
 
 static const char* TAG = "display";
 static const char* DISPLAY_NVS_NAMESPACE = "display";

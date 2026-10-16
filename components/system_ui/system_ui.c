@@ -1,7 +1,5 @@
 #include "system_ui.h"
 #include "c64_palette.h"
-#include "include/lvgl/font/lv_text.h"
-#include "include/lvgl/widgets/lv_label.h"
 #include "system_gesture.h"
 
 #include <stdint.h>
@@ -159,6 +157,8 @@ static void open_settings(bool initial_setup) {
     s_previous_screen = lv_display_get_screen_active(s_display);
     s_settings_open = true;
     s_initial_setup_open = initial_setup;
+
+    lv_tabview_set_active(s_settings_pages, 0, LV_ANIM_OFF);
     lv_screen_load(s_settings_screen);
 }
 
@@ -266,9 +266,6 @@ static void action_event_cb(lv_event_t* event) {
         break;
     case SYSTEM_UI_ACTION_CANCEL:
         err = wifi_manager_cancel_configuration();
-        if (err == ESP_OK) {
-            close_settings();
-        }
         break;
     case SYSTEM_UI_ACTION_DISCONNECT:
         err = wifi_manager_disconnect();
@@ -521,9 +518,9 @@ static void create_c64_colors_page(lv_obj_t* page) {
         lv_obj_set_style_bg_opa(rect, LV_OPA_COVER, 0);
         lv_obj_set_style_border_width(rect, 0, 0);
         lv_obj_set_style_radius(rect, 0, 0);
-        lv_obj_set_scrollbar_mode(rect, LV_SCROLLBAR_MODE_OFF);
+        lv_obj_set_scrollable(rect, false);
     }
-};
+}
 
 static void create_wifi_config_page(lv_obj_t* page) {
     lv_obj_t* title = create_label(page, 12, LV_TEXT_ALIGN_CENTER, SYSTEM_UI_COLOR_TEXT);
