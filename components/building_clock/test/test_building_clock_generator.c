@@ -1,4 +1,5 @@
 #include "building_clock_generator.h"
+#include "building_clock_geometry.h"
 #include "building_clock_validation.h"
 
 #include <inttypes.h>
@@ -85,6 +86,29 @@ static void test_attempt_derivation(void) {
     expect_true(first.replay.candidate_seed == building_clock_candidate_seed(root_seed, BUILDING_CLOCK_GENERATOR_VERSION, 2U), "recorded candidate seed matches derivation API");
 }
 
+static void test_revised_clock_geometry(void) {
+    static const int16_t expected_x[BUILDING_CLOCK_DIGIT_COUNT] = {45, 132, 270, 357};
+    building_clock_world_t world;
+    building_clock_generate_candidate(&world, UINT64_C(0x123456789abcdef0), BUILDING_CLOCK_GENERATOR_VERSION, 0U);
+
+    for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
+        const building_clock_digit_work_area_t* area = &world.digit_work_areas[digit];
+        expect_true(area->envelope.x == expected_x[digit] && area->envelope.y == BUILDING_CLOCK_DIGIT_ENVELOPE_Y && area->envelope.width == BUILDING_CLOCK_DIGIT_ENVELOPE_WIDTH &&
+                        area->envelope.height == BUILDING_CLOCK_DIGIT_ENVELOPE_HEIGHT,
+                    "digit uses the revised short, wide envelope");
+        expect_true(area->access_count == 4U, "digit has four bounded construction work positions");
+        for (uint8_t first = 0U; first < area->access_count; first++) {
+            for (uint8_t second = (uint8_t)(first + 1U); second < area->access_count; second++) {
+                expect_true(area->access[first].position.x != area->access[second].position.x || area->access[first].position.y != area->access[second].position.y,
+                            "digit construction work positions are spatially distinct");
+            }
+        }
+    }
+    expect_true(world.colon_envelope.x == BUILDING_CLOCK_COLON_ENVELOPE_X && world.colon_envelope.width == BUILDING_CLOCK_COLON_ENVELOPE_WIDTH &&
+                    world.colon_envelope.height == BUILDING_CLOCK_DIGIT_ENVELOPE_HEIGHT,
+                "colon follows the revised clock proportions");
+}
+
 static void check_counts(const building_clock_world_t* world) {
     expect_true(world->platform_count <= BUILDING_CLOCK_MAX_PLATFORM_SPANS, "platform count within capacity");
     expect_true(world->ladder_count <= BUILDING_CLOCK_MAX_LADDERS, "ladder count within capacity");
@@ -155,6 +179,11 @@ static void check_permanent_geometry(const building_clock_world_t* world) {
     for (uint8_t index = 0; index < world->debris_bay_count; index++) {
         expect_true(rect_in_world(world->debris_bays[index].area), "debris bay inside world");
     }
+    for (uint8_t digit = 0; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
+        expect_true(rect_in_world(world->digit_work_areas[digit].collapse_catch_area), "digit collapse catch area inside world");
+        expect_true(world->digit_work_areas[digit].collapse_catch_area.y >= world->digit_work_areas[digit].envelope.y + (int16_t)world->digit_work_areas[digit].envelope.height,
+                    "digit collapse catch area is below the numeral");
+    }
     for (uint8_t index = 0; index < world->staging_area_count; index++) {
         expect_true(rect_in_world(world->staging_areas[index].area), "staging area inside world");
     }
@@ -198,9 +227,9 @@ static void check_permanent_geometry(const building_clock_world_t* world) {
 static void test_rejection_reason_reproducibility(void) {
     building_clock_world_t candidate;
     building_clock_generate_candidate(&candidate, UINT64_C(0x55aa55aa55aa55aa), BUILDING_CLOCK_GENERATOR_VERSION, 0U);
-    candidate.platforms[0].x_start = 60;
+    candidate.platforms[0].x_start = 45;
     candidate.platforms[0].x_end = 100;
-    candidate.platforms[0].surface_y = 120;
+    candidate.platforms[0].surface_y = BUILDING_CLOCK_DIGIT_ENVELOPE_Y;
 
     const building_clock_prevalidation_result_t first = building_clock_prevalidate_candidate(&candidate);
     const building_clock_prevalidation_result_t second = building_clock_prevalidate_candidate(&candidate);
@@ -313,6 +342,7 @@ static void test_generation_batch(void) {
 int main(void) {
     test_deterministic_candidate();
     test_attempt_derivation();
+    test_revised_clock_geometry();
     test_rejection_reason_reproducibility();
     test_generation_batch();
 

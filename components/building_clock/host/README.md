@@ -1,7 +1,8 @@
 # Building Clock host viewer
 
-This SDL2 program renders the same generated worlds and headless simulation
-used by firmware. It is a semantic design/debug viewer, not the ESP32 renderer.
+This SDL2/libpng program renders the same generated worlds and headless
+simulation used by firmware. It is a semantic design/debug viewer, not the
+ESP32 renderer.
 
 Build and run:
 
@@ -18,7 +19,7 @@ without opening an interactive window:
 ```sh
 SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_viewer \
     --seed 0x6a09e667f3bcc909 --scenario rollover \
-    --duration-ms 1800 --screenshot /tmp/building-clock.bmp
+    --duration-ms 1800 --screenshot /tmp/building-clock.png
 ```
 
 Run generator-selection diagnostics with:
@@ -43,7 +44,7 @@ Controls:
 - `H`: active hazard areas
 - `W`: worker routes
 - `D`: digit envelopes and work positions
-- `S`: save `building_clock_view.bmp`
+- `S`: save `building_clock_YYYYMMDD_HHMMSS.png` using local time
 - `+`/`-`: simulation speed
 - `Esc`: quit
 

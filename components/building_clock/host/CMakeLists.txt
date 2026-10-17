@@ -3,6 +3,7 @@ project(building_clock_viewer C)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
+pkg_check_modules(PNG REQUIRED IMPORTED_TARGET libpng)
 
 set(BUILDING_CLOCK_DIR "${CMAKE_CURRENT_SOURCE_DIR}/..")
 
@@ -11,6 +12,7 @@ add_executable(
     "building_clock_viewer.c"
     "../../display/fonts/glcdfont_5x7.c"
     "${BUILDING_CLOCK_DIR}/building_clock_complete_validation.c"
+    "${BUILDING_CLOCK_DIR}/building_clock_geometry.c"
     "${BUILDING_CLOCK_DIR}/building_clock_generator.c"
     "${BUILDING_CLOCK_DIR}/building_clock_navigation.c"
     "${BUILDING_CLOCK_DIR}/building_clock_random.c"
@@ -30,4 +32,4 @@ target_include_directories(
 
 target_compile_features(building_clock_viewer PRIVATE c_std_11)
 target_compile_options(building_clock_viewer PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(building_clock_viewer PRIVATE PkgConfig::SDL2)
+target_link_libraries(building_clock_viewer PRIVATE PkgConfig::SDL2 PkgConfig::PNG)

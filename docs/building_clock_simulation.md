@@ -60,16 +60,16 @@ These are specific parts of the building clock, not a generic game framework.
 
 ## 3. Coordinate regions and invariants
 
-The simulation uses the 480 by 480 display as its design space. Exact visual
-dimensions remain tunable, but the initial reserved regions are:
+The simulation uses the 480 by 480 display as its design space. The current
+short, wide masonry clock reserves these regions:
 
 | Region | Initial placement | Rule |
 | --- | --- | --- |
-| Hour tens | x 60-128, y 120-334 | Permanent generated geometry excluded |
-| Hour units | x 136-204, y 120-334 | Permanent generated geometry excluded |
-| Colon | x 216-240, y 120-334 | Permanent generated geometry excluded |
-| Minute tens | x 252-320, y 120-334 | Permanent generated geometry excluded |
-| Minute units | x 328-396, y 120-334 | Permanent generated geometry excluded |
+| Hour tens | x 45-122, y 170-313 | Permanent generated geometry excluded |
+| Hour units | x 132-209, y 170-313 | Permanent generated geometry excluded |
+| Colon | x 222-257, y 170-313 | Permanent generated geometry excluded |
+| Minute tens | x 270-347, y 170-313 | Permanent generated geometry excluded |
+| Minute units | x 357-434, y 170-313 | Permanent generated geometry excluded |
 | Date band | x 0-479, y 420-479 | All generated geometry excluded |
 
 Each digit also has a work halo immediately outside its envelope. The halo may
@@ -110,8 +110,8 @@ Initial capacity targets are:
 | Staging areas | 8 |
 | Worker spawn points | 10 |
 | Temporary scaffold attachment sets | 8 |
-| Navigation nodes | 96 |
-| Navigation edges | 160 |
+| Navigation nodes | 112 |
+| Navigation edges | 192 |
 
 These are safety bounds, not targets. A normal world should be substantially
 sparser.
@@ -279,8 +279,10 @@ the stage and explicit reason for every rejected attempt so application wiring
 can log the diagnostics without coupling generation to ESP logging.
 
 If all four normal attempts fail, selection runs root seed
-`0xbb67ae8584caa73b`, generator version 2, attempt 0 through that same pipeline.
-Version 2 records the debris-aware lower-support placement grammar.
+`0xbb67ae8584caa73b`, generator version 4, attempt 0 through that same pipeline.
+Version 4 adds the richer connected service-ledge and roof-bridge grammar;
+version 3 introduced the short, wide digit geometry and connected upper-step
+grammar, and version 2 introduced debris-aware lower-support placement.
 This combination is a known-valid instance of the normal generator grammar,
 not a separately hand-authored level. If it stops passing after an intentional
 generator or validation change, the fallback configuration must be updated to
@@ -318,7 +320,7 @@ graph and the stored traversal costs. Equal-cost choices prefer fewer edges,
 then the lower predecessor node ID, then the lower edge ID. Selection of the
 next equal-cost search node uses the lower node ID. This makes routing stable
 across host and ESP32 builds without relying on pointer or incidental iteration
-order. A route contains at most 96 nodes and 95 edges.
+order. A route contains at most 112 nodes and 111 edges.
 
 Route requests explicitly choose whether cart and lift topology may be planned.
 Finding such a route does not mean the machinery is ready or that traversal is
@@ -350,11 +352,22 @@ node before becoming idle. Explicit per-owner release and full reservation
 reset support cancellation cleanup. These conflicts create useful
 unscripted-looking behavior without general collision avoidance.
 
-Temporary structures add only predefined validated edges. Removing a temporary
-structure first requires that no worker is using its nodes or edges. Runtime
-navigation owns an attachment activation mask and includes a temporary edge
-only when both the route request permits temporary connections and that
-attachment is active. The immutable world graph is never modified.
+The scene snapshot assigns stable design-space presentation positions when
+multiple workers share exactly the same broad platform location. Capacity-one
+work points, ladders, machinery controls, and temporary attachment points are
+never spread this way; they remain serialized by runtime reservations. This
+keeps broad-area crews individually legible without changing logical occupancy
+or adding continuous collision physics.
+
+Temporary structures add only predefined validated edges. Each temporary access
+set has permanent upper and lower endpoints plus intermediate work-level
+anchors. Navigation derives one temporary edge between each adjacent pair, so
+vertical movement follows a real ladder or the ladder inside a scaffold rather
+than one abstract full-height connection. Removing a temporary structure first
+requires that no worker is using its nodes or edges. Runtime navigation owns an
+attachment activation mask and includes a temporary edge only when both the
+route request permits temporary connections and that attachment is active. The
+immutable world graph is never modified.
 
 ## 9. Clock and digit state
 
@@ -577,20 +590,22 @@ Collapse operates at structural-section scale:
 - upper sections begin falling;
 - a bounded number of loose fragments separates from them;
 - sections bounce or rotate only enough to communicate weight;
-- pieces settle into the digit's assigned debris bay; and
+- pieces settle into a local catch area below the failed masonry; and
 - settled debris becomes clearing jobs.
 
 The initial collapse implementation fails foundation and lower supports first,
 then middle, upper, and top sections. Each active falling-section record stores
 its source digit/section, start position, preselected landing position, current
 coarse position, normalized progress, rotation, elapsed time, duration, and
-destination debris bay. The landing position is chosen once when the fall
-begins from a small deterministic pile grid inside that digit's generated bay.
-Horizontal position advances linearly while vertical progress uses a bounded
-integer acceleration curve. Settling converts the section to one semantic
-debris record at that same landing position and marks the outgoing structural
-section as debris. No renderer physics or individual-brick simulation is part
-of this state.
+associated service debris bay. The landing position is chosen once when the
+fall begins from a small deterministic pile grid in the digit's local catch
+area. Horizontal drift is limited to six design pixels while vertical progress
+uses a bounded integer acceleration curve. Settling converts the section to one
+semantic debris record at that same local position and marks the outgoing
+structural section as debris. The debris-bay association identifies where a
+worker will later transfer recovered rubble; falling pieces do not steer toward
+that remote bay. No renderer physics or individual-brick simulation is part of
+this state.
 
 Workers inside a hazard volume immediately suspend non-safety work and route to
 a safe node. Nearby workers may stop and watch after reaching safety.
@@ -626,11 +641,16 @@ Typical flow is:
 6. Placement and securing jobs complete the section.
 
 The current first reconstruction pass clears semantic debris into recoverable
-depot inventory and obtains bounded prefabricated section loads from the
+depot inventory and obtains bounded prefabricated masonry bundles from the
 off-screen depot supply at the digit's assigned staging area. A worker visibly
-carries each load from staging to a lower or upper construction access point.
-This keeps the action spatially coherent without requiring strict conservation
-or a cart/crane state machine yet.
+carries each small bundle with its own position from staging to a section-
+appropriate permanent or temporary construction level. The load retains its
+destination section identity. During placement it remains with the worker while
+the destination section's visible brick group is progressively revealed and
+the carried bundle diminishes; only then is the load consumed and the section
+marked placed for the securing action. This keeps the visible cause and result
+connected without pretending that one worker carried a full beam vertically or
+requiring strict conservation or a cart/crane state machine yet.
 
 If the required material would miss its pacing milestone, an off-screen supply
 delivery may provide it. This is preferable to making workers visibly cheat.
@@ -673,8 +693,8 @@ parts. Preparation should become more obvious when several digits will change.
 
 Only the minute-units crew becomes urgent. A lower-left or lower-loop section
 for the future eight is staged during the preceding minute. Workers evacuate the
-seven, remove a support, and let its upper/right structure fall into its
-generated debris bay. One worker clears while another transports the new
+seven, remove a support, and let its upper/right structure fall into its local
+catch area. One worker clears while another transports the new
 section. The eight becomes recognizable near the middle of the minute. Other
 workers continue ambient work elsewhere using that boot's generated routes.
 
@@ -722,6 +742,7 @@ semantic objects:
 - per-digit phase and structural-section states;
 - temporary structures;
 - worker positions, facing, action, and carried items;
+- deterministic broad-area worker presentation positions;
 - debris positions and motion state;
 - carts, crane, lift, and suspended loads;
 - material quantities visible at depots and staging areas;

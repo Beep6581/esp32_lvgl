@@ -39,9 +39,38 @@ static void test_capture_is_deterministic_and_read_only(void) {
     expect_true(building_clock_scene_capture(&world, &simulation, &second) == BUILDING_CLOCK_SCENE_OK, "second scene capture succeeds");
     expect_true(first.world == &world && second.world == &world, "scene references the immutable accepted world");
     expect_true(memcmp(&first.state, &second.state, sizeof(first.state)) == 0 && memcmp(&first.navigation, &second.navigation, sizeof(first.navigation)) == 0 &&
-                    memcmp(&first.metrics, &second.metrics, sizeof(first.metrics)) == 0,
+                    memcmp(&first.metrics, &second.metrics, sizeof(first.metrics)) == 0 &&
+                    memcmp(first.worker_presentation_positions, second.worker_presentation_positions, sizeof(first.worker_presentation_positions)) == 0,
                 "unchanged simulation produces byte-equivalent semantic snapshots");
     expect_true(memcmp(&before, &simulation, sizeof(simulation)) == 0, "scene capture does not mutate simulation state");
+}
+
+static void test_broad_area_worker_spacing(void) {
+    building_clock_world_t world;
+    building_clock_simulation_t simulation;
+    make_scene(&world, &simulation);
+
+    const uint8_t shared_node = world.worker_spawns[0].nav_node_id;
+    expect_true(building_clock_navigation_node_capacity(&world, shared_node) > 1U, "spacing fixture uses a broad semantic location");
+    const building_clock_point_t shared_position = world.navigation.nodes[shared_node].position;
+    for (uint8_t worker = 0U; worker < 4U; worker++) {
+        simulation.state.workers[worker].state = BUILDING_CLOCK_WORKER_IDLE;
+        simulation.state.workers[worker].position = shared_position;
+        simulation.state.workers[worker].current_node_id = shared_node;
+        simulation.state.workers[worker].reserved_edge_id = BUILDING_CLOCK_INVALID_EDGE_ID;
+    }
+
+    building_clock_scene_snapshot_t snapshot;
+    expect_true(building_clock_scene_capture(&world, &simulation, &snapshot) == BUILDING_CLOCK_SCENE_OK, "shared broad-area scene capture succeeds");
+    for (uint8_t first = 0U; first < 4U; first++) {
+        expect_true(snapshot.state.workers[first].position.x == shared_position.x && snapshot.state.workers[first].position.y == shared_position.y,
+                    "presentation spacing does not alter logical worker occupancy");
+        for (uint8_t second = (uint8_t)(first + 1U); second < 4U; second++) {
+            expect_true(snapshot.worker_presentation_positions[first].x != snapshot.worker_presentation_positions[second].x ||
+                            snapshot.worker_presentation_positions[first].y != snapshot.worker_presentation_positions[second].y,
+                        "workers sharing a broad location remain individually visible");
+        }
+    }
 }
 
 static void test_mid_edge_worker_and_active_job(void) {
@@ -99,7 +128,7 @@ static void test_collapse_scene_contents(void) {
             const building_clock_falling_section_t* section = &snapshot.state.falling_sections[falling];
             expect_true(section->source_digit_id < BUILDING_CLOCK_DIGIT_COUNT, "falling section references a valid digit");
             if (section->source_digit_id < BUILDING_CLOCK_DIGIT_COUNT && section->target_debris_bay_id < world.debris_bay_count) {
-                expect_true(point_in_rect(section->landing_position, world.debris_bays[section->target_debris_bay_id].area), "snapshot exposes a valid semantic landing target");
+                expect_true(point_in_rect(section->landing_position, world.digit_work_areas[section->source_digit_id].collapse_catch_area), "snapshot exposes a valid local landing target");
                 expect_true(section->progress_per_mille <= 1000U, "snapshot exposes bounded fall progress");
             }
         }
@@ -120,6 +149,7 @@ static void test_invalid_counts_are_rejected(void) {
 
 int main(void) {
     test_capture_is_deterministic_and_read_only();
+    test_broad_area_worker_spacing();
     test_mid_edge_worker_and_active_job();
     test_collapse_scene_contents();
     test_invalid_counts_are_rejected();

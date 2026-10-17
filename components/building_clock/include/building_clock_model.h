@@ -24,8 +24,8 @@ extern "C" {
 #define BUILDING_CLOCK_MAX_STAGING_AREAS 8
 #define BUILDING_CLOCK_MAX_WORKER_SPAWNS 10
 #define BUILDING_CLOCK_MAX_TEMP_ATTACHMENT_SETS 8
-#define BUILDING_CLOCK_MAX_NAV_NODES 96
-#define BUILDING_CLOCK_MAX_NAV_EDGES 160
+#define BUILDING_CLOCK_MAX_NAV_NODES 112
+#define BUILDING_CLOCK_MAX_NAV_EDGES 192
 
 /* Small per-world limits needed to bound nested generated records. */
 #define BUILDING_CLOCK_MAX_CART_ROUTE_STOPS 8
@@ -210,6 +210,8 @@ typedef struct {
     building_clock_rect_t envelope;
     building_clock_rect_t work_halo;
     building_clock_rect_t hazard_area;
+    /* Local ground where collapsed masonry lands before workers clear it. */
+    building_clock_rect_t collapse_catch_area;
     uint8_t debris_bay_id;
     uint8_t access_count;
     building_clock_digit_access_t access[BUILDING_CLOCK_MAX_DIGIT_ACCESS_POINTS];
@@ -588,6 +590,7 @@ typedef struct {
     building_clock_material_kind_t material_kind;
     building_clock_load_status_t status;
     uint16_t quantity;
+    uint16_t placement_progress_per_mille;
     building_clock_point_t position;
     uint8_t digit_id;
     uint8_t section_id;

@@ -2,16 +2,19 @@
 #include <SDL2/SDL.h>
 
 #include "building_clock_generator.h"
+#include "building_clock_geometry.h"
 #include "building_clock_scene.h"
 #include "building_clock_world_selection.h"
 #include "glcdfont_5x7.h"
 
 #include <inttypes.h>
+#include <png.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #define VIEW_SCALE 2
 #define VIEW_STEP_MS 50U
@@ -56,6 +59,7 @@ static const SDL_Color COLOR_STEEL = {105, 122, 193, 255};
 static const SDL_Color COLOR_STEEL_DARK = {48, 57, 99, 255};
 static const SDL_Color COLOR_LADDER = {238, 206, 105, 255};
 static const SDL_Color COLOR_MASONRY = {205, 92, 54, 255};
+static const SDL_Color COLOR_MASONRY_LIGHT = {239, 126, 67, 255};
 static const SDL_Color COLOR_MASONRY_DARK = {104, 42, 34, 255};
 static const SDL_Color COLOR_WORKER = {239, 228, 195, 255};
 static const SDL_Color COLOR_WORKER_ACTION = {255, 242, 129, 255};
@@ -142,13 +146,15 @@ static void draw_text(SDL_Renderer* renderer, int x, int y, int scale, SDL_Color
 }
 
 static void draw_platforms(SDL_Renderer* renderer, const building_clock_world_t* world) {
-    set_color(renderer, COLOR_STEEL);
     for (uint8_t index = 0U; index < world->platform_count; index++) {
         const building_clock_platform_t* platform = &world->platforms[index];
-        const SDL_Rect beam = {.x = platform->x_start, .y = platform->surface_y, .w = platform->x_end - platform->x_start + 1, .h = 4};
+        const SDL_Rect beam = {.x = platform->x_start, .y = platform->surface_y, .w = platform->x_end - platform->x_start + 1, .h = 10};
+        set_color(renderer, COLOR_STEEL_DARK);
         (void)SDL_RenderFillRect(renderer, &beam);
-        for (int x = platform->x_start + 3; x < platform->x_end; x += 12) {
-            (void)SDL_RenderDrawLine(renderer, x, platform->surface_y + 4, x + 5, platform->surface_y + 8);
+        fill_rect(renderer, beam.x, beam.y, beam.w, 3, COLOR_STEEL);
+        fill_rect(renderer, beam.x, beam.y + beam.h - 2, beam.w, 2, COLOR_STEEL);
+        for (int x = beam.x + 5; x + 7 < beam.x + beam.w; x += 13) {
+            fill_rect(renderer, x, beam.y + 4, 7, 3, COLOR_BACKGROUND);
         }
     }
 }
@@ -156,21 +162,22 @@ static void draw_platforms(SDL_Renderer* renderer, const building_clock_world_t*
 static void draw_supports(SDL_Renderer* renderer, const building_clock_world_t* world) {
     for (uint8_t index = 0U; index < world->major_support_count; index++) {
         const building_clock_rect_t bounds = world->major_supports[index].bounds;
-        outline_rect(renderer, bounds, COLOR_STEEL_DARK);
-        set_color(renderer, COLOR_STEEL_DARK);
-        (void)SDL_RenderDrawLine(renderer, bounds.x, bounds.y, bounds.x + bounds.width, bounds.y + bounds.height);
-        (void)SDL_RenderDrawLine(renderer, bounds.x + bounds.width, bounds.y, bounds.x, bounds.y + bounds.height);
+        fill_rect(renderer, bounds.x, bounds.y, bounds.width, bounds.height, COLOR_STEEL_DARK);
+        fill_rect(renderer, bounds.x, bounds.y, 2, bounds.height, COLOR_STEEL);
+        fill_rect(renderer, (int)(bounds.x + bounds.width - 2U), bounds.y, 2, bounds.height, COLOR_STEEL);
+        for (int y = bounds.y + 6; y + 7 < bounds.y + bounds.height; y += 13) {
+            fill_rect(renderer, bounds.x + 3, y, (int)bounds.width - 6, 7, COLOR_BACKGROUND);
+        }
     }
 }
 
 static void draw_ladders(SDL_Renderer* renderer, const building_clock_world_t* world) {
-    set_color(renderer, COLOR_LADDER);
     for (uint8_t index = 0U; index < world->ladder_count; index++) {
         const building_clock_ladder_t* ladder = &world->ladders[index];
-        (void)SDL_RenderDrawLine(renderer, ladder->x - 3, ladder->top_y, ladder->x - 3, ladder->bottom_y);
-        (void)SDL_RenderDrawLine(renderer, ladder->x + 3, ladder->top_y, ladder->x + 3, ladder->bottom_y);
+        fill_rect(renderer, ladder->x - 4, ladder->top_y, 2, ladder->bottom_y - ladder->top_y + 1, COLOR_LADDER);
+        fill_rect(renderer, ladder->x + 3, ladder->top_y, 2, ladder->bottom_y - ladder->top_y + 1, COLOR_LADDER);
         for (int y = ladder->top_y + 3; y < ladder->bottom_y; y += 7) {
-            (void)SDL_RenderDrawLine(renderer, ladder->x - 3, y, ladder->x + 3, y);
+            fill_rect(renderer, ladder->x - 3, y, 7, 2, COLOR_LADDER);
         }
     }
 }
@@ -181,6 +188,11 @@ static void draw_locations(SDL_Renderer* renderer, const building_clock_world_t*
         fill_rect(renderer, area.x, area.y, area.width, area.height, (SDL_Color){39, 26, 29, 255});
         if (overlay) {
             outline_rect(renderer, area, COLOR_HAZARD);
+        }
+    }
+    if (overlay) {
+        for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
+            outline_rect(renderer, world->digit_work_areas[digit].collapse_catch_area, COLOR_MASONRY_DARK);
         }
     }
     for (uint8_t index = 0U; index < world->staging_area_count; index++) {
@@ -234,54 +246,59 @@ static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_sn
     }
 }
 
-static SDL_Rect section_rect(building_clock_rect_t envelope, building_clock_section_kind_t kind) {
-    const int thickness = 9;
-    const int middle_y = envelope.y + envelope.height / 2 - thickness / 2;
-    const int right_x = envelope.x + envelope.width - thickness;
-    const int lower_y = middle_y + thickness;
-    const int vertical_height = envelope.height / 2 - thickness;
-    switch (kind) {
-    case BUILDING_CLOCK_SECTION_FOUNDATION:
-        return (SDL_Rect){envelope.x + 5, envelope.y + envelope.height - thickness, envelope.width - 10, thickness};
-    case BUILDING_CLOCK_SECTION_TOP_BEAM:
-        return (SDL_Rect){envelope.x + 5, envelope.y, envelope.width - 10, thickness};
-    case BUILDING_CLOCK_SECTION_MIDDLE_BEAM:
-        return (SDL_Rect){envelope.x + 5, middle_y, envelope.width - 10, thickness};
-    case BUILDING_CLOCK_SECTION_UPPER_LEFT_PIER:
-        return (SDL_Rect){envelope.x, envelope.y + 5, thickness, vertical_height};
-    case BUILDING_CLOCK_SECTION_UPPER_RIGHT_PIER:
-        return (SDL_Rect){right_x, envelope.y + 5, thickness, vertical_height};
-    case BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER:
-        return (SDL_Rect){envelope.x, lower_y, thickness, vertical_height};
-    case BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER:
-        return (SDL_Rect){right_x, lower_y, thickness, vertical_height};
-    case BUILDING_CLOCK_SECTION_CORNER_OR_DIAGONAL:
-    case BUILDING_CLOCK_SECTION_FINISHING_OR_INFILL:
-    default:
-        return (SDL_Rect){envelope.x + envelope.width / 2 - 4, envelope.y + envelope.height / 2 - 4, 8, 8};
+static void draw_masonry_brick(SDL_Renderer* renderer, building_clock_rect_t brick, SDL_Color color) {
+    fill_rect(renderer, brick.x, brick.y, brick.width, brick.height, color);
+    set_color(renderer, COLOR_MASONRY_DARK);
+    (void)SDL_RenderDrawLine(renderer, brick.x, brick.y + (int)brick.height - 1, brick.x + (int)brick.width - 1, brick.y + (int)brick.height - 1);
+    (void)SDL_RenderDrawLine(renderer, brick.x + (int)brick.width - 1, brick.y + 1, brick.x + (int)brick.width - 1, brick.y + (int)brick.height - 1);
+    set_color(renderer, COLOR_MASONRY_LIGHT);
+    (void)SDL_RenderDrawLine(renderer, brick.x + 1, brick.y + 1, brick.x + (int)brick.width - 2, brick.y + 1);
+}
+
+static void draw_section_at_position(SDL_Renderer* renderer, building_clock_rect_t envelope, uint8_t numeral, building_clock_section_kind_t kind, building_clock_point_t center,
+                                     uint16_t progress_per_mille, SDL_Color color) {
+    building_clock_rect_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+    const uint8_t brick_count = building_clock_section_visible_bricks(envelope, numeral, kind, bricks);
+    const building_clock_point_t origin = building_clock_rect_center(building_clock_section_bounds(envelope, kind));
+    uint8_t visible_count = (uint8_t)(((uint32_t)brick_count * progress_per_mille + 999U) / 1000U);
+    if (visible_count > brick_count) {
+        visible_count = brick_count;
+    }
+    for (uint8_t brick_id = 0U; brick_id < visible_count; brick_id++) {
+        bricks[brick_id].x = (int16_t)(bricks[brick_id].x + center.x - origin.x);
+        bricks[brick_id].y = (int16_t)(bricks[brick_id].y + center.y - origin.y);
+        draw_masonry_brick(renderer, bricks[brick_id], color);
     }
 }
 
 static void draw_structure(SDL_Renderer* renderer, building_clock_rect_t envelope, const building_clock_digit_structure_t* structure, bool incoming) {
     for (uint8_t index = 0U; index < structure->section_count; index++) {
         const building_clock_section_state_t* section = &structure->sections[index];
-        if (section->status == BUILDING_CLOCK_SECTION_ABSENT || section->status == BUILDING_CLOCK_SECTION_STAGED || section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT ||
-            section->status == BUILDING_CLOCK_SECTION_FALLING || section->status == BUILDING_CLOCK_SECTION_DEBRIS) {
+        if (section->status == BUILDING_CLOCK_SECTION_ABSENT || section->status == BUILDING_CLOCK_SECTION_STAGED || section->status == BUILDING_CLOCK_SECTION_FALLING ||
+            section->status == BUILDING_CLOCK_SECTION_DEBRIS || (section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT && section->progress_per_mille == 0U)) {
             continue;
         }
         SDL_Color color = COLOR_MASONRY;
         if (section->status == BUILDING_CLOCK_SECTION_FAILED) {
             color = COLOR_MASONRY_DARK;
         } else if (incoming && section->status == BUILDING_CLOCK_SECTION_PLACED) {
-            color = COLOR_STEEL;
+            color = COLOR_MASONRY_LIGHT;
         }
-        const SDL_Rect rect = section_rect(envelope, section->kind);
-        set_color(renderer, color);
-        (void)SDL_RenderFillRect(renderer, &rect);
-        set_color(renderer, COLOR_MASONRY_DARK);
-        for (int x = rect.x + 6; x < rect.x + rect.w; x += 8) {
-            (void)SDL_RenderDrawLine(renderer, x, rect.y, x, rect.y + rect.h - 1);
-        }
+        const uint16_t progress = section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT ? section->progress_per_mille : 1000U;
+        const building_clock_point_t center = building_clock_rect_center(building_clock_section_bounds(envelope, section->kind));
+        draw_section_at_position(renderer, envelope, structure->numeral, section->kind, center, progress, color);
+    }
+}
+
+static void draw_load_bundle(SDL_Renderer* renderer, building_clock_point_t position, uint8_t count, SDL_Color color) {
+    for (uint8_t brick = 0U; brick < count; brick++) {
+        const building_clock_rect_t bounds = {
+            .x = (int16_t)(position.x - 7 + (brick % 2U) * 8),
+            .y = (int16_t)(position.y - (brick / 2U) * 6),
+            .width = 7,
+            .height = 5,
+        };
+        draw_masonry_brick(renderer, bounds, color);
     }
 }
 
@@ -291,9 +308,22 @@ static void draw_loads(SDL_Renderer* renderer, const building_clock_scene_snapsh
         if (load->status != BUILDING_CLOCK_LOAD_STAGED && load->status != BUILDING_CLOCK_LOAD_CARRIED) {
             continue;
         }
-        const SDL_Color color = load->status == BUILDING_CLOCK_LOAD_CARRIED ? COLOR_LADDER : COLOR_STEEL;
-        fill_rect(renderer, load->position.x - 4, load->position.y - 7, 9, 5, color);
-        outline_rect(renderer, (building_clock_rect_t){.x = (int16_t)(load->position.x - 4), .y = (int16_t)(load->position.y - 7), .width = 9, .height = 5}, COLOR_MASONRY_DARK);
+        if (load->digit_id >= BUILDING_CLOCK_DIGIT_COUNT || load->section_id >= scene->state.digits[load->digit_id].incoming.section_count) {
+            continue;
+        }
+        building_clock_point_t position = load->position;
+        if (load->status == BUILDING_CLOCK_LOAD_CARRIED && load->carrier_worker_id < scene->state.worker_count && scene->state.workers[load->carrier_worker_id].state != BUILDING_CLOCK_WORKER_HAMMER) {
+            const building_clock_point_t logical = scene->state.workers[load->carrier_worker_id].position;
+            const building_clock_point_t presented = scene->worker_presentation_positions[load->carrier_worker_id];
+            position.x = (int16_t)(position.x + presented.x - logical.x);
+            position.y = (int16_t)(position.y + presented.y - logical.y);
+        }
+        const SDL_Color color = load->status == BUILDING_CLOCK_LOAD_CARRIED ? COLOR_MASONRY_LIGHT : COLOR_MASONRY;
+        uint8_t visible = (uint8_t)load->quantity;
+        if (load->placement_progress_per_mille > 0U) {
+            visible = (uint8_t)(((uint32_t)visible * (1000U - load->placement_progress_per_mille) + 999U) / 1000U);
+        }
+        draw_load_bundle(renderer, position, visible, color);
     }
 }
 
@@ -323,11 +353,9 @@ static void draw_falling_and_debris(SDL_Renderer* renderer, const building_clock
             outline_rect(renderer, (building_clock_rect_t){.x = (int16_t)(section->landing_position.x - 3), .y = (int16_t)(section->landing_position.y - 2), .width = 7, .height = 4}, COLOR_DEBUG);
         }
         const building_clock_rect_t envelope = scene->world->digit_work_areas[section->source_digit_id].envelope;
-        const bool vertical = section->section_kind == BUILDING_CLOCK_SECTION_UPPER_LEFT_PIER || section->section_kind == BUILDING_CLOCK_SECTION_UPPER_RIGHT_PIER ||
-                              section->section_kind == BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER || section->section_kind == BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER;
-        const int width = vertical ? 9 : envelope.width - 10;
-        const int height = vertical ? envelope.height / 2 - 9 : 9;
-        fill_rect(renderer, section->position.x - width / 2, section->position.y - height / 2, width, height, COLOR_MASONRY);
+        const int width = building_clock_section_bounds(envelope, section->section_kind).width;
+        const uint8_t numeral = scene->state.digits[section->source_digit_id].outgoing.numeral;
+        draw_section_at_position(renderer, envelope, numeral, section->section_kind, section->position, 1000U, COLOR_MASONRY);
         set_color(renderer, COLOR_LADDER);
         const int tilt = (section->angle_degrees / 15) % 5;
         (void)SDL_RenderDrawLine(renderer, section->position.x - width / 2, section->position.y - tilt, section->position.x + width / 2, section->position.y + tilt);
@@ -348,9 +376,35 @@ static void draw_temp_structures(SDL_Renderer* renderer, const building_clock_sc
             continue;
         }
         const building_clock_temp_attachment_set_t* attachment = &scene->world->temp_attachment_sets[state->attachment_set_id];
-        outline_rect(renderer, attachment->allowed_area, COLOR_LADDER);
-        for (uint8_t anchor = 0U; anchor < attachment->anchor_count; anchor++) {
-            fill_rect(renderer, attachment->anchors[anchor].x - 2, attachment->anchors[anchor].y - 2, 5, 5, COLOR_LADDER);
+        if (attachment->anchor_count < 2U) {
+            continue;
+        }
+        const int x = attachment->anchors[0].x;
+        const int top = attachment->anchors[0].y;
+        const int bottom = attachment->anchors[attachment->anchor_count - 1U].y;
+        if (attachment->kind == BUILDING_CLOCK_TEMP_STRUCTURE_LADDER) {
+            fill_rect(renderer, x - 4, top, 2, bottom - top + 1, COLOR_LADDER);
+            fill_rect(renderer, x + 3, top, 2, bottom - top + 1, COLOR_LADDER);
+            for (int y = top + 3; y < bottom; y += 7) {
+                fill_rect(renderer, x - 3, y, 7, 2, COLOR_LADDER);
+            }
+        } else {
+            fill_rect(renderer, x - 6, top, 2, bottom - top + 1, COLOR_STEEL);
+            fill_rect(renderer, x + 5, top, 2, bottom - top + 1, COLOR_STEEL);
+            for (uint8_t anchor = 0U; anchor < attachment->anchor_count; anchor++) {
+                const int deck_y = attachment->anchors[anchor].y;
+                fill_rect(renderer, x - 8, deck_y - 2, 17, 4, COLOR_STEEL);
+                if (anchor + 1U < attachment->anchor_count) {
+                    const int next_y = attachment->anchors[anchor + 1U].y;
+                    set_color(renderer, COLOR_STEEL_DARK);
+                    (void)SDL_RenderDrawLine(renderer, x - 5, deck_y + 2, x + 5, next_y - 2);
+                    (void)SDL_RenderDrawLine(renderer, x + 5, deck_y + 2, x - 5, next_y - 2);
+                }
+            }
+            fill_rect(renderer, x - 1, top, 2, bottom - top + 1, COLOR_LADDER);
+            for (int y = top + 4; y < bottom; y += 7) {
+                fill_rect(renderer, x - 4, y, 8, 1, COLOR_LADDER);
+            }
         }
     }
 }
@@ -359,8 +413,8 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     const building_clock_worker_t* worker = &scene->state.workers[worker_id];
     const bool action = worker->state == BUILDING_CLOCK_WORKER_HAMMER || worker->state == BUILDING_CLOCK_WORKER_INSPECT || worker->state == BUILDING_CLOCK_WORKER_AVOID_DANGER;
     const SDL_Color color = action ? COLOR_WORKER_ACTION : COLOR_WORKER;
-    const int x = worker->position.x;
-    const int y = worker->position.y;
+    const int x = scene->worker_presentation_positions[worker_id].x;
+    const int y = scene->worker_presentation_positions[worker_id].y;
     fill_rect(renderer, x - 2, y - 13, 5, 5, color);
     fill_rect(renderer, x - 2, y - 8, 5, 7, color);
     set_color(renderer, color);
@@ -613,12 +667,68 @@ static void advance_viewer(viewer_t* viewer, uint32_t elapsed_ms) {
     }
 }
 
-static void save_screenshot(SDL_Surface* surface, const char* path) {
-    if (SDL_SaveBMP(surface, path) != 0) {
-        fprintf(stderr, "Unable to save %s: %s\n", path, SDL_GetError());
-    } else {
-        printf("Saved %s\n", path);
+static bool save_png(SDL_Surface* surface, const char* path) {
+    SDL_Surface* rgba = SDL_ConvertSurfaceFormat(surface, SDL_PIXELFORMAT_RGBA32, 0U);
+    if (rgba == NULL) {
+        return false;
     }
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        SDL_FreeSurface(rgba);
+        return false;
+    }
+    png_structp png = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    png_infop info = png == NULL ? NULL : png_create_info_struct(png);
+    if (png == NULL || info == NULL) {
+        png_destroy_write_struct(&png, &info);
+        (void)fclose(file);
+        SDL_FreeSurface(rgba);
+        return false;
+    }
+    if (setjmp(png_jmpbuf(png)) != 0) {
+        png_destroy_write_struct(&png, &info);
+        (void)fclose(file);
+        SDL_FreeSurface(rgba);
+        return false;
+    }
+
+    png_init_io(png, file);
+    png_set_IHDR(png, info, (png_uint_32)rgba->w, (png_uint_32)rgba->h, 8, PNG_COLOR_TYPE_RGBA, PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+    png_write_info(png, info);
+    png_bytep rows[BUILDING_CLOCK_WORLD_HEIGHT];
+    for (int y = 0; y < rgba->h; y++) {
+        rows[y] = (png_bytep)((uint8_t*)rgba->pixels + y * rgba->pitch);
+    }
+    png_write_image(png, rows);
+    png_write_end(png, info);
+    png_destroy_write_struct(&png, &info);
+    (void)fclose(file);
+    SDL_FreeSurface(rgba);
+    return true;
+}
+
+static bool path_is_png(const char* path) {
+    const char* extension = strrchr(path, '.');
+    return extension != NULL && strcmp(extension, ".png") == 0;
+}
+
+static void save_screenshot(SDL_Surface* surface, const char* path) {
+    const bool saved = path_is_png(path) ? save_png(surface, path) : SDL_SaveBMP(surface, path) == 0;
+    if (saved) {
+        printf("Saved %s\n", path);
+    } else {
+        fprintf(stderr, "Unable to save %s\n", path);
+    }
+}
+
+static void save_interactive_screenshot(SDL_Surface* surface) {
+    char path[64];
+    const time_t now = time(NULL);
+    const struct tm* local = localtime(&now);
+    if (local == NULL || strftime(path, sizeof(path), "building_clock_%Y%m%d_%H%M%S.png", local) == 0U) {
+        (void)snprintf(path, sizeof(path), "building_clock.png");
+    }
+    save_screenshot(surface, path);
 }
 
 static void print_controls(void) {
@@ -672,7 +782,7 @@ static void handle_key(viewer_t* viewer, SDL_Surface* surface, SDL_Keycode key) 
         viewer->overlays.digit_areas = !viewer->overlays.digit_areas;
         break;
     case SDLK_s:
-        save_screenshot(surface, "building_clock_view.bmp");
+        save_interactive_screenshot(surface);
         break;
     case SDLK_PLUS:
     case SDLK_EQUALS:

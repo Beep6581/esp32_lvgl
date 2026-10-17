@@ -23,6 +23,8 @@ typedef struct {
     building_clock_simulation_state_t state;
     building_clock_navigation_runtime_t navigation;
     building_clock_simulation_metrics_t metrics;
+    /* Stable design-space spacing for workers sharing a broad semantic area. */
+    building_clock_point_t worker_presentation_positions[BUILDING_CLOCK_MAX_WORKERS];
 } building_clock_scene_snapshot_t;
 
 building_clock_scene_status_t building_clock_scene_capture(const building_clock_world_t* world, const building_clock_simulation_t* simulation, building_clock_scene_snapshot_t* snapshot);

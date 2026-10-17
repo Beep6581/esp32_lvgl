@@ -117,8 +117,8 @@ target_compile_definitions(
     building_clock_invalid_fallback_tests
     PRIVATE
         BUILDING_CLOCK_WORLD_MAX_CANDIDATE_ATTEMPTS=1U
-        BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED=0x37a3c00e69d91259ULL
-        BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION=2U
+        BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED=0x599f283f04152350ULL
+        BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION=4U
         BUILDING_CLOCK_WORLD_FALLBACK_ATTEMPT=0U
 )
 
@@ -145,6 +145,7 @@ add_executable(
     building_clock_simulation_tests
     "test_building_clock_simulation.c"
     ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
 )
@@ -163,6 +164,7 @@ add_executable(
     building_clock_transition_tests
     "test_building_clock_transition.c"
     ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
 )
@@ -181,6 +183,7 @@ add_executable(
     building_clock_scene_tests
     "test_building_clock_scene.c"
     ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_scene.c"
     "../building_clock_simulation.c"

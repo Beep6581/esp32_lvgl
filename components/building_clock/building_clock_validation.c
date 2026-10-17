@@ -400,7 +400,8 @@ static building_clock_prevalidation_result_t validate_spawns(const building_cloc
 static building_clock_prevalidation_result_t validate_digit_access(const building_clock_world_t* world) {
     for (uint8_t digit = 0; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
         const building_clock_digit_work_area_t* area = &world->digit_work_areas[digit];
-        if (!rect_in_world(area->work_halo) || !rect_in_world(area->hazard_area) || area->debris_bay_id >= world->debris_bay_count || area->access_count < 4U || area->safe_retreat_node_count != 0U) {
+        if (!rect_in_world(area->work_halo) || !rect_in_world(area->hazard_area) || !rect_in_world(area->collapse_catch_area) || area->debris_bay_id >= world->debris_bay_count ||
+            area->access_count < 4U || area->safe_retreat_node_count != 0U) {
             return result(BUILDING_CLOCK_PREVALIDATION_DIGIT_ACCESS_GEOMETRY, digit);
         }
         for (uint8_t access = 0; access < area->access_count; access++) {
@@ -424,7 +425,9 @@ static building_clock_prevalidation_result_t validate_attachments(const building
             return result(BUILDING_CLOCK_PREVALIDATION_TEMP_ATTACHMENT_GEOMETRY, index);
         }
         for (uint8_t anchor = 0; anchor < attachment->anchor_count; anchor++) {
-            if (!point_in_world(attachment->anchors[anchor]) || !point_in_rect(attachment->anchors[anchor], attachment->allowed_area) || !point_on_platform(world, attachment->anchors[anchor])) {
+            const bool endpoint = anchor == 0U || anchor + 1U == attachment->anchor_count;
+            if (!point_in_world(attachment->anchors[anchor]) || !point_in_rect(attachment->anchors[anchor], attachment->allowed_area) ||
+                (endpoint && !point_on_platform(world, attachment->anchors[anchor])) || (anchor > 0U && attachment->anchors[anchor].y <= attachment->anchors[anchor - 1U].y)) {
                 return result(BUILDING_CLOCK_PREVALIDATION_TEMP_ATTACHMENT_GEOMETRY, index);
             }
         }

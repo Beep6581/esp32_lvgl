@@ -1,4 +1,5 @@
 #include "building_clock_generator.h"
+#include "building_clock_geometry.h"
 #include "building_clock_simulation.h"
 #include "building_clock_world_selection.h"
 
@@ -215,7 +216,7 @@ static bool debris_is_valid(const building_clock_simulation_t* simulation, const
         used_count++;
         if (item->source_digit_id >= BUILDING_CLOCK_DIGIT_COUNT || item->debris_bay_id >= world->debris_bay_count ||
             item->source_section_id >= simulation->state.digits[item->source_digit_id].outgoing.section_count || world->digit_work_areas[item->source_digit_id].debris_bay_id != item->debris_bay_id ||
-            !point_in_rect(item->position, world->debris_bays[item->debris_bay_id].area)) {
+            !point_in_rect(item->position, world->digit_work_areas[item->source_digit_id].collapse_catch_area)) {
             return false;
         }
     }
@@ -226,7 +227,7 @@ static void verify_transition_result(const building_clock_simulation_t* simulati
     expect_true(reached_handoff(simulation, changed_mask), "changed digits reach clearing handoff and unchanged digits remain stable");
     expect_true(simulation->state.hazard_count == 0U && simulation->state.falling_section_count == 0U, "handoff has no active hazards or falling sections");
     expect_true(simulation->state.used_debris_slot_count <= BUILDING_CLOCK_MAX_DEBRIS_PIECES, "debris stays within fixed capacity");
-    expect_true(debris_is_valid(simulation, world), "debris stays in the correct generated bay with valid section references");
+    expect_true(debris_is_valid(simulation, world), "debris stays in the local catch area with valid service-bay and section references");
     expect_true(simulation->metrics.evacuation_failures == 0U && simulation->metrics.transition_capacity_delays == 0U, "transition has no evacuation or capacity failures");
     for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
         const building_clock_digit_state_t* state = &simulation->state.digits[digit];
@@ -310,8 +311,7 @@ static void test_falling_sections_land_coherently(void) {
     building_clock_point_t expected_landings[BUILDING_CLOCK_MAX_DIGIT_SECTIONS] = {0};
     bool landing_seen[BUILDING_CLOCK_MAX_DIGIT_SECTIONS] = {false};
     const uint8_t digit_id = 3U;
-    const uint8_t bay_id = world.digit_work_areas[digit_id].debris_bay_id;
-    const building_clock_rect_t bay = world.debris_bays[bay_id].area;
+    const building_clock_rect_t catch_area = world.digit_work_areas[digit_id].collapse_catch_area;
     const uint8_t section_count = simulation.state.digits[digit_id].outgoing.section_count;
 
     for (uint32_t elapsed = 0U; elapsed < TRANSITION_TIMEOUT_MS && !reached_handoff(&simulation, (uint8_t)(1U << digit_id)); elapsed += BUILDING_CLOCK_SIMULATION_QUANTUM_MS) {
@@ -321,7 +321,10 @@ static void test_falling_sections_land_coherently(void) {
             if (falling->source_digit_id != digit_id || falling->source_section_id >= section_count) {
                 continue;
             }
-            expect_true(point_in_rect(falling->landing_position, bay), "falling section landing target remains inside its assigned debris bay");
+            expect_true(point_in_rect(falling->landing_position, catch_area), "falling section landing target remains inside its local catch area");
+            int32_t horizontal_drift = (int32_t)falling->landing_position.x - falling->start_position.x;
+            horizontal_drift = horizontal_drift < 0 ? -horizontal_drift : horizontal_drift;
+            expect_true(horizontal_drift <= 6, "falling masonry has only modest horizontal drift");
             expect_true(falling->progress_per_mille <= 1000U, "falling section exposes bounded deterministic progress");
             expect_true(falling->position.y >= falling->start_position.y && falling->position.y <= falling->landing_position.y,
                         "falling section follows a continuous vertical path to its landing target");
@@ -546,7 +549,7 @@ static void test_full_replay_and_dependency_order(void) {
     for (building_clock_digit_lifecycle_t phase = BUILDING_CLOCK_DIGIT_CLEARING; phase <= BUILDING_CLOCK_DIGIT_COMPLETE; phase++) {
         expect_true(phases_seen[phase], "complete reconstruction visits every post-collapse lifecycle phase");
     }
-    expect_true(saw_staged_load && saw_carried_load, "reconstruction exposes staged and worker-carried prefabricated sections");
+    expect_true(saw_staged_load && saw_carried_load, "reconstruction exposes staged and worker-carried masonry bundles");
     expect_true(saw_temporary_access, "reconstruction installs validated temporary construction access");
     expect_true(saw_clear_action && saw_hammer_action && saw_inspection, "workers visibly clear, build, secure, and inspect the digit");
 }
@@ -661,6 +664,83 @@ static void test_generated_world_evacuation_leads(void) {
     printf("Evacuation lead batch: %" PRIu32 " worlds, worst %" PRIu32 " ms at seed %016" PRIx64 " node %u\n", world_count, maximum_lead_ms, maximum_seed, maximum_node);
 }
 
+static void test_visible_section_delivery_sequence(void) {
+    building_clock_world_t world;
+    select_test_world(&world, UINT64_C(0x6a09e667f3bcc909));
+    building_clock_simulation_t simulation;
+    expect_true(building_clock_simulation_init(&simulation, &world, 6U) == BUILDING_CLOCK_SIMULATION_OK, "delivery-sequence simulation initializes");
+    expect_true(building_clock_simulation_set_time(&simulation, &world, 14U, 37U) == BUILDING_CLOCK_SIMULATION_OK, "delivery-sequence initial time is set");
+    expect_true(building_clock_simulation_set_time(&simulation, &world, 14U, 38U) == BUILDING_CLOCK_SIMULATION_OK, "delivery-sequence transition starts");
+
+    bool saw_staged = false;
+    bool saw_carried = false;
+    bool saw_positioning = false;
+    bool saw_placed = false;
+    for (uint32_t elapsed = 0U; elapsed < FULL_TRANSITION_TIMEOUT_MS && building_clock_simulation_transition_active(&simulation); elapsed += BUILDING_CLOCK_SIMULATION_QUANTUM_MS) {
+        (void)building_clock_simulation_step(&simulation, &world, BUILDING_CLOCK_SIMULATION_QUANTUM_MS);
+        for (uint8_t load_id = 0U; load_id < BUILDING_CLOCK_MAX_LOADS; load_id++) {
+            const building_clock_load_t* load = &simulation.state.loads[load_id];
+            if (load->status != BUILDING_CLOCK_LOAD_STAGED && load->status != BUILDING_CLOCK_LOAD_CARRIED) {
+                continue;
+            }
+            expect_true(load->digit_id < BUILDING_CLOCK_DIGIT_COUNT && load->section_id < simulation.state.digits[load->digit_id].incoming.section_count,
+                        "visible construction load references its destination section");
+            if (load->digit_id >= BUILDING_CLOCK_DIGIT_COUNT || load->section_id >= simulation.state.digits[load->digit_id].incoming.section_count) {
+                continue;
+            }
+            const building_clock_section_state_t* section = &simulation.state.digits[load->digit_id].incoming.sections[load->section_id];
+            saw_staged |= load->status == BUILDING_CLOCK_LOAD_STAGED && section->status == BUILDING_CLOCK_SECTION_STAGED;
+            saw_carried |= load->status == BUILDING_CLOCK_LOAD_CARRIED && section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT;
+            if (load->status == BUILDING_CLOCK_LOAD_CARRIED && load->carrier_worker_id < simulation.state.worker_count) {
+                const building_clock_worker_t* carrier = &simulation.state.workers[load->carrier_worker_id];
+                int32_t distance = (int32_t)load->position.x - carrier->position.x;
+                distance = distance < 0 ? -distance : distance;
+                int32_t vertical = (int32_t)load->position.y - (carrier->position.y - 9);
+                vertical = vertical < 0 ? -vertical : vertical;
+                expect_true(distance + vertical <= 12, "worker-carried masonry bundle remains visibly attached to its carrier");
+            }
+            if (load->placement_progress_per_mille > 0U && load->placement_progress_per_mille < 1000U) {
+                const building_clock_point_t destination = building_clock_rect_center(building_clock_section_bounds(world.digit_work_areas[load->digit_id].envelope, section->kind));
+                expect_true(load->position.x >= 0 && load->position.x < BUILDING_CLOCK_WORLD_WIDTH && load->position.y >= 0 && load->position.y < BUILDING_CLOCK_WORLD_HEIGHT,
+                            "positioning section remains in semantic design space");
+                expect_true(load->position.x != destination.x || load->position.y != destination.y, "in-progress section has not appeared fully placed early");
+                expect_true(section->progress_per_mille == load->placement_progress_per_mille, "visible masonry growth follows bundle placement progress");
+                saw_positioning = true;
+            }
+        }
+        for (uint8_t section = 0U; section < simulation.state.digits[3].incoming.section_count; section++) {
+            saw_placed |= simulation.state.digits[3].incoming.sections[section].status == BUILDING_CLOCK_SECTION_PLACED;
+        }
+    }
+    expect_true(saw_staged && saw_carried && saw_positioning && saw_placed, "reconstruction exposes staged, carried, positioned, and placed section phases");
+    expect_true(!building_clock_simulation_transition_active(&simulation) && simulation.state.current_minute == 38U, "delivery-sequence transition completes normally");
+}
+
+static void test_masonry_digit_geometry(void) {
+    const building_clock_rect_t envelope = {.x = 45, .y = BUILDING_CLOCK_DIGIT_ENVELOPE_Y, .width = BUILDING_CLOCK_DIGIT_ENVELOPE_WIDTH, .height = BUILDING_CLOCK_DIGIT_ENVELOPE_HEIGHT};
+    uint16_t previous_total = 0U;
+    bool differs_from_previous = false;
+    for (uint8_t numeral = 0U; numeral < 10U; numeral++) {
+        uint16_t total = 0U;
+        for (building_clock_section_kind_t kind = BUILDING_CLOCK_SECTION_FOUNDATION; kind <= BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER; kind++) {
+            building_clock_rect_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+            const uint8_t count = building_clock_section_visible_bricks(envelope, numeral, kind, bricks);
+            total = (uint16_t)(total + count);
+            for (uint8_t brick = 0U; brick < count; brick++) {
+                expect_true(bricks[brick].x >= envelope.x && bricks[brick].y >= envelope.y && (int32_t)bricks[brick].x + bricks[brick].width <= (int32_t)envelope.x + envelope.width &&
+                                (int32_t)bricks[brick].y + bricks[brick].height <= (int32_t)envelope.y + envelope.height,
+                            "visible masonry brick remains inside its digit envelope");
+            }
+        }
+        expect_true(total >= 18U, "every numeral has a substantial bounded masonry silhouette");
+        if (numeral > 0U && total != previous_total) {
+            differs_from_previous = true;
+        }
+        previous_total = total;
+    }
+    expect_true(differs_from_previous, "digit-specific masonry silhouettes are not one repeated segment template");
+}
+
 int main(void) {
     test_single_digit_and_determinism();
     test_multi_digit_and_midnight();
@@ -672,6 +752,8 @@ int main(void) {
     test_complete_rollovers();
     test_repeated_minute_transitions();
     test_generated_world_evacuation_leads();
+    test_visible_section_delivery_sequence();
+    test_masonry_digit_geometry();
 
     if (failures != 0U) {
         fprintf(stderr, "%u Building Clock transition test(s) failed\n", failures);

@@ -426,34 +426,34 @@ static bool add_temp_edges(navigation_builder_t* builder) {
     building_clock_world_t* world = builder->world;
     for (uint8_t attachment = 0; attachment < world->temp_attachment_set_count; attachment++) {
         building_clock_temp_attachment_set_t* set = &world->temp_attachment_sets[attachment];
-        if (set->anchor_count < 2U || set->connection_count >= BUILDING_CLOCK_MAX_ATTACHMENT_CONNECTIONS) {
+        if (set->anchor_count < 2U || set->anchor_count - 1U > BUILDING_CLOCK_MAX_ATTACHMENT_CONNECTIONS) {
             builder->result = derivation_result(BUILDING_CLOCK_NAV_DERIVATION_TEMP_CONNECTION_CAPACITY, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment);
             return false;
         }
-        const uint8_t from = find_source_node(&world->navigation, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment, 0U);
-        const uint8_t to = find_source_node(&world->navigation, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment, (uint8_t)(set->anchor_count - 1U));
-        if (from == BUILDING_CLOCK_INVALID_ID || to == BUILDING_CLOCK_INVALID_ID) {
-            builder->result = derivation_result(BUILDING_CLOCK_NAV_DERIVATION_MISSING_SOURCE_NODE, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment);
-            return false;
-        }
-
         const bool allow_large_load = set->kind != BUILDING_CLOCK_TEMP_STRUCTURE_LADDER;
-        set->connections[0] = (building_clock_temp_connection_t){
-            .from_node_id = from,
-            .to_node_id = to,
-            .edge_kind = BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION,
-            .traversal_cost = point_distance(world->navigation.nodes[from].position, world->navigation.nodes[to].position),
-            .capacity = 1U,
-            .allow_large_load = allow_large_load,
-        };
-        set->connection_count = 1U;
-
         uint8_t flags = BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL | BUILDING_CLOCK_NAV_EDGE_REQUIRES_TEMP_STRUCTURE;
         if (allow_large_load) {
             flags |= BUILDING_CLOCK_NAV_EDGE_ALLOW_LARGE_LOAD;
         }
-        if (!add_edge(builder, from, to, BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment, set->connections[0].traversal_cost, 1U, flags, attachment)) {
-            return false;
+        for (uint8_t anchor = 1U; anchor < set->anchor_count; anchor++) {
+            const uint8_t from = find_source_node(&world->navigation, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment, (uint8_t)(anchor - 1U));
+            const uint8_t to = find_source_node(&world->navigation, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment, anchor);
+            if (from == BUILDING_CLOCK_INVALID_ID || to == BUILDING_CLOCK_INVALID_ID) {
+                builder->result = derivation_result(BUILDING_CLOCK_NAV_DERIVATION_MISSING_SOURCE_NODE, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment);
+                return false;
+            }
+            building_clock_temp_connection_t* connection = &set->connections[set->connection_count++];
+            *connection = (building_clock_temp_connection_t){
+                .from_node_id = from,
+                .to_node_id = to,
+                .edge_kind = BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION,
+                .traversal_cost = point_distance(world->navigation.nodes[from].position, world->navigation.nodes[to].position),
+                .capacity = 1U,
+                .allow_large_load = allow_large_load,
+            };
+            if (!add_edge(builder, from, to, BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION, BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT, attachment, connection->traversal_cost, 1U, flags, attachment)) {
+                return false;
+            }
         }
     }
     return true;

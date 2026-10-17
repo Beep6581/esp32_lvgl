@@ -522,13 +522,18 @@ static building_clock_complete_validation_result_t validate_temporary_routes(con
         if (set->connection_count == 0U || set->connection_count > BUILDING_CLOCK_MAX_ATTACHMENT_CONNECTIONS) {
             return complete_result(BUILDING_CLOCK_COMPLETE_VALIDATION_TEMP_STRUCTURE_ROUTE, attachment);
         }
+        bool has_permanent_endpoint = false;
         for (uint8_t connection = 0; connection < set->connection_count; connection++) {
             const building_clock_temp_connection_t* link = &set->connections[connection];
-            if (link->from_node_id >= world->navigation.node_count || link->to_node_id >= world->navigation.node_count || (!reachable[link->from_node_id] && !reachable[link->to_node_id]) ||
-                !reachable_with_temporary[link->from_node_id] || !reachable_with_temporary[link->to_node_id] || link->edge_kind != BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION || link->capacity == 0U ||
-                link->traversal_cost == 0U || link->allow_large_load != (set->kind != BUILDING_CLOCK_TEMP_STRUCTURE_LADDER) || !graph_has_temp_edge(world, attachment, link)) {
+            if (link->from_node_id >= world->navigation.node_count || link->to_node_id >= world->navigation.node_count || !reachable_with_temporary[link->from_node_id] ||
+                !reachable_with_temporary[link->to_node_id] || link->edge_kind != BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION || link->capacity == 0U || link->traversal_cost == 0U ||
+                link->allow_large_load != (set->kind != BUILDING_CLOCK_TEMP_STRUCTURE_LADDER) || !graph_has_temp_edge(world, attachment, link)) {
                 return complete_result(BUILDING_CLOCK_COMPLETE_VALIDATION_TEMP_STRUCTURE_ROUTE, attachment);
             }
+            has_permanent_endpoint |= reachable[link->from_node_id] || reachable[link->to_node_id];
+        }
+        if (!has_permanent_endpoint) {
+            return complete_result(BUILDING_CLOCK_COMPLETE_VALIDATION_TEMP_STRUCTURE_ROUTE, attachment);
         }
     }
     return complete_result(BUILDING_CLOCK_COMPLETE_VALIDATION_OK, BUILDING_CLOCK_VALIDATION_NO_ITEM);

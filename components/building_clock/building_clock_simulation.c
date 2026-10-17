@@ -3,6 +3,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "building_clock_geometry.h"
+
 #define WALK_MS_PER_COST_UNIT 12U
 #define CLIMB_MS_PER_COST_UNIT 20U
 #define TEMP_MS_PER_COST_UNIT 16U
@@ -12,9 +14,6 @@
 #define DEFAULT_HAMMER_ACTION_MS 1000U
 #define MAX_WORKER_TRANSITIONS_PER_QUANTUM 8U
 #define FALLING_VARIATION_MS 200U
-#define DEBRIS_PILE_COLUMN_COUNT 4U
-#define DEBRIS_PILE_ROW_COUNT 2U
-#define BUILDING_CLOCK_SECTION_SUPPLY_QUANTITY 1U
 
 static const building_clock_transition_pacing_t s_default_transition_pacing = {
     .preparation_ms = 500U,
@@ -45,6 +44,7 @@ _Static_assert(BUILDING_CLOCK_MAX_WORKER_ROUTE_EDGES == BUILDING_CLOCK_MAX_ROUTE
 static void copy_route_to_worker(building_clock_worker_t* worker, const building_clock_route_t* route);
 static uint32_t traversal_duration(const building_clock_world_t* world, const building_clock_nav_edge_t* edge);
 static uint8_t section_collapse_priority(building_clock_section_kind_t kind);
+static building_clock_point_t section_start_position(const building_clock_digit_work_area_t* area, building_clock_section_kind_t kind);
 static bool activate_digit_hazard(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t digit_id);
 
 static bool simple_job_kind_supported(building_clock_job_kind_t kind) {
@@ -322,7 +322,7 @@ static building_clock_load_t* find_section_load(building_clock_simulation_t* sim
     return NULL;
 }
 
-static void release_job_subject(building_clock_simulation_t* simulation, uint8_t job_id) {
+static void release_job_subject(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id) {
     const building_clock_job_t* job = &simulation->state.jobs[job_id];
     if ((job->kind == BUILDING_CLOCK_JOB_INSTALL_TEMP_LADDER || job->kind == BUILDING_CLOCK_JOB_INSTALL_TEMP_PLATFORM) && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_TEMP_STRUCTURE &&
         job->subject.object_id < BUILDING_CLOCK_MAX_TEMP_STRUCTURES) {
@@ -348,9 +348,16 @@ static void release_job_subject(building_clock_simulation_t* simulation, uint8_t
         building_clock_load_t* load = find_section_load(simulation, job->subject.digit_id, job->subject.section_id);
         if (load != NULL) {
             load->status = BUILDING_CLOCK_LOAD_STAGED;
+            load->placement_progress_per_mille = 0U;
             load->carrier_worker_id = BUILDING_CLOCK_INVALID_ID;
             if (load->location_id < BUILDING_CLOCK_MAX_STAGING_AREAS && simulation->state.staging_inventory[load->location_id].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION] < UINT16_MAX) {
                 simulation->state.staging_inventory[load->location_id].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION]++;
+                const uint8_t source_node = world->staging_areas[load->location_id].access_node_id;
+                if (source_node < world->navigation.node_count) {
+                    load->position = world->navigation.nodes[source_node].position;
+                    load->position.x = (int16_t)(load->position.x + (job->subject.section_id % 2U == 0U ? -8 : 8));
+                    load->position.y = (int16_t)(load->position.y - 7);
+                }
             }
         }
     }
@@ -359,7 +366,7 @@ static void release_job_subject(building_clock_simulation_t* simulation, uint8_t
 static void cancel_job_internal(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id, bool plan_egress, bool interrupted_by_transition) {
     building_clock_job_t* job = &simulation->state.jobs[job_id];
     const uint8_t worker_id = job->reserved_worker_id;
-    release_job_subject(simulation, job_id);
+    release_job_subject(simulation, world, job_id);
     if (worker_id < simulation->state.worker_count && simulation->state.workers[worker_id].current_job_id == job_id) {
         clear_worker_job(simulation, world, worker_id);
         if (plan_egress) {
@@ -608,7 +615,7 @@ static void apply_job_completion(building_clock_simulation_t* simulation, const 
     building_clock_section_state_t* section = &digit->incoming.sections[job->subject.section_id];
     if (job->kind == BUILDING_CLOCK_JOB_PLACE_SECTION) {
         section->status = BUILDING_CLOCK_SECTION_PLACED;
-        section->progress_per_mille = 700U;
+        section->progress_per_mille = 1000U;
         free_section_load(simulation, job->subject.digit_id, job->subject.section_id);
         simulation->metrics.sections_placed++;
     } else if (job->kind == BUILDING_CLOCK_JOB_SECURE_SECTION) {
@@ -638,6 +645,7 @@ static bool begin_job_action(building_clock_simulation_t* simulation, const buil
         }
         building_clock_load_t* load = &simulation->state.loads[load_id];
         load->status = BUILDING_CLOCK_LOAD_CARRIED;
+        load->placement_progress_per_mille = 0U;
         load->carrier_worker_id = worker_id;
         if (load->location_id < BUILDING_CLOCK_MAX_STAGING_AREAS && simulation->state.staging_inventory[load->location_id].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION] > 0U) {
             simulation->state.staging_inventory[load->location_id].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION]--;
@@ -772,8 +780,9 @@ static bool begin_next_traversal(building_clock_simulation_t* simulation, const 
     worker->state_elapsed_ms = 0U;
     worker->edge_progress_per_mille = 0U;
     worker->state = BUILDING_CLOCK_WORKER_WALK;
-    if (edge->kind == BUILDING_CLOCK_NAV_EDGE_CLIMB || (edge->kind == BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION && edge->temp_attachment_set_id < world->temp_attachment_set_count &&
-                                                        world->temp_attachment_sets[edge->temp_attachment_set_id].kind == BUILDING_CLOCK_TEMP_STRUCTURE_LADDER)) {
+    const building_clock_point_t edge_from = world->navigation.nodes[edge->from_node_id].position;
+    const building_clock_point_t edge_to = world->navigation.nodes[edge->to_node_id].position;
+    if (edge->kind == BUILDING_CLOCK_NAV_EDGE_CLIMB || (edge->kind == BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION && edge_from.y != edge_to.y)) {
         worker->state = BUILDING_CLOCK_WORKER_CLIMB;
     }
     return true;
@@ -852,6 +861,17 @@ static uint32_t advance_action(building_clock_simulation_t* simulation, const bu
     const uint32_t consumed = available_ms < remaining ? available_ms : remaining;
     worker->state_elapsed_ms += consumed;
     worker->action_phase = (uint8_t)(((uint64_t)worker->state_elapsed_ms * 4U) / duration);
+    if (job->kind == BUILDING_CLOCK_JOB_PLACE_SECTION && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_DIGIT_SECTION && job->subject.digit_id < BUILDING_CLOCK_DIGIT_COUNT &&
+        job->subject.section_id < simulation->state.digits[job->subject.digit_id].incoming.section_count) {
+        building_clock_load_t* load = find_section_load(simulation, job->subject.digit_id, job->subject.section_id);
+        if (load != NULL && job->target_node_id < world->navigation.node_count) {
+            const uint32_t progress = ((uint64_t)worker->state_elapsed_ms * 1000U) / duration;
+            load->placement_progress_per_mille = (uint16_t)progress;
+            load->position = worker->position;
+            load->position.y = (int16_t)(load->position.y - 9);
+            simulation->state.digits[job->subject.digit_id].incoming.sections[job->subject.section_id].progress_per_mille = (uint16_t)progress;
+        }
+    }
     if (worker->state_elapsed_ms >= duration) {
         if (job->kind == BUILDING_CLOCK_JOB_PLACE_SECTION) {
             apply_job_completion(simulation, world, worker->current_job_id);
@@ -923,8 +943,12 @@ static void advance_worker(building_clock_simulation_t* simulation, const buildi
             return;
         }
     }
-    if (worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS && simulation->state.loads[worker->carried_load_id].status == BUILDING_CLOCK_LOAD_CARRIED) {
-        simulation->state.loads[worker->carried_load_id].position = worker->position;
+    if (worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS && simulation->state.loads[worker->carried_load_id].status == BUILDING_CLOCK_LOAD_CARRIED && worker->state != BUILDING_CLOCK_WORKER_HAMMER) {
+        building_clock_load_t* load = &simulation->state.loads[worker->carried_load_id];
+        load->position = worker->position;
+        if (load->digit_id < BUILDING_CLOCK_DIGIT_COUNT && load->section_id < simulation->state.digits[load->digit_id].incoming.section_count) {
+            load->position.y = (int16_t)(load->position.y - 9);
+        }
     }
 }
 
@@ -1303,54 +1327,19 @@ static void mark_next_section_failed(building_clock_digit_structure_t* structure
 }
 
 static building_clock_point_t section_start_position(const building_clock_digit_work_area_t* area, building_clock_section_kind_t kind) {
-    const int16_t left = area->envelope.x;
-    const int16_t right = (int16_t)(area->envelope.x + (int16_t)area->envelope.width);
-    const int16_t center_x = (int16_t)(area->envelope.x + (int16_t)(area->envelope.width / 2U));
-    const int16_t top = area->envelope.y;
-    const int16_t middle_y = (int16_t)(area->envelope.y + (int16_t)(area->envelope.height / 2U));
-    const int16_t bottom = (int16_t)(area->envelope.y + (int16_t)area->envelope.height);
-    switch (kind) {
-    case BUILDING_CLOCK_SECTION_FOUNDATION:
-        return (building_clock_point_t){.x = center_x, .y = bottom};
-    case BUILDING_CLOCK_SECTION_TOP_BEAM:
-        return (building_clock_point_t){.x = center_x, .y = top};
-    case BUILDING_CLOCK_SECTION_MIDDLE_BEAM:
-        return (building_clock_point_t){.x = center_x, .y = middle_y};
-    case BUILDING_CLOCK_SECTION_UPPER_LEFT_PIER:
-        return (building_clock_point_t){.x = left, .y = (int16_t)((top + middle_y) / 2)};
-    case BUILDING_CLOCK_SECTION_UPPER_RIGHT_PIER:
-        return (building_clock_point_t){.x = right, .y = (int16_t)((top + middle_y) / 2)};
-    case BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER:
-        return (building_clock_point_t){.x = left, .y = (int16_t)((middle_y + bottom) / 2)};
-    case BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER:
-        return (building_clock_point_t){.x = right, .y = (int16_t)((middle_y + bottom) / 2)};
-    case BUILDING_CLOCK_SECTION_CORNER_OR_DIAGONAL:
-    case BUILDING_CLOCK_SECTION_FINISHING_OR_INFILL:
-    default:
-        return (building_clock_point_t){.x = center_x, .y = middle_y};
-    }
+    return building_clock_rect_center(building_clock_section_bounds(area->envelope, kind));
 }
 
-static building_clock_point_t debris_pile_position(building_clock_rect_t bay, uint8_t slot) {
-    const uint8_t column = (uint8_t)(slot % DEBRIS_PILE_COLUMN_COUNT);
-    const uint8_t row = (uint8_t)(slot / DEBRIS_PILE_COLUMN_COUNT);
-    const int16_t x_step = (int16_t)((bay.width - 7U) / (DEBRIS_PILE_COLUMN_COUNT - 1U));
-    return (building_clock_point_t){
-        .x = (int16_t)(bay.x + 3 + (int16_t)column * x_step),
-        .y = (int16_t)(bay.y + (int16_t)bay.height - 4 - (int16_t)row * 7),
-    };
-}
-
-static bool landing_position_is_used(const building_clock_simulation_t* simulation, uint8_t bay_id, building_clock_point_t position) {
+static bool landing_position_is_used(const building_clock_simulation_t* simulation, uint8_t digit_id, building_clock_point_t position) {
     for (uint8_t index = 0U; index < simulation->state.falling_section_count; index++) {
         const building_clock_falling_section_t* falling = &simulation->state.falling_sections[index];
-        if (falling->target_debris_bay_id == bay_id && falling->landing_position.x == position.x && falling->landing_position.y == position.y) {
+        if (falling->source_digit_id == digit_id && falling->landing_position.x == position.x && falling->landing_position.y == position.y) {
             return true;
         }
     }
     for (uint8_t index = 0U; index < BUILDING_CLOCK_MAX_DEBRIS_PIECES; index++) {
         const building_clock_debris_t* debris = &simulation->state.debris[index];
-        if (debris->status != BUILDING_CLOCK_DEBRIS_UNUSED && debris->status != BUILDING_CLOCK_DEBRIS_CLEARED && debris->debris_bay_id == bay_id && debris->position.x == position.x &&
+        if (debris->status != BUILDING_CLOCK_DEBRIS_UNUSED && debris->status != BUILDING_CLOCK_DEBRIS_CLEARED && debris->source_digit_id == digit_id && debris->position.x == position.x &&
             debris->position.y == position.y) {
             return true;
         }
@@ -1358,18 +1347,38 @@ static bool landing_position_is_used(const building_clock_simulation_t* simulati
     return false;
 }
 
-static building_clock_point_t choose_landing_position(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t bay_id) {
-    const building_clock_rect_t bay = world->debris_bays[bay_id].area;
-    const uint8_t slot_count = DEBRIS_PILE_COLUMN_COUNT * DEBRIS_PILE_ROW_COUNT;
-    const uint8_t first_slot = (uint8_t)building_clock_random_bounded(&simulation->transition_random, slot_count);
-    for (uint8_t offset = 0U; offset < slot_count; offset++) {
-        const uint8_t slot = (uint8_t)((first_slot + offset) % slot_count);
-        const building_clock_point_t position = debris_pile_position(bay, slot);
-        if (!landing_position_is_used(simulation, bay_id, position)) {
-            return position;
+static building_clock_point_t choose_landing_position(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t digit_id, building_clock_point_t start_position) {
+    static const int8_t horizontal_offsets[] = {-6, -4, -2, 0, 2, 4, 6};
+    const building_clock_rect_t catch_area = world->digit_work_areas[digit_id].collapse_catch_area;
+    const uint8_t first_offset = (uint8_t)building_clock_random_bounded(&simulation->transition_random, sizeof(horizontal_offsets) / sizeof(horizontal_offsets[0]));
+    for (uint8_t row = 0U; row < 2U; row++) {
+        for (uint8_t candidate = 0U; candidate < sizeof(horizontal_offsets) / sizeof(horizontal_offsets[0]); candidate++) {
+            const uint8_t offset_id = (uint8_t)((first_offset + candidate) % (sizeof(horizontal_offsets) / sizeof(horizontal_offsets[0])));
+            int16_t x = (int16_t)(start_position.x + horizontal_offsets[offset_id]);
+            const int16_t minimum_x = (int16_t)(catch_area.x + 3);
+            const int16_t maximum_x = (int16_t)(catch_area.x + (int16_t)catch_area.width - 4);
+            if (x < minimum_x) {
+                x = minimum_x;
+            } else if (x > maximum_x) {
+                x = maximum_x;
+            }
+            const building_clock_point_t position = {
+                .x = x,
+                .y = (int16_t)(catch_area.y + (int16_t)catch_area.height - 4 - (int16_t)row * 6),
+            };
+            if (!landing_position_is_used(simulation, digit_id, position)) {
+                return position;
+            }
         }
     }
-    return debris_pile_position(bay, first_slot);
+    building_clock_point_t position = start_position;
+    position.y = (int16_t)(catch_area.y + (int16_t)catch_area.height - 4);
+    if (position.x < catch_area.x + 3) {
+        position.x = (int16_t)(catch_area.x + 3);
+    } else if (position.x > catch_area.x + (int16_t)catch_area.width - 4) {
+        position.x = (int16_t)(catch_area.x + (int16_t)catch_area.width - 4);
+    }
+    return position;
 }
 
 static bool launch_failed_section(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t digit_id) {
@@ -1392,7 +1401,7 @@ static bool launch_failed_section(building_clock_simulation_t* simulation, const
     building_clock_section_state_t* section = &structure->sections[section_id];
     const uint8_t debris_bay_id = world->digit_work_areas[digit_id].debris_bay_id;
     const building_clock_point_t start_position = section_start_position(&world->digit_work_areas[digit_id], section->kind);
-    const building_clock_point_t landing_position = choose_landing_position(simulation, world, debris_bay_id);
+    const building_clock_point_t landing_position = choose_landing_position(simulation, world, digit_id, start_position);
     building_clock_falling_section_t* falling = &simulation->state.falling_sections[simulation->state.falling_section_count++];
     *falling = (building_clock_falling_section_t){
         .section_kind = section->kind,
@@ -1520,22 +1529,47 @@ static uint8_t digit_access_node(const building_clock_world_t* world, uint8_t di
     return area->access_count > 0U ? area->access[0].nav_node_id : BUILDING_CLOCK_INVALID_ID;
 }
 
+static uint8_t digit_temp_access_node(const building_clock_world_t* world, uint8_t digit_id, uint8_t anchor_id) {
+    const uint8_t digit_mask = (uint8_t)(1U << digit_id);
+    for (uint8_t attachment = 0U; attachment < world->temp_attachment_set_count; attachment++) {
+        const building_clock_temp_attachment_set_t* set = &world->temp_attachment_sets[attachment];
+        if ((set->assigned_digit_mask & digit_mask) == 0U || anchor_id >= set->anchor_count) {
+            continue;
+        }
+        for (uint8_t node_id = 0U; node_id < world->navigation.node_count; node_id++) {
+            const building_clock_nav_node_t* node = &world->navigation.nodes[node_id];
+            if (node->source_kind == BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT && node->source_id == attachment && node->source_point_id == anchor_id) {
+                return node_id;
+            }
+        }
+    }
+    return BUILDING_CLOCK_INVALID_ID;
+}
+
 static uint8_t section_target_node(const building_clock_world_t* world, uint8_t digit_id, building_clock_section_kind_t kind) {
+    uint8_t anchor_id;
     switch (kind) {
     case BUILDING_CLOCK_SECTION_FOUNDATION:
+        return digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_LOWER);
     case BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER:
     case BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER:
-        return digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_LOWER);
+        anchor_id = 2U;
+        break;
     case BUILDING_CLOCK_SECTION_UPPER_LEFT_PIER:
     case BUILDING_CLOCK_SECTION_UPPER_RIGHT_PIER:
+        anchor_id = 1U;
+        break;
     case BUILDING_CLOCK_SECTION_TOP_BEAM:
         return digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_UPPER);
     case BUILDING_CLOCK_SECTION_MIDDLE_BEAM:
     case BUILDING_CLOCK_SECTION_CORNER_OR_DIAGONAL:
     case BUILDING_CLOCK_SECTION_FINISHING_OR_INFILL:
     default:
-        return digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_LOWER);
+        anchor_id = 2U;
+        break;
     }
+    const uint8_t temp_node = digit_temp_access_node(world, digit_id, anchor_id);
+    return temp_node != BUILDING_CLOCK_INVALID_ID ? temp_node : digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_LOWER);
 }
 
 static uint8_t digit_staging_area(const building_clock_world_t* world, uint8_t digit_id) {
@@ -1636,11 +1670,14 @@ static bool stage_section_load(building_clock_simulation_t* simulation, const bu
             continue;
         }
         const uint8_t source_node = world->staging_areas[staging_id].access_node_id;
+        building_clock_point_t staged_position = world->navigation.nodes[source_node].position;
+        staged_position.x = (int16_t)(staged_position.x + (section_id % 2U == 0U ? -8 : 8));
+        staged_position.y = (int16_t)(staged_position.y - 7);
         simulation->state.loads[load_id] = (building_clock_load_t){
             .material_kind = BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION,
             .status = BUILDING_CLOCK_LOAD_STAGED,
-            .quantity = BUILDING_CLOCK_SECTION_SUPPLY_QUANTITY,
-            .position = world->navigation.nodes[source_node].position,
+            .quantity = 3U,
+            .position = staged_position,
             .digit_id = digit_id,
             .section_id = section_id,
             .location_id = staging_id,
@@ -1681,7 +1718,17 @@ static void schedule_debris_clearing(building_clock_simulation_t* simulation, co
             .digit_id = digit_id,
             .section_id = debris->source_section_id,
         };
-        if (add_transition_job(simulation, world, BUILDING_CLOCK_JOB_CLEAR_DEBRIS, subject, BUILDING_CLOCK_INVALID_ID, world->debris_bays[bay_id].access_node_id, 50U, BUILDING_CLOCK_WORKER_CAN_CLEAR,
+        const uint8_t lower_node = digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_LOWER);
+        const uint8_t right_node = digit_access_node(world, digit_id, BUILDING_CLOCK_DIGIT_ACCESS_RIGHT);
+        uint8_t service_node = lower_node;
+        if (lower_node < world->navigation.node_count && right_node < world->navigation.node_count) {
+            int32_t lower_distance = (int32_t)world->navigation.nodes[lower_node].position.x - debris->position.x;
+            int32_t right_distance = (int32_t)world->navigation.nodes[right_node].position.x - debris->position.x;
+            lower_distance = lower_distance < 0 ? -lower_distance : lower_distance;
+            right_distance = right_distance < 0 ? -right_distance : right_distance;
+            service_node = right_distance < lower_distance ? right_node : lower_node;
+        }
+        if (add_transition_job(simulation, world, BUILDING_CLOCK_JOB_CLEAR_DEBRIS, subject, BUILDING_CLOCK_INVALID_ID, service_node, 50U, BUILDING_CLOCK_WORKER_CAN_CLEAR,
                                simulation->pacing.debris_clear_action_ms, NULL) != BUILDING_CLOCK_SIMULATION_OK) {
             simulation->metrics.transition_capacity_delays++;
             return;
@@ -1777,6 +1824,28 @@ static void remove_digit_temporary_access(building_clock_simulation_t* simulatio
             simulation->state.used_temp_structure_slot_count--;
         }
     }
+}
+
+static bool digit_temporary_access_in_use(const building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t digit_id) {
+    const uint8_t digit_mask = (uint8_t)(1U << digit_id);
+    for (uint8_t worker_id = 0U; worker_id < simulation->state.worker_count; worker_id++) {
+        const building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+        if (worker->current_node_id < world->navigation.node_count) {
+            const building_clock_nav_node_t* node = &world->navigation.nodes[worker->current_node_id];
+            if (node->source_kind == BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT && node->source_id < world->temp_attachment_set_count &&
+                (world->temp_attachment_sets[node->source_id].assigned_digit_mask & digit_mask) != 0U) {
+                return true;
+            }
+        }
+        if (worker->reserved_edge_id < world->navigation.edge_count) {
+            const building_clock_nav_edge_t* edge = &world->navigation.edges[worker->reserved_edge_id];
+            if (edge->kind == BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION && edge->temp_attachment_set_id < world->temp_attachment_set_count &&
+                (world->temp_attachment_sets[edge->temp_attachment_set_id].assigned_digit_mask & digit_mask) != 0U) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 static void promote_completed_digit(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t digit_id) {
@@ -1896,7 +1965,7 @@ static void advance_digit_lifecycles(building_clock_simulation_t* simulation, co
             break;
         case BUILDING_CLOCK_DIGIT_COMPLETE:
             digit->lifecycle_elapsed_ms += elapsed_ms;
-            if (digit->lifecycle_elapsed_ms >= simulation->pacing.complete_hold_ms) {
+            if (digit->lifecycle_elapsed_ms >= simulation->pacing.complete_hold_ms && !digit_temporary_access_in_use(simulation, world, digit_id)) {
                 promote_completed_digit(simulation, world, digit_id);
             }
             break;
