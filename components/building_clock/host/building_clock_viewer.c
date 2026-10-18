@@ -27,6 +27,7 @@ typedef enum {
     SCENARIO_SINGLE,
     SCENARIO_ROLLOVER,
     SCENARIO_MIDNIGHT,
+    SCENARIO_UNFINISHED,
 } viewer_scenario_t;
 
 typedef struct {
@@ -52,6 +53,7 @@ typedef struct {
     uint32_t speed;
     uint32_t job_serial;
     uint64_t next_job_refresh_ms;
+    uint64_t next_minute_ms;
 } viewer_t;
 
 static const SDL_Color COLOR_BACKGROUND = {7, 8, 13, 255};
@@ -284,7 +286,7 @@ static void draw_structure(SDL_Renderer* renderer, building_clock_rect_t envelop
         } else if (incoming && section->status == BUILDING_CLOCK_SECTION_PLACED) {
             color = COLOR_MASONRY_LIGHT;
         }
-        const uint16_t progress = section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT ? section->progress_per_mille : 1000U;
+        const uint16_t progress = section->progress_per_mille;
         const building_clock_point_t center = building_clock_rect_center(building_clock_section_bounds(envelope, section->kind));
         draw_section_at_position(renderer, envelope, structure->numeral, section->kind, center, progress, color);
     }
@@ -355,7 +357,7 @@ static void draw_falling_and_debris(SDL_Renderer* renderer, const building_clock
         const building_clock_rect_t envelope = scene->world->digit_work_areas[section->source_digit_id].envelope;
         const int width = building_clock_section_bounds(envelope, section->section_kind).width;
         const uint8_t numeral = scene->state.digits[section->source_digit_id].outgoing.numeral;
-        draw_section_at_position(renderer, envelope, numeral, section->section_kind, section->position, 1000U, COLOR_MASONRY);
+        draw_section_at_position(renderer, envelope, numeral, section->section_kind, section->position, section->masonry_progress_per_mille, COLOR_MASONRY);
         set_color(renderer, COLOR_LADDER);
         const int tilt = (section->angle_degrees / 15) % 5;
         (void)SDL_RenderDrawLine(renderer, section->position.x - width / 2, section->position.y - tilt, section->position.x + width / 2, section->position.y + tilt);
@@ -415,6 +417,20 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     const SDL_Color color = action ? COLOR_WORKER_ACTION : COLOR_WORKER;
     const int x = scene->worker_presentation_positions[worker_id].x;
     const int y = scene->worker_presentation_positions[worker_id].y;
+    if (worker->rope.phase != BUILDING_CLOCK_ROPE_NONE && y > worker->rope.anchor.y) {
+        const SDL_Color rope_color = {157, 104, 57, 255};
+        set_color(renderer, rope_color);
+        (void)SDL_RenderDrawLine(renderer, worker->rope.anchor.x, worker->rope.anchor.y, x, y - 5);
+        fill_rect(renderer, worker->rope.anchor.x - 3, worker->rope.anchor.y - 2, 7, 3, rope_color);
+        fill_rect(renderer, x - 4, y - 5, 9, 2, rope_color);
+        if (worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS) {
+            const uint8_t tender = scene->state.jobs[worker->rope.belay_job_id].reserved_worker_id;
+            if (tender < scene->state.worker_count && scene->state.workers[tender].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY) {
+                const building_clock_point_t hands = scene->worker_presentation_positions[tender];
+                (void)SDL_RenderDrawLine(renderer, hands.x, hands.y - 5, worker->rope.anchor.x, worker->rope.anchor.y);
+            }
+        }
+    }
     fill_rect(renderer, x - 2, y - 13, 5, 5, color);
     fill_rect(renderer, x - 2, y - 8, 5, 7, color);
     set_color(renderer, color);
@@ -425,6 +441,19 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         const int direction = worker->facing == BUILDING_CLOCK_FACING_LEFT ? -1 : 1;
         (void)SDL_RenderDrawLine(renderer, x, y - 7, x + direction * 6, y - 12);
         fill_rect(renderer, x + direction * 5 - 1, y - 14, 3, 4, COLOR_LADDER);
+    } else if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY) {
+        (void)SDL_RenderDrawLine(renderer, x - 4, y - 6, x + 5, y - 7 - worker->action_phase);
+        fill_rect(renderer, x + 4, y - 5, 4, 4, COLOR_MASONRY_DARK);
+    } else if (worker->state == BUILDING_CLOCK_WORKER_DRINK) {
+        (void)SDL_RenderDrawLine(renderer, x, y - 7, x + 5, y - 10);
+        fill_rect(renderer, x + 4, y - 12, 3, 3, COLOR_LADDER);
+    } else if (worker->state == BUILDING_CLOCK_WORKER_SMOKE) {
+        fill_rect(renderer, x + 3, y - 10, 4, 1, COLOR_MASONRY_LIGHT);
+        fill_rect(renderer, x + 6 + worker->action_phase, y - 15 - worker->action_phase, 2, 2, COLOR_STEEL);
+    } else if (worker->state == BUILDING_CLOCK_WORKER_REST) {
+        (void)SDL_RenderDrawLine(renderer, x - 5, y - 3, x + 5, y - 3);
+    } else if (worker->state == BUILDING_CLOCK_WORKER_WATCH || worker->state == BUILDING_CLOCK_WORKER_WAIT) {
+        (void)SDL_RenderDrawLine(renderer, x, y - 7, x + 5, y - 11);
     } else {
         (void)SDL_RenderDrawLine(renderer, x - 2, y - 5, x - 5, y - 3);
         (void)SDL_RenderDrawLine(renderer, x + 2, y - 5, x + 5, y - 3);
@@ -596,7 +625,10 @@ static void refresh_demo_jobs(viewer_t* viewer) {
             (void)building_clock_simulation_recycle_job(&viewer->simulation, job);
         }
     }
-    add_demo_jobs(viewer, 12U);
+    /* Ambient poses come from the simulation; patrol fixtures are stable-only. */
+    if (viewer->scenario == SCENARIO_STABLE) {
+        add_demo_jobs(viewer, 12U);
+    }
 }
 
 static void scenario_times(viewer_scenario_t scenario, uint8_t* from_hour, uint8_t* from_minute, uint8_t* to_hour, uint8_t* to_minute) {
@@ -639,6 +671,7 @@ static bool reset_viewer(viewer_t* viewer, bool select_world) {
     }
     viewer->simulation.state.date = (building_clock_date_t){.year = 1984U, .month = 10U, .day = 26U, .weekday = 5U};
     viewer->next_job_refresh_ms = 1000U;
+    viewer->next_minute_ms = 60000U;
     if (viewer->scenario == SCENARIO_STABLE) {
         add_demo_jobs(viewer, 18U);
     }
@@ -660,6 +693,11 @@ static void advance_viewer(viewer_t* viewer, uint32_t elapsed_ms) {
             break;
         }
         remaining -= result.processed_ms;
+        if (viewer->scenario == SCENARIO_UNFINISHED && viewer->simulation.state.elapsed_ms >= viewer->next_minute_ms) {
+            const uint16_t minutes = (uint16_t)(((uint16_t)viewer->simulation.state.target_hour * 60U + viewer->simulation.state.target_minute + 1U) % 1440U);
+            (void)building_clock_simulation_set_time(&viewer->simulation, &viewer->world, (uint8_t)(minutes / 60U), (uint8_t)(minutes % 60U));
+            viewer->next_minute_ms += 60000U;
+        }
         if (viewer->simulation.state.elapsed_ms >= viewer->next_job_refresh_ms) {
             refresh_demo_jobs(viewer);
             viewer->next_job_refresh_ms = viewer->simulation.state.elapsed_ms + 1000U;
@@ -759,12 +797,18 @@ static void handle_key(viewer_t* viewer, SDL_Surface* surface, SDL_Keycode key) 
     case SDLK_1:
     case SDLK_2:
     case SDLK_3:
-        viewer->scenario = key == SDLK_0 ? SCENARIO_STABLE : (key == SDLK_1 ? SCENARIO_SINGLE : (key == SDLK_2 ? SCENARIO_ROLLOVER : SCENARIO_MIDNIGHT));
+    case SDLK_4:
+        viewer->scenario = key == SDLK_4 ? SCENARIO_UNFINISHED : (key == SDLK_0 ? SCENARIO_STABLE : (key == SDLK_1 ? SCENARIO_SINGLE : (key == SDLK_2 ? SCENARIO_ROLLOVER : SCENARIO_MIDNIGHT)));
         (void)reset_viewer(viewer, false);
         break;
     case SDLK_v:
         viewer->overlays.navigation = !viewer->overlays.navigation;
         break;
+    case SDLK_m: {
+        const uint16_t minutes = (uint16_t)(((uint16_t)viewer->simulation.state.target_hour * 60U + viewer->simulation.state.target_minute + 1U) % 1440U);
+        (void)building_clock_simulation_set_time(&viewer->simulation, &viewer->world, (uint8_t)(minutes / 60U), (uint8_t)(minutes % 60U));
+        break;
+    }
     case SDLK_i:
         viewer->overlays.node_ids = !viewer->overlays.node_ids;
         viewer->overlays.navigation |= viewer->overlays.node_ids;
@@ -886,6 +930,9 @@ static int run_diagnostics(uint32_t count) {
 }
 
 static viewer_scenario_t parse_scenario(const char* name) {
+    if (strcmp(name, "unfinished") == 0) {
+        return SCENARIO_UNFINISHED;
+    }
     if (strcmp(name, "stable") == 0) {
         return SCENARIO_STABLE;
     }
@@ -925,7 +972,7 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[argument], "--all-overlays") == 0) {
             viewer.overlays = (viewer_overlays_t){true, true, true, true, true, true};
         } else {
-            fprintf(stderr, "Usage: %s [--seed N] [--scenario stable|single|rollover|midnight] [--duration-ms N] [--screenshot FILE] [--all-overlays] [--diagnose N]\n", argv[0]);
+            fprintf(stderr, "Usage: %s [--seed N] [--scenario stable|single|rollover|midnight|unfinished] [--duration-ms N] [--screenshot FILE] [--all-overlays] [--diagnose N]\n", argv[0]);
             return 2;
         }
     }

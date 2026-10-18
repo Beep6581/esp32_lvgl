@@ -431,6 +431,9 @@ typedef enum {
     BUILDING_CLOCK_WORKER_FINISH_JOB,
     BUILDING_CLOCK_WORKER_CELEBRATE,
     BUILDING_CLOCK_WORKER_SMOKE,
+    BUILDING_CLOCK_WORKER_DRINK,
+    BUILDING_CLOCK_WORKER_REST,
+    BUILDING_CLOCK_WORKER_WATCH,
 } building_clock_worker_state_kind_t;
 
 typedef enum {
@@ -444,6 +447,28 @@ typedef enum {
     BUILDING_CLOCK_WORKER_ROUTE_IDLE_EGRESS,
     BUILDING_CLOCK_WORKER_ROUTE_EVACUATION,
 } building_clock_worker_route_purpose_t;
+
+typedef enum {
+    BUILDING_CLOCK_ROPE_NONE = 0,
+    BUILDING_CLOCK_ROPE_ALIGN,
+    BUILDING_CLOCK_ROPE_DESCEND,
+    BUILDING_CLOCK_ROPE_WORK,
+    BUILDING_CLOCK_ROPE_ASCEND,
+    BUILDING_CLOCK_ROPE_RETURN,
+} building_clock_rope_phase_t;
+
+/* A bounded work excursion from a graph node on an actual overhead platform.
+ * The graph remains immutable; the worker must return before routing again. */
+typedef struct {
+    building_clock_rope_phase_t phase;
+    building_clock_point_t anchor;
+    building_clock_point_t work_position;
+    uint8_t platform_id;
+    uint8_t brick_index;
+    uint8_t belay_job_id;
+    bool returning;
+    uint32_t motion_remainder_ms;
+} building_clock_rope_t;
 
 typedef struct {
     building_clock_worker_role_t preferred_role;
@@ -468,6 +493,7 @@ typedef struct {
     uint8_t action_phase;
     uint32_t state_elapsed_ms;
     uint32_t behavior_timer_ms;
+    building_clock_rope_t rope;
 } building_clock_worker_t;
 
 typedef enum {
@@ -486,6 +512,7 @@ typedef enum {
     BUILDING_CLOCK_JOB_INSPECT,
     BUILDING_CLOCK_JOB_PATROL,
     BUILDING_CLOCK_JOB_CELEBRATE,
+    BUILDING_CLOCK_JOB_BELAY_ROPE,
 } building_clock_job_kind_t;
 
 typedef enum {
@@ -631,6 +658,8 @@ typedef struct {
     uint16_t progress_per_mille;
     uint8_t source_digit_id;
     uint8_t source_section_id;
+    /* Amount of masonry present when an unfinished section failed. */
+    uint16_t masonry_progress_per_mille;
     uint8_t target_debris_bay_id;
     uint32_t elapsed_ms;
     uint32_t duration_ms;

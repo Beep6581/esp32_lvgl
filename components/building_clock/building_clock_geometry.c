@@ -126,21 +126,26 @@ uint8_t building_clock_section_visible_bricks(building_clock_rect_t envelope, ui
     const int16_t origin_x = (int16_t)(envelope.x + ((int16_t)envelope.width - (int16_t)(BRICK_COLUMNS * BRICK_X_STEP - 1U)) / 2);
     const int16_t origin_y = (int16_t)(envelope.y + ((int16_t)envelope.height - (int16_t)(BRICK_ROWS * BRICK_Y_STEP - 2U)) / 2);
     uint8_t count = 0U;
-    for (uint8_t row = 0U; row < BRICK_ROWS; row++) {
-        for (uint8_t column = 0U; column < BRICK_COLUMNS; column++) {
-            if ((s_numeral_courses[numeral][row] & (uint8_t)(1U << (BRICK_COLUMNS - 1U - column))) == 0U || brick_section(numeral, row, column) != kind) {
-                continue;
+    /* Work one narrow vertical strip at a time, bottom course first. This
+     * shared order is also the prefix retained when construction is interrupted. */
+    for (uint8_t strip = 0U; strip < 3U; strip++) {
+        for (uint8_t course = 0U; course < BRICK_ROWS; course++) {
+            const uint8_t row = (uint8_t)(BRICK_ROWS - 1U - course);
+            for (uint8_t column = (uint8_t)(strip * 3U); column < BRICK_COLUMNS && column < (strip + 1U) * 3U; column++) {
+                if ((s_numeral_courses[numeral][row] & (uint8_t)(1U << (BRICK_COLUMNS - 1U - column))) == 0U || brick_section(numeral, row, column) != kind) {
+                    continue;
+                }
+                if (count >= BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION) {
+                    return count;
+                }
+                const int16_t joint_offset = (row & 1U) != 0U ? 1 : 0;
+                bricks[count++] = (building_clock_rect_t){
+                    .x = (int16_t)(origin_x + column * BRICK_X_STEP + joint_offset),
+                    .y = (int16_t)(origin_y + row * BRICK_Y_STEP),
+                    .width = BRICK_WIDTH,
+                    .height = BRICK_HEIGHT,
+                };
             }
-            if (count >= BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION) {
-                return count;
-            }
-            const int16_t joint_offset = (row & 1U) != 0U ? 1 : 0;
-            bricks[count++] = (building_clock_rect_t){
-                .x = (int16_t)(origin_x + column * BRICK_X_STEP + joint_offset),
-                .y = (int16_t)(origin_y + row * BRICK_Y_STEP),
-                .width = BRICK_WIDTH,
-                .height = BRICK_HEIGHT,
-            };
         }
     }
     return count;

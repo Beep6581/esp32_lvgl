@@ -10,7 +10,8 @@
 #include <string.h>
 
 #define TRANSITION_TIMEOUT_MS 45000U
-#define FULL_TRANSITION_TIMEOUT_MS 240000U
+/* Includes real rope repositioning and roof return trips for every strip. */
+#define FULL_TRANSITION_TIMEOUT_MS 600000U
 #define TRANSITION_BATCH_COUNT 60U
 
 static unsigned int failures;
@@ -113,6 +114,16 @@ static bool run_to_stable(building_clock_simulation_t* simulation, const buildin
             return true;
         }
     }
+    for (uint8_t id = 0U; id < simulation->state.worker_count; id++) {
+        const building_clock_worker_t* worker = &simulation->state.workers[id];
+        fprintf(stderr, "Timeout: worker %u state %u job %u node %u destination %u rope %u belay %u\n", id, worker->state, worker->current_job_id, worker->current_node_id, worker->destination_node_id,
+                worker->rope.phase, worker->rope.belay_job_id);
+    }
+    for (uint8_t id = 0U; id < BUILDING_CLOCK_MAX_JOBS; id++) {
+        const building_clock_job_t* j = &simulation->state.jobs[id];
+        if (j->status != BUILDING_CLOCK_JOB_UNUSED)
+            fprintf(stderr, "job %u kind %u status %u digit %u section %u src %u dst %u\n", id, j->kind, j->status, j->subject.digit_id, j->subject.section_id, j->source_node_id, j->target_node_id);
+    }
     return false;
 }
 
@@ -145,7 +156,7 @@ static bool dependency_order_is_valid(const building_clock_simulation_t* simulat
     for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
         const building_clock_digit_structure_t* structure = &simulation->state.digits[digit].incoming;
         for (uint8_t section = 0U; section < structure->section_count; section++) {
-            if (structure->sections[section].status == BUILDING_CLOCK_SECTION_ABSENT) {
+            if (structure->sections[section].status == BUILDING_CLOCK_SECTION_ABSENT || structure->sections[section].status == BUILDING_CLOCK_SECTION_STAGED) {
                 continue;
             }
             for (uint8_t dependency = 0U; dependency < structure->section_count; dependency++) {
@@ -267,7 +278,7 @@ static void test_single_digit_and_determinism(void) {
     expect_true(required_lead_ms == first.pacing.preparation_ms + first.state.digits[3].evacuation_lead_ms, "reported lead includes preparation and route-derived evacuation time");
     expect_true(first.state.digits[3].lifecycle == BUILDING_CLOCK_DIGIT_PREPARING && first.state.digits[0].lifecycle == BUILDING_CLOCK_DIGIT_STABLE,
                 "single-digit change starts only the minute-units lifecycle");
-    expect_true(building_clock_simulation_set_time(&first, &world, 14U, 39U) == BUILDING_CLOCK_SIMULATION_TRANSITION_ACTIVE, "clock API rejects a second target while collapse is unresolved");
+    expect_true(building_clock_simulation_set_time(&first, &world, 14U, 38U) == BUILDING_CLOCK_SIMULATION_OK, "repeating the current target is an idempotent update");
 
     for (uint32_t elapsed = 0U; elapsed < TRANSITION_TIMEOUT_MS && !reached_handoff(&first, changed_mask); elapsed += BUILDING_CLOCK_SIMULATION_QUANTUM_MS) {
         (void)building_clock_simulation_step(&first, &world, BUILDING_CLOCK_SIMULATION_QUANTUM_MS);
@@ -534,11 +545,12 @@ static void test_full_replay_and_dependency_order(void) {
             saw_carried_load |= first.state.loads[load].status == BUILDING_CLOCK_LOAD_CARRIED;
         }
         for (uint8_t worker = 0U; worker < first.state.worker_count; worker++) {
+            saw_temporary_access |= first.state.workers[worker].rope.phase != BUILDING_CLOCK_ROPE_NONE;
             saw_clear_action |= first.state.workers[worker].state == BUILDING_CLOCK_WORKER_CLEAR_DEBRIS;
             saw_hammer_action |= first.state.workers[worker].state == BUILDING_CLOCK_WORKER_HAMMER;
             saw_inspection |= first.state.workers[worker].state == BUILDING_CLOCK_WORKER_INSPECT;
         }
-        expect_true(dependency_order_is_valid(&first), "staged and built sections never precede their secured dependencies");
+        expect_true(dependency_order_is_valid(&first), "installation never precedes secured dependencies; supply can be staged early");
         if (!building_clock_simulation_transition_active(&first)) {
             completed = true;
             break;
@@ -741,6 +753,113 @@ static void test_masonry_digit_geometry(void) {
     expect_true(differs_from_previous, "digit-specific masonry silhouettes are not one repeated segment template");
 }
 
+static void test_rope_work_and_unfinished_rollover(void) {
+    building_clock_world_t world;
+    select_test_world(&world, UINT64_C(0x6a09e667f3bcc909));
+    building_clock_simulation_t first;
+    building_clock_simulation_t replay;
+    prepare_transition(&first, &world, 14U, 37U, 14U, 38U, 6U);
+    replay = first;
+    bool saw_rope = false;
+    bool saw_belay = false;
+    bool saw_ambient = false;
+    bool interrupted = false;
+    uint8_t contributing_workers = 0U;
+    uint8_t peak_contributors = 0U;
+    for (uint32_t ms = 0U; ms < 300000U && !interrupted; ms += 50U) {
+        (void)building_clock_simulation_step(&first, &world, 50U);
+        (void)building_clock_simulation_step(&replay, &world, 50U);
+        expect_true(memcmp(&first, &replay, sizeof(first)) == 0, "rope work and supply replay byte-for-byte");
+        uint8_t contributors = 0U;
+        for (uint8_t id = 0U; id < first.state.worker_count; id++) {
+            const building_clock_worker_t* worker = &first.state.workers[id];
+            saw_ambient |= worker->state == BUILDING_CLOCK_WORKER_SMOKE || worker->state == BUILDING_CLOCK_WORKER_DRINK || worker->state == BUILDING_CLOCK_WORKER_REST ||
+                           worker->state == BUILDING_CLOCK_WORKER_WATCH;
+            saw_belay |= worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY;
+            if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && worker->state != BUILDING_CLOCK_WORKER_WAIT) {
+                contributors++;
+                contributing_workers |= (uint8_t)(1U << id);
+            }
+            if (worker->rope.phase == BUILDING_CLOCK_ROPE_NONE) {
+                continue;
+            }
+            saw_rope = true;
+            expect_true(worker->rope.platform_id < world.platform_count, "rope identifies its supporting world platform");
+            const building_clock_platform_t* platform = &world.platforms[worker->rope.platform_id];
+            expect_true(worker->rope.anchor.y == platform->surface_y && worker->rope.anchor.x >= platform->x_start && worker->rope.anchor.x <= platform->x_end,
+                        "rope remains attached to a real overhead platform");
+            expect_true(worker->position.y >= worker->rope.anchor.y, "rope worker stays below its attachment");
+            if (peak_contributors >= 5U && worker->rope.phase == BUILDING_CLOCK_ROPE_WORK && worker->rope.brick_index > 0U && worker->current_job_id < BUILDING_CLOCK_MAX_JOBS &&
+                first.state.jobs[worker->current_job_id].kind == BUILDING_CLOCK_JOB_PLACE_SECTION) {
+                const building_clock_digit_state_t unchanged = first.state.digits[0];
+                const building_clock_digit_structure_t before = first.state.digits[3].incoming;
+                const building_clock_point_t position = worker->position;
+                expect_true(building_clock_simulation_set_time(&first, &world, 14U, 39U) == BUILDING_CLOCK_SIMULATION_OK, "new minute interrupts unfinished rope construction");
+                expect_true(building_clock_simulation_set_time(&replay, &world, 14U, 39U) == BUILDING_CLOCK_SIMULATION_OK, "replay accepts the same interruption");
+                expect_true(memcmp(&unchanged, &first.state.digits[0], sizeof(unchanged)) == 0, "unchanged digit physical state is untouched");
+                expect_true(first.state.workers[id].position.x == position.x && first.state.workers[id].position.y == position.y,
+                            "interrupting a suspended builder never teleports the worker to the roof");
+                expect_true(first.state.workers[id].rope.returning, "interrupted builder retrieves rope before routing again");
+                for (uint8_t section = 0U; section < before.section_count; section++) {
+                    expect_true(first.state.digits[3].outgoing.sections[section].progress_per_mille == before.sections[section].progress_per_mille,
+                                "unfinished collapse retains the actual masonry prefix without completing it");
+                }
+                interrupted = true;
+                break;
+            }
+        }
+        if (contributors > peak_contributors) {
+            peak_contributors = contributors;
+        }
+    }
+    expect_true(saw_rope && saw_belay && saw_ambient && interrupted, "sequence includes rope builder, tender, ambient activity, and interruption");
+    expect_true(peak_contributors >= 5U, "single-digit crew has five useful simultaneous contributors");
+    uint32_t recovery_ms = 0U;
+    expect_true(run_to_stable(&first, &world, &recovery_ms), "interrupted construction safely collapses and reaches the latest target");
+    expect_true(run_to_stable(&replay, &world, NULL), "replayed interruption finishes");
+    expect_true(memcmp(&first, &replay, sizeof(first)) == 0, "unfinished rollover replay is deterministic");
+    expect_true(first.state.current_minute == 39U && transition_resources_clean(&first), "obsolete jobs, loads, and sections are cleaned after rollover");
+    expect_true(first.metrics.evacuation_failures == 0U, "suspended builder evacuates successfully");
+    printf("Rope crew: contributors mask=%02x peak=%u, interrupted target completes in %u ms\n", contributing_workers, peak_contributors, recovery_ms);
+}
+
+static void test_consecutive_unfinished_minutes(void) {
+    building_clock_world_t world;
+    select_test_world(&world, UINT64_C(0xbb67ae8584caa73b));
+    building_clock_simulation_t first;
+    building_clock_simulation_t replay;
+    prepare_transition(&first, &world, 23U, 58U, 23U, 59U, 6U);
+    replay = first;
+    uint16_t time = 1439U;
+    uint32_t unfinished_updates = 0U;
+    for (uint8_t minute = 0U; minute < 12U; minute++) {
+        for (uint32_t ms = 0U; ms < 60000U; ms += 50U) {
+            (void)building_clock_simulation_step(&first, &world, 50U);
+            (void)building_clock_simulation_step(&replay, &world, 50U);
+        }
+        unfinished_updates += building_clock_simulation_transition_active(&first) ? 1U : 0U;
+        time = (uint16_t)((time + 1U) % 1440U);
+        const building_clock_digit_state_t previous[4] = {first.state.digits[0], first.state.digits[1], first.state.digits[2], first.state.digits[3]};
+        expect_true(building_clock_simulation_set_time(&first, &world, (uint8_t)(time / 60U), (uint8_t)(time % 60U)) == BUILDING_CLOCK_SIMULATION_OK,
+                    "wall-clock minute is accepted regardless of project completion");
+        expect_true(building_clock_simulation_set_time(&replay, &world, (uint8_t)(time / 60U), (uint8_t)(time % 60U)) == BUILDING_CLOCK_SIMULATION_OK, "replay accepts each minute");
+        for (uint8_t digit = 0U; digit < 4U; digit++) {
+            if (previous[digit].target_digit == first.state.digits[digit].target_digit) {
+                expect_true(memcmp(&previous[digit], &first.state.digits[digit], sizeof(previous[digit])) == 0, "unchanged unfinished projects keep their work and ownership");
+            }
+        }
+        expect_true(memcmp(&first, &replay, sizeof(first)) == 0, "consecutive minute sequence replays exactly");
+        expect_true(first.state.used_job_slot_count <= BUILDING_CLOCK_MAX_JOBS && first.state.used_load_slot_count <= BUILDING_CLOCK_MAX_LOADS &&
+                        first.state.used_debris_slot_count <= BUILDING_CLOCK_MAX_DEBRIS_PIECES,
+                    "repeated rollover remains bounded");
+    }
+    expect_true(unfinished_updates > 0U, "long-run test actually interrupts ongoing construction");
+    expect_true(run_to_stable(&first, &world, NULL), "latest target can finish after repeated interruptions");
+    expect_true(transition_resources_clean(&first) && first.metrics.evacuation_failures == 0U, "repeated unfinished minutes leave no transition resource leaks");
+    printf("Unfinished minutes: 12 updates, %u during active work, peak jobs=%u loads=%u debris=%u\n", unfinished_updates, first.metrics.peak_job_slots, first.metrics.peak_load_slots,
+           first.metrics.peak_debris_pieces);
+}
+
 int main(void) {
     test_single_digit_and_determinism();
     test_multi_digit_and_midnight();
@@ -754,6 +873,8 @@ int main(void) {
     test_generated_world_evacuation_leads();
     test_visible_section_delivery_sequence();
     test_masonry_digit_geometry();
+    test_rope_work_and_unfinished_rollover();
+    test_consecutive_unfinished_minutes();
 
     if (failures != 0U) {
         fprintf(stderr, "%u Building Clock transition test(s) failed\n", failures);

@@ -33,6 +33,7 @@ typedef struct {
     uint32_t section_secure_action_ms;
     uint32_t finishing_action_ms;
     uint32_t temporary_install_action_ms;
+    uint32_t staging_action_ms;
     uint32_t complete_hold_ms;
 } building_clock_transition_pacing_t;
 

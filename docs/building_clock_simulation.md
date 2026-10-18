@@ -414,8 +414,49 @@ A later value starts `PREPARING` only for changed positions, retains the old
 numeral in `outgoing`, and creates an absent structural plan for the target in
 `incoming`. Changed digits now continue through clearing, dependency-ordered
 reconstruction, inspection, `COMPLETE`, and promotion back to `STABLE`.
-Accepting another target while a transition is active remains deliberately
-disallowed; a completed simulation can immediately accept the following target.
+Another target can arrive during any phase. Only digits whose target changes
+cancel obsolete work. During reconstruction, the actual installed masonry
+prefix becomes the outgoing structure, including partially placed sections;
+absent and staged sections do not suddenly become solid. An existing collapse
+continues with its original section identity and trajectories while its next
+target changes. Unchanged digit projects retain their work. Old local rubble
+remains for clearing. Collapsing an unfinished structure still requires safe
+evacuation, including rope retrieval by suspended workers.
+
+### Rope work and crew coordination
+
+Rope access is a bounded worker-owned excursion from an existing graph node on
+a real overhead platform. The platform must span the work, and the descent
+columns must not cross another permanent platform. Routing reaches that node;
+the worker then positions the anchor along the same continuous surface,
+descends, places masonry within a small horizontal reach, and climbs back to
+move the anchor for another strip. Returning to the graph node precedes normal
+routing. Rope state is semantic and included in the scene snapshot. Cancellation
+retrieves the worker without teleporting them to the roof. Ropes do not mutate
+the immutable graph or enable arbitrary shortcuts between platforms.
+
+For crews of two or more, a separate belaying job brings a worker to the roof
+before descent. Dispatch bounds the number of builders so tenders can be
+assigned. A solo worker uses a self-managed rope. Temporary ladder/scaffold
+installation is omitted only when permanent routes can also deliver workers
+from staging to every required overhead position.
+
+Depot-to-staging delivery is a separate job, including a four-second staging
+action. Up to three section bundles are in flight for one project, or two per
+project when digits share the crew. Dependencies constrain installation, not
+advance delivery. Exclusive work fronts receive only one dispatched worker;
+staging receives at most two. Idle workers cycle deterministic, interruptible
+watching, drinking, smoking, and resting activities.
+
+Visible brick order follows narrow vertical strips from lower to upper courses.
+Placement progress records the installed prefix, so the same geometry is used
+by rope work, the viewer, and interrupted collapse. No independent brick physics
+is introduced. Rope retrieval and repositioning currently make complete builds
+substantially slower than the former temporary-ladder-only benchmark (roughly
+three to five minutes in the representative fixtures). Five workers can
+contribute concurrently to one digit, but this is not sustained through every
+dependency bottleneck. Minute input is independent of completion; shortening
+these work cycles is an explicit next refinement, not hidden by faster workers.
 
 ## 10. Build pacing
 

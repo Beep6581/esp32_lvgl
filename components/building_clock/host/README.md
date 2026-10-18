@@ -13,7 +13,9 @@ build/building_clock_viewer/building_clock_viewer --seed 0x6a09e667f3bcc909
 ```
 
 The default scenario is `14:37 -> 14:38`. Command-line scenarios are `stable`,
-`single`, `rollover`, and `midnight`. A deterministic screenshot can be made
+`single`, `rollover`, `midnight`, and `unfinished`. The last scenario advances
+the target every 60 simulated seconds even while construction is incomplete.
+A deterministic screenshot can be made
 without opening an interactive window:
 
 ```sh
@@ -38,6 +40,8 @@ Controls:
 - `1`: `14:37 -> 14:38`
 - `2`: `14:59 -> 15:00`
 - `3`: `23:59 -> 00:00`
+- `4`: repeated minutes starting at `14:37 -> 14:38`
+- `M`: advance the target minute immediately, without resetting the scene
 - `V`: navigation graph and reservations
 - `I`: navigation node IDs
 - `L`: semantic depot, staging, and debris locations
@@ -51,3 +55,9 @@ Controls:
 The viewer supplies only deterministic time, clock transitions, and simple
 diagnostic jobs. Movement, routing, reservations, hazards, and collapse all
 come from the shared Building Clock component.
+
+Rope builders use brown ropes attached to real overhead platforms. A second
+worker tends each rope from the roof. Supply workers bring bundles from the
+depot to staging. Unassigned crew drink, smoke, rest, or watch; these poses are
+interruptible when work becomes available. Permanent and temporary ladders are
+still used where needed to reach the roof.

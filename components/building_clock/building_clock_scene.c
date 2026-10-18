@@ -27,7 +27,7 @@ static bool state_counts_are_valid(const building_clock_simulation_state_t* stat
 }
 
 static bool worker_can_use_presentation_spacing(const building_clock_world_t* world, const building_clock_worker_t* worker) {
-    if (worker->state == BUILDING_CLOCK_WORKER_CLIMB) {
+    if (worker->state == BUILDING_CLOCK_WORKER_CLIMB || worker->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
         return false;
     }
     if (worker->reserved_edge_id < world->navigation.edge_count) {
