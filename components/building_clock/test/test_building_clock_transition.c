@@ -712,10 +712,9 @@ static void test_visible_section_delivery_sequence(void) {
                 expect_true(distance + vertical <= 12, "worker-carried masonry bundle remains visibly attached to its carrier");
             }
             if (load->placement_progress_per_mille > 0U && load->placement_progress_per_mille < 1000U) {
-                const building_clock_point_t destination = building_clock_rect_center(building_clock_section_bounds(world.digit_work_areas[load->digit_id].envelope, section->kind));
                 expect_true(load->position.x >= 0 && load->position.x < BUILDING_CLOCK_WORLD_WIDTH && load->position.y >= 0 && load->position.y < BUILDING_CLOCK_WORLD_HEIGHT,
                             "positioning section remains in semantic design space");
-                expect_true(load->position.x != destination.x || load->position.y != destination.y, "in-progress section has not appeared fully placed early");
+                expect_true(section->status == BUILDING_CLOCK_SECTION_IN_TRANSIT, "partly installed masonry is not marked fully placed early");
                 expect_true(section->progress_per_mille == load->placement_progress_per_mille, "visible masonry growth follows bundle placement progress");
                 saw_positioning = true;
             }
@@ -729,6 +728,7 @@ static void test_visible_section_delivery_sequence(void) {
 }
 
 static void test_masonry_digit_geometry(void) {
+    static const uint8_t expected_bricks[10] = {52, 33, 41, 41, 39, 49, 51, 32, 55, 51};
     const building_clock_rect_t envelope = {.x = 45, .y = BUILDING_CLOCK_DIGIT_ENVELOPE_Y, .width = BUILDING_CLOCK_DIGIT_ENVELOPE_WIDTH, .height = BUILDING_CLOCK_DIGIT_ENVELOPE_HEIGHT};
     uint16_t previous_total = 0U;
     bool differs_from_previous = false;
@@ -745,6 +745,7 @@ static void test_masonry_digit_geometry(void) {
             }
         }
         expect_true(total >= 18U, "every numeral has a substantial bounded masonry silhouette");
+        expect_true(total == expected_bricks[numeral], "local footing ownership preserves every brick of each numeral");
         if (numeral > 0U && total != previous_total) {
             differs_from_previous = true;
         }
@@ -764,7 +765,7 @@ static void test_rope_work_and_unfinished_rollover(void) {
     bool saw_belay = false;
     bool saw_ambient = false;
     bool interrupted = false;
-    uint8_t contributing_workers = 0U;
+    uint16_t contributing_workers = 0U;
     uint8_t peak_contributors = 0U;
     for (uint32_t ms = 0U; ms < 300000U && !interrupted; ms += 50U) {
         (void)building_clock_simulation_step(&first, &world, 50U);
@@ -778,7 +779,7 @@ static void test_rope_work_and_unfinished_rollover(void) {
             saw_belay |= worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY;
             if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && worker->state != BUILDING_CLOCK_WORKER_WAIT) {
                 contributors++;
-                contributing_workers |= (uint8_t)(1U << id);
+                contributing_workers |= (uint16_t)(1U << id);
             }
             if (worker->rope.phase == BUILDING_CLOCK_ROPE_NONE) {
                 continue;
@@ -820,7 +821,191 @@ static void test_rope_work_and_unfinished_rollover(void) {
     expect_true(memcmp(&first, &replay, sizeof(first)) == 0, "unfinished rollover replay is deterministic");
     expect_true(first.state.current_minute == 39U && transition_resources_clean(&first), "obsolete jobs, loads, and sections are cleaned after rollover");
     expect_true(first.metrics.evacuation_failures == 0U, "suspended builder evacuates successfully");
-    printf("Rope crew: contributors mask=%02x peak=%u, interrupted target completes in %u ms\n", contributing_workers, peak_contributors, recovery_ms);
+    printf("Rope crew: contributors mask=%03x peak=%u, interrupted target completes in %u ms\n", contributing_workers, peak_contributors, recovery_ms);
+}
+
+static void test_coordinated_fronts_and_relief(void) {
+    building_clock_world_t world;
+    select_test_world(&world, UINT64_C(0x6a09e667f3bcc909));
+    building_clock_simulation_t simulation;
+    prepare_transition(&simulation, &world, 14U, 37U, 14U, 38U, 6U);
+    uint8_t independent_fronts = 0U;
+    const building_clock_digit_structure_t* plan = &simulation.state.digits[3].incoming;
+    for (uint8_t section = 0U; section < plan->section_count; section++) {
+        independent_fronts += plan->sections[section].dependency_mask == 0U ? 1U : 0U;
+    }
+    expect_true(independent_fronts >= 3U, "center footing and both side footings are independent masonry fronts");
+    bool roof_delivery = false;
+    bool shifted = false;
+    bool parallel = false;
+    uint32_t elapsed = 0U;
+    while (building_clock_simulation_transition_active(&simulation) && elapsed < 180000U) {
+        const uint8_t old_count = simulation.state.worker_count;
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        elapsed += 50U;
+        if (simulation.state.worker_count > old_count) {
+            bool at_spawn = false;
+            const building_clock_worker_t* newcomer = &simulation.state.workers[old_count];
+            for (uint8_t spawn = 0U; spawn < world.worker_spawn_count; spawn++) {
+                at_spawn |= points_equal(newcomer->position, world.worker_spawns[spawn].position);
+            }
+            expect_true(at_spawn, "relief worker physically enters at a generated spawn");
+        }
+        uint8_t builders = 0U;
+        for (uint8_t w = 0U; w < simulation.state.worker_count; w++) {
+            const building_clock_worker_t* worker = &simulation.state.workers[w];
+            if (worker->rope.phase == BUILDING_CLOCK_ROPE_NONE) {
+                continue;
+            }
+            const building_clock_platform_t* roof = &world.platforms[worker->rope.platform_id];
+            expect_true(worker->rope.anchor.x >= roof->x_start && worker->rope.anchor.x <= roof->x_end && worker->rope.anchor.y == roof->surface_y,
+                        "travelling pulley stays attached to its actual roof");
+            if (worker->position.y > worker->rope.anchor.y && !worker->rope.returning) {
+                builders++;
+            }
+            if (worker->rope.phase == BUILDING_CLOCK_ROPE_SHIFT) {
+                shifted = true;
+                const int32_t reach = (int32_t)worker->position.x - worker->rope.anchor.x;
+                expect_true(reach >= -12 && reach <= 12, "horizontal rope travel keeps the builder near its moving pulley");
+                expect_true(worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS, "lateral travel has an assigned rope tender");
+            }
+        }
+        parallel |= builders >= 2U;
+        for (uint8_t load_id = 0U; load_id < BUILDING_CLOCK_MAX_LOADS; load_id++) {
+            const building_clock_load_t* load = &simulation.state.loads[load_id];
+            if (load->status != BUILDING_CLOCK_LOAD_UNUSED) {
+                expect_true(load->access_node_id < world.navigation.node_count, "supply cache has a real graph pickup node");
+                roof_delivery |= load->status == BUILDING_CLOCK_LOAD_STAGED && world.navigation.nodes[load->access_node_id].position.y < BUILDING_CLOCK_DIGIT_ENVELOPE_Y;
+            }
+        }
+        expect_true(dependency_order_is_valid(&simulation), "local support dependencies remain enforced");
+    }
+    expect_true(!building_clock_simulation_transition_active(&simulation) && elapsed < 100000U, "representative rebuild is substantially faster than the 196-second baseline");
+    expect_true(roof_delivery && shifted && parallel, "couriers, travelling pulleys and parallel builders are exercised");
+    expect_true(simulation.state.worker_count <= BUILDING_CLOCK_MAX_WORKERS, "single-digit crew remains bounded without requiring unnecessary relief");
+    drain_worker_egress(&simulation, &world);
+    expect_true(transition_resources_clean(&simulation), "early section readiness never recycles a plan still owned by a returning rope crew");
+
+    select_test_world(&world, UINT64_C(0x6496e29f64d8f6c2));
+    prepare_transition(&simulation, &world, 14U, 37U, 14U, 38U, 6U);
+    simulation.crew_limit = 6U;
+    expect_true(run_to_stable(&simulation, &world, NULL), "narrow roof access never permanently blocks the belaying job");
+    expect_true(simulation.state.worker_count == 6U, "explicit fixed crew disables relief admission");
+
+    prepare_transition(&simulation, &world, 23U, 59U, 0U, 0U, 6U);
+    expect_true(run_to_stable(&simulation, &world, NULL), "demanding transition completes with relief");
+    expect_true(simulation.metrics.relief_workers_entered > 0U && simulation.state.worker_count <= BUILDING_CLOCK_MAX_WORKERS, "useful relief is admitted for a demanding transition");
+}
+
+static void test_paired_kits_and_rope_continuity(void) {
+    building_clock_world_t world;
+    select_test_world(&world, UINT64_C(0x6a09e667f3bcc909));
+    building_clock_simulation_t simulation;
+    prepare_transition(&simulation, &world, 14U, 37U, 14U, 38U, 6U);
+    bool saw_delivery_pair = false, saw_builder_pair = false, saw_continuation = false;
+    bool cancelled_delivery = false, interrupted_builder = false;
+    while (building_clock_simulation_transition_active(&simulation) && simulation.state.elapsed_ms < FULL_TRANSITION_TIMEOUT_MS) {
+        const building_clock_simulation_t before = simulation;
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        for (uint8_t w = 0U; w < simulation.state.worker_count; w++) {
+            const building_clock_worker_t* builder = &simulation.state.workers[w];
+            if (builder->current_job_id >= BUILDING_CLOCK_MAX_JOBS) {
+                continue;
+            }
+            if (builder->rope.phase != BUILDING_CLOCK_ROPE_NONE && builder->position.y > builder->rope.anchor.y) {
+                expect_true(builder->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS, "suspended builder has an actual tender job");
+                const uint8_t tender_id = simulation.state.jobs[builder->rope.belay_job_id].reserved_worker_id;
+                expect_true(tender_id < simulation.state.worker_count && simulation.state.workers[tender_id].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY,
+                            "dispatching early never permits unsupported descent");
+            }
+        }
+        for (uint8_t id = 0U; id < BUILDING_CLOCK_MAX_LOADS; id++) {
+            const building_clock_load_t* load = &simulation.state.loads[id];
+            if (load->status == BUILDING_CLOCK_LOAD_UNUSED || load->companion_load_id >= BUILDING_CLOCK_MAX_LOADS) {
+                continue;
+            }
+            const building_clock_load_t* companion = &simulation.state.loads[load->companion_load_id];
+            expect_true(load->companion_load_id != id && companion->companion_load_id == BUILDING_CLOCK_INVALID_ID, "paired kits never alias or form chains");
+            expect_true(companion->digit_id == load->digit_id && companion->section_id != load->section_id && companion->status == load->status, "two kits retain distinct valid section ownership");
+            if (load->status != BUILDING_CLOCK_LOAD_CARRIED || load->carrier_worker_id >= simulation.state.worker_count) {
+                continue;
+            }
+            expect_true(companion->carrier_worker_id == load->carrier_worker_id, "both kits remain attached to the same actual courier or builder");
+            const building_clock_worker_t* worker = &simulation.state.workers[load->carrier_worker_id];
+            const building_clock_job_t* job = &simulation.state.jobs[worker->current_job_id];
+            if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL) {
+                saw_delivery_pair = true;
+                if (!cancelled_delivery) {
+                    building_clock_simulation_t cancelled = simulation;
+                    expect_true(building_clock_simulation_cancel_job(&cancelled, &world, worker->current_job_id) == BUILDING_CLOCK_SIMULATION_OK, "paired delivery can be cancelled");
+                    expect_true(cancelled.state.loads[id].status == BUILDING_CLOCK_LOAD_UNUSED && cancelled.state.loads[load->companion_load_id].status == BUILDING_CLOCK_LOAD_UNUSED,
+                                "cancelled delivery frees both load slots");
+                    expect_true(job_references_clear(&cancelled, worker->current_job_id), "cancelled paired delivery clears both section owners");
+                    expect_true(run_to_stable(&cancelled, &world, NULL) && transition_resources_clean(&cancelled), "cancelled kits can be supplied again without stale slots");
+                    cancelled_delivery = true;
+                }
+            } else if (worker->rope.phase != BUILDING_CLOCK_ROPE_NONE && worker->position.y > worker->rope.anchor.y) {
+                saw_builder_pair = true;
+                expect_true(companion->placement_progress_per_mille == 0U, "next kit is not installed before its supports are secured");
+                if (!interrupted_builder) {
+                    building_clock_simulation_t interrupted = simulation;
+                    expect_true(building_clock_simulation_set_time(&interrupted, &world, 14U, 39U) == BUILDING_CLOCK_SIMULATION_OK, "unfinished rollover interrupts a builder carrying two kits");
+                    expect_true(run_to_stable(&interrupted, &world, NULL) && transition_resources_clean(&interrupted), "paired-kit rollover evacuates safely and releases all ownership");
+                    expect_true(interrupted.metrics.evacuation_failures == 0U, "paired load never prevents safe evacuation");
+                    interrupted_builder = true;
+                }
+            }
+        }
+        if (simulation.metrics.chained_rope_sections > before.metrics.chained_rope_sections) {
+            saw_continuation = true;
+            for (uint8_t w = 0U; w < simulation.state.worker_count; w++) {
+                const building_clock_worker_t* old = &before.state.workers[w];
+                const building_clock_worker_t* current = &simulation.state.workers[w];
+                if (old->rope.phase == BUILDING_CLOCK_ROPE_WORK && current->current_job_id != old->current_job_id && current->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
+                    expect_true(points_equal(old->position, current->position) && points_equal(old->rope.anchor, current->rope.anchor), "continuing a front never teleports the worker or rope");
+                    expect_true(old->carried_load_id == current->carried_load_id && current->carried_load_id < BUILDING_CLOCK_MAX_LOADS, "continued work uses the kit already physically carried");
+                    expect_true(job_references_clear(&simulation, old->current_job_id), "completed section job releases ownership before slot recycling");
+                    expect_true(old->rope.belay_job_id == current->rope.belay_job_id, "the same tender supports the continuing front");
+                }
+            }
+        }
+        expect_true(dependency_order_is_valid(&simulation), "paired construction preserves real support dependencies");
+    }
+    expect_true(saw_delivery_pair && saw_builder_pair && saw_continuation && cancelled_delivery && interrupted_builder,
+                "fixture exercises paired supply, suspended continuation, cancellation and rollover");
+    expect_true(!building_clock_simulation_transition_active(&simulation) && transition_resources_clean(&simulation), "paired-kit project completes without resource leaks");
+}
+
+static void test_rope_tender_dispatch_during_travel(void) {
+    building_clock_world_t world;
+    select_test_world(&world, UINT64_C(0x6a09e667f3bcc909));
+    building_clock_simulation_t simulation;
+    prepare_transition(&simulation, &world, 23U, 59U, 0U, 0U, 6U);
+    bool saw_early_tender = false;
+    for (uint32_t ms = 0U; ms < 120000U && !saw_early_tender; ms += 50U) {
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        for (uint8_t w = 0U; w < simulation.state.worker_count; w++) {
+            const building_clock_worker_t* builder = &simulation.state.workers[w];
+            if (builder->current_job_id >= BUILDING_CLOCK_MAX_JOBS || builder->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
+                continue;
+            }
+            const building_clock_job_t* work = &simulation.state.jobs[builder->current_job_id];
+            if (work->kind != BUILDING_CLOCK_JOB_PLACE_SECTION) {
+                continue;
+            }
+            for (uint8_t j = 0U; j < BUILDING_CLOCK_MAX_JOBS; j++) {
+                const building_clock_job_t* tender = &simulation.state.jobs[j];
+                saw_early_tender |= tender->kind == BUILDING_CLOCK_JOB_BELAY_ROPE && (tender->status == BUILDING_CLOCK_JOB_PENDING || tender->status == BUILDING_CLOCK_JOB_ACTIVE) &&
+                                    tender->subject.digit_id == work->subject.digit_id && tender->subject.section_id == work->subject.section_id;
+            }
+            if (saw_early_tender) {
+                expect_true(building_clock_simulation_cancel_job(&simulation, &world, builder->current_job_id) == BUILDING_CLOCK_SIMULATION_OK, "builder can be cancelled before reaching its tender");
+                break;
+            }
+        }
+    }
+    expect_true(saw_early_tender, "rope support is dispatched while its builder is still collecting material or travelling");
+    expect_true(run_to_stable(&simulation, &world, NULL) && transition_resources_clean(&simulation), "early tender cancellation cannot strand jobs or reservations");
 }
 
 static void test_consecutive_unfinished_minutes(void) {
@@ -846,6 +1031,16 @@ static void test_consecutive_unfinished_minutes(void) {
         for (uint8_t digit = 0U; digit < 4U; digit++) {
             if (previous[digit].target_digit == first.state.digits[digit].target_digit) {
                 expect_true(memcmp(&previous[digit], &first.state.digits[digit], sizeof(previous[digit])) == 0, "unchanged unfinished projects keep their work and ownership");
+            }
+        }
+        if (memcmp(&first, &replay, sizeof(first)) != 0) {
+            const unsigned char* a = (const unsigned char*)&first;
+            const unsigned char* b = (const unsigned char*)&replay;
+            for (size_t offset = 0U; offset < sizeof(first); offset++) {
+                if (a[offset] != b[offset]) {
+                    fprintf(stderr, "Replay first differs at byte %zu: %u vs %u (minute %u)\n", offset, a[offset], b[offset], minute);
+                    break;
+                }
             }
         }
         expect_true(memcmp(&first, &replay, sizeof(first)) == 0, "consecutive minute sequence replays exactly");
@@ -874,6 +1069,9 @@ int main(void) {
     test_visible_section_delivery_sequence();
     test_masonry_digit_geometry();
     test_rope_work_and_unfinished_rollover();
+    test_coordinated_fronts_and_relief();
+    test_paired_kits_and_rope_continuity();
+    test_rope_tender_dispatch_during_travel();
     test_consecutive_unfinished_minutes();
 
     if (failures != 0U) {

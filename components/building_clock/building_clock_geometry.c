@@ -35,9 +35,23 @@ static building_clock_section_kind_t brick_section(uint8_t numeral, uint8_t row,
         return BUILDING_CLOCK_SECTION_TOP_BEAM;
     }
     if (row >= 9U && numeral_has_section(numeral, BUILDING_CLOCK_SECTION_FOUNDATION)) {
+        /* Each side pier owns its own footing, allowing independent fronts.
+         * The center footing remains a separate bounded masonry section. */
+        if (column <= 1U && numeral_has_section(numeral, BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER)) {
+            return BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER;
+        }
+        if (column >= 5U && numeral_has_section(numeral, BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER)) {
+            return BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER;
+        }
         return BUILDING_CLOCK_SECTION_FOUNDATION;
     }
     if ((row == 5U || row == 6U) && numeral_has_section(numeral, BUILDING_CLOCK_SECTION_MIDDLE_BEAM)) {
+        if (column <= 1U && numeral_has_section(numeral, BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER)) {
+            return BUILDING_CLOCK_SECTION_LOWER_LEFT_PIER;
+        }
+        if (column >= 5U && numeral_has_section(numeral, BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER)) {
+            return BUILDING_CLOCK_SECTION_LOWER_RIGHT_PIER;
+        }
         return BUILDING_CLOCK_SECTION_MIDDLE_BEAM;
     }
 

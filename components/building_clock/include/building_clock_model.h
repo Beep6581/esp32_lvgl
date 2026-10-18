@@ -391,6 +391,7 @@ typedef struct {
     uint32_t transition_delay_ms;
     uint32_t evacuation_lead_ms;
     uint32_t lifecycle_elapsed_ms;
+    uint32_t reconstruction_elapsed_ms;
     uint8_t finishing_job_id;
     bool finishing_complete;
 } building_clock_digit_state_t;
@@ -455,6 +456,8 @@ typedef enum {
     BUILDING_CLOCK_ROPE_WORK,
     BUILDING_CLOCK_ROPE_ASCEND,
     BUILDING_CLOCK_ROPE_RETURN,
+    /* A roof-mounted travelling pulley, controlled by the rope tender. */
+    BUILDING_CLOCK_ROPE_SHIFT,
 } building_clock_rope_phase_t;
 
 /* A bounded work excursion from a graph node on an actual overhead platform.
@@ -622,7 +625,11 @@ typedef struct {
     uint8_t digit_id;
     uint8_t section_id;
     uint8_t location_id;
+    /* Actual delivery/pickup node; a roof cache may serve a staging area. */
+    uint8_t access_node_id;
     uint8_t carrier_worker_id;
+    /* Optional second small bundle; links are one level deep, never chains. */
+    uint8_t companion_load_id;
     building_clock_machinery_kind_t machinery_kind;
     uint8_t machinery_id;
 } building_clock_load_t;

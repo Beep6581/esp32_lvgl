@@ -58,6 +58,27 @@ come from the shared Building Clock component.
 
 Rope builders use brown ropes attached to real overhead platforms. A second
 worker tends each rope from the roof. Supply workers bring bundles from the
-depot to staging. Unassigned crew drink, smoke, rest, or watch; these poses are
+depot to staging or a reachable roof cache. Tender-controlled beam clamps can
+shift suspended builders along a real roof without repeated full retrievals.
+Couriers can bring two compatible small kits on one trip. A builder may carry
+the next dependent kit and continue on the same rope once its supports are
+secured. Rope tenders are dispatched concurrently with their builders.
+Busy six-worker crews may admit relief through generated spawns, up to the
+existing nine-worker limit. Unassigned crew drink, smoke, rest, or watch; these poses are
 interruptible when work becomes available. Permanent and temporary ladders are
 still used where needed to reach the roof.
+
+Host throughput measurements (fixed six, fixed nine, and six plus relief):
+
+```sh
+cmake -S components/building_clock/test -B build/building_clock_tests -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/building_clock_tests
+build/building_clock_tests/building_clock_throughput_tests 32
+```
+
+The argument is the number of deterministic world roots (1-128). Each root
+runs three single-digit changes, a multi-digit rollover, and midnight. An
+optional second argument prints a five-second timeline for the first fixture.
+Output includes activity-time percentages, navigation/tender/rope-lane waits,
+paired deliveries, continued rope sections, relief use and peak job/load slots.
+See `docs/building_clock_throughput.md` for measured limits and remaining issues.

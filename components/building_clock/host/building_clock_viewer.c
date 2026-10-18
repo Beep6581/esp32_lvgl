@@ -422,6 +422,10 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         set_color(renderer, rope_color);
         (void)SDL_RenderDrawLine(renderer, worker->rope.anchor.x, worker->rope.anchor.y, x, y - 5);
         fill_rect(renderer, worker->rope.anchor.x - 3, worker->rope.anchor.y - 2, 7, 3, rope_color);
+        /* A small travelling beam clamp makes lateral rope motion causal. */
+        fill_rect(renderer, worker->rope.anchor.x - 4, worker->rope.anchor.y - 5, 9, 2, COLOR_LADDER);
+        fill_rect(renderer, worker->rope.anchor.x - 4, worker->rope.anchor.y - 3, 2, 5, COLOR_STEEL_DARK);
+        fill_rect(renderer, worker->rope.anchor.x + 3, worker->rope.anchor.y - 3, 2, 5, COLOR_STEEL_DARK);
         fill_rect(renderer, x - 4, y - 5, 9, 2, rope_color);
         if (worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS) {
             const uint8_t tender = scene->state.jobs[worker->rope.belay_job_id].reserved_worker_id;

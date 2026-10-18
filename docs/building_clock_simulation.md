@@ -429,34 +429,62 @@ Rope access is a bounded worker-owned excursion from an existing graph node on
 a real overhead platform. The platform must span the work, and the descent
 columns must not cross another permanent platform. Routing reaches that node;
 the worker then positions the anchor along the same continuous surface,
-descends, places masonry within a small horizontal reach, and climbs back to
-move the anchor for another strip. Returning to the graph node precedes normal
+descends and places masonry within a small horizontal reach. A tender-controlled
+travelling beam clamp can reposition the suspended builder along the same roof;
+it cannot leave that platform or sweep through another occupied rope lane.
+Blocked crossings require roof retrieval. Returning to the graph node precedes normal
 routing. Rope state is semantic and included in the scene snapshot. Cancellation
 retrieves the worker without teleporting them to the roof. Ropes do not mutate
 the immutable graph or enable arbitrary shortcuts between platforms.
 
 For crews of two or more, a separate belaying job brings a worker to the roof
-before descent. Dispatch bounds the number of builders so tenders can be
+before descent. It is dispatched when the builder accepts the job, so both
+workers can travel concurrently. The tender remains assigned while that builder
+collects supplies or travels; descent still requires the tender in position.
+Dispatch bounds the number of builders so tenders can be
 assigned. A solo worker uses a self-managed rope. Temporary ladder/scaffold
 installation is omitted only when permanent routes can also deliver workers
 from staging to every required overhead position.
 
-Depot-to-staging delivery is a separate job, including a four-second staging
-action. Up to three section bundles are in flight for one project, or two per
-project when digits share the crew. Dependencies constrain installation, not
-advance delivery. Exclusive work fronts receive only one dispatched worker;
-staging receives at most two. Idle workers cycle deterministic, interruptible
-watching, drinking, smoking, and resting activities.
+Delivery is a separate job, including a four-second staging action. Where a
+section has usable overhead access, couriers deliver to a real roof cache and
+builders pick up there. Each load records its actual pickup node separately
+from its associated staging area. One project may use the existing eight load
+slots; simultaneous projects have at most three each within that shared limit.
+Delivery dispatch counts other deliveries, not builders and rope tenders.
+Nearby available workers are preferred, but only when they can reach the job.
+
+A courier may deliver two compatible small kits together, with one four-second
+unpacking/staging action. Each kit retains a separate stable load slot and
+section identity; there are no unbounded bundle chains. Paired kits serve the
+same actual roof surface and are deposited at the same pickup node. A builder
+may pack one additional staged kit for an adjacent dependent section on that
+same rope-accessible platform. The second kit stays physically with the worker.
+Once the first section is secured, a new placement job can continue from the
+current suspended position, retaining the tender and rope. Dependencies are
+checked again at that handoff; no new material is delivered remotely. Cancelling
+or recycling shared delivery/placement jobs clears every owning section reference.
+
+Side piers own their footing bricks and depend on their local supports rather
+than every preceding tier. This opens independent center/left/right work fronts
+without changing numeral silhouettes. Secured sections become usable before
+their builders finish retrieving ropes; promotion waits for all owning jobs.
+Pacing minima form cumulative milestones from the start of clearing rather
+than fresh idle holds after each late phase.
+
+Crews initialized with six or more workers admit relief at generated spawn
+locations when the crew is busy and at least two jobs are pending. Admission is
+checked at 1500 ms intervals and uses the existing nine-worker capacity. Smaller
+test crews remain fixed. `simulation.crew_limit = initial_count` disables relief
+for comparisons. No movement or action speed was increased. Idle workers retain
+their interruptible watching, drinking, smoking, and resting activities.
 
 Visible brick order follows narrow vertical strips from lower to upper courses.
 Placement progress records the installed prefix, so the same geometry is used
 by rope work, the viewer, and interrupted collapse. No independent brick physics
-is introduced. Rope retrieval and repositioning currently make complete builds
-substantially slower than the former temporary-ladder-only benchmark (roughly
-three to five minutes in the representative fixtures). Five workers can
-contribute concurrently to one digit, but this is not sustained through every
-dependency bottleneck. Minute input is independent of completion; shortening
-these work cycles is an explicit next refinement, not hidden by faster workers.
+is introduced. The throughput correction and its remaining limitations are
+recorded in `docs/building_clock_throughput.md`. The 60-second throughput goal is
+not yet met; minute input remains independent of completion.
 
 ## 10. Build pacing
 
