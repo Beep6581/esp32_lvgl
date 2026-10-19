@@ -44,7 +44,9 @@ flow, and no failure Connection Status Result is synthesized. Cancel/deinit free
 the retained session. Slow DHCP could exceed the phone's completion deadline;
 reporting at authenticated association instead would require a separate lifecycle
 hook. A matching TX completion is not proof that Android accepted the payload.
-Pixel success with this follow-up is not yet verified.
+Pixel success with both patches has been confirmed by hardware testing, including
+repeated provisioning and automatic reconnection after reboot. This validates the
+tested success path, not all DPP peers or failure scenarios.
 
 The frame encoder follows the BSD-licensed hostap implementation available in
 [AOSP's `dpp_build_conf_result()`](https://android.googlesource.com/platform/external/wpa_supplicant_8/+/refs/tags/android-mainline-12.0.0_r95/src/common/dpp.c),
@@ -53,6 +55,11 @@ The patched IDF file already carries the hostap BSD notice; its license is in
 `components/wpa_supplicant/README` in ESP-IDF. No new library is introduced.
 
 ## Apply and build
+
+The patch files are [Configuration Result](esp-idf-v6.1-dpp-configuration-result.patch)
+and [Connection Status Result](esp-idf-v6.1-dpp-connection-status-result.patch),
+both in this repository's `patches/` directory. Apply them in that order; remove
+them in the reverse order using the commands below.
 
 From this project root, after activating the existing ESP-IDF v6.1 environment:
 
@@ -81,8 +88,11 @@ compiler warnings. Existing FreeRTOS unused-function and LVGL deprecation
 warnings remain. Patch application and reverse-application checks passed.
 Validation on 2026-10-19: the follow-up also built successfully with the existing
 Screen Diagnostics configuration, with no compiler warnings in that incremental
-build. Forward/reverse patch checks passed. Pixel/hardware validation of the
-follow-up is pending; no runtime regression claim is made.
+build. Forward/reverse patch checks passed. Subsequent hardware tests confirmed
+that the Pixel reports successful provisioning, repeated provisioning succeeds,
+and the ESP32 retains the network and reconnects after reboot. No new ADB capture
+was needed for these functional tests. Both patches and the application hook
+were present during validation.
 
 ## Simple Pixel test (no ADB)
 
@@ -101,7 +111,7 @@ follow-up is pending; no runtime regression claim is made.
 If it fails, report the phone result and approximate delay first. No new ADB
 capture is required for this experiment.
 
-## Remove the local SDK patch
+## Remove the local SDK patches
 
 From this project root in the same activated environment:
 
