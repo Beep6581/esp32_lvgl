@@ -1,0 +1,269 @@
+ESP-IDF v6.1 experimental DPP Connection Status Result follow-up
+Base: fff9895c82d744c7237be8847347bdd1b07c6643 plus
+      esp-idf-v6.1-dpp-configuration-result.patch
+Prepared: 2026-10-19
+
+Parse sendConnStatus, retain the authenticated session, and expose an optional
+worker-task API to report verified successful association before DPP teardown.
+The encoder follows the hostap BSD wire format. See patches/README.md.
+
+diff --git a/components/wpa_supplicant/esp_supplicant/include/esp_dpp.h b/components/wpa_supplicant/esp_supplicant/include/esp_dpp.h
+index 1966bbc..b9c5d8f 100644
+--- a/components/wpa_supplicant/esp_supplicant/include/esp_dpp.h
++++ b/components/wpa_supplicant/esp_supplicant/include/esp_dpp.h
+@@ -124,6 +124,18 @@ esp_err_t esp_supp_dpp_start_listen(void);
+   */
+ esp_err_t esp_supp_dpp_stop_listen(void);
+ 
++/* Experimental v6.1 extension. Report successful association to an accepted
++ * DPP network if the configurator requested Connection Status. Call once from
++ * an application worker after GOT_IP, before stop_listen/deinit. Must not run
++ * on the default event loop or supplicant eloop: waits up to 2 s for TX status.
++ * ESP_OK also means no report was requested. ESP_ERR_INVALID_STATE means the
++ * current association does not match an accepted configuration; no success
++ * is transmitted. TX failure/timeout does not undo the Wi-Fi connection.
++ * Cancel/deinit still frees retained authentication state without a report.
++ */
++#define ESP_SUPP_DPP_HAS_CONNECTION_STATUS_REPORT 1
++esp_err_t esp_supp_dpp_report_connection_status(void);
++
+ /**
+   * @brief Install or clear DPP AKM connector material in the supplicant.
+   *
+diff --git a/components/wpa_supplicant/esp_supplicant/src/esp_dpp.c b/components/wpa_supplicant/esp_supplicant/src/esp_dpp.c
+index 478d212..d449d9d 100644
+--- a/components/wpa_supplicant/esp_supplicant/src/esp_dpp.c
++++ b/components/wpa_supplicant/esp_supplicant/src/esp_dpp.c
+@@ -40,6 +40,8 @@ static void *s_dpp_api_lock = NULL;
+ static void *s_dpp_event_group = NULL;
+ 
+ #define DPP_ROC_EVENT_HANDLED  BIT0
++#define DPP_CONN_STATUS_DONE  BIT1
++#define DPP_CONN_STATUS_OK  BIT2
+ #define DPP_MAX_COMEBACK_DELAY_TU 5000 /* ~5 seconds */
+ 
+ static atomic_bool roc_in_progress;
+@@ -103,6 +105,11 @@ static esp_err_t dpp_api_unlock(void)
+ 
+ static uint8_t dpp_deinit_auth(void)
+ {
++    if (s_dpp_ctx.pending_tx_op_in_progress &&
++            s_dpp_ctx.pending_tx_op.type == DPP_TX_CONNECTION_STATUS_RESULT) {
++        /* Wake a reporting worker if another task cancels/deinitializes DPP. */
++        os_event_group_set_bits(s_dpp_event_group, DPP_CONN_STATUS_DONE);
++    }
+     bin_clear_free(s_dpp_ctx.config_event, s_dpp_ctx.config_event_size);
+     s_dpp_ctx.config_event = NULL;
+     s_dpp_ctx.config_event_size = 0;
+@@ -246,6 +253,71 @@ esp_err_t esp_dpp_send_action_frame(uint8_t *dest_mac, const uint8_t *buf, uint3
+     return ESP_OK;
+ }
+ 
++esp_err_t esp_supp_dpp_report_connection_status(void)
++{
++    if (dpp_api_lock() != ESP_OK) {
++        return ESP_ERR_INVALID_STATE;
++    }
++    struct dpp_authentication *auth = s_dpp_ctx.dpp_auth;
++    if (!auth || !auth->conn_status_requested) {
++        dpp_api_unlock();
++        return ESP_OK;
++    }
++    if (s_dpp_ctx.dpp_deinit_pending || s_dpp_ctx.config_event ||
++            s_dpp_ctx.pending_tx_op_in_progress) {
++        dpp_api_unlock();
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    /* Do not report success for a previous network restored after failure. */
++    wifi_ap_record_t ap;
++    bool matches = false;
++    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
++        size_t ssid_len = os_strlen((const char *)ap.ssid);
++        for (size_t i = 0; i < auth->num_conf_obj; i++) {
++            if (ssid_len == auth->conf_obj[i].ssid_len &&
++                    os_memcmp(ap.ssid, auth->conf_obj[i].ssid, ssid_len) == 0) {
++                matches = true;
++                break;
++            }
++        }
++    }
++    if (!matches) {
++        dpp_api_unlock();
++        return ESP_ERR_INVALID_STATE;
++    }
++
++    struct wpabuf *msg = dpp_build_conn_status_result(auth, DPP_STATUS_OK,
++                            ap.ssid, os_strlen((const char *)ap.ssid), NULL);
++    if (!msg) {
++        dpp_api_unlock();
++        return ESP_ERR_NO_MEM;
++    }
++    os_event_group_clear_bits(s_dpp_event_group, DPP_CONN_STATUS_DONE | DPP_CONN_STATUS_OK);
++    /* The configurator listens on the original DPP channel, not the AP channel. */
++    esp_err_t ret = esp_dpp_send_action_frame(auth->peer_mac_addr,
++                        wpabuf_head(msg), wpabuf_len(msg), auth->curr_chan,
++                        OFFCHAN_TX_WAIT_TIME, DPP_TX_CONNECTION_STATUS_RESULT);
++    wpabuf_free(msg);
++    if (ret == ESP_OK) {
++        auth->conn_status_requested = 0;
++        wpa_printf(MSG_INFO, "DPP: Connection Status Result submitted on channel %u", auth->curr_chan);
++    }
++    dpp_api_unlock();
++    if (ret != ESP_OK) {
++        return ret;
++    }
++
++    /* The persistent event group outlives auth even if cancellation races TX.
++     * Never hold the DPP lock while waiting for the eloop TX-status handler. */
++    unsigned int bits = os_event_group_wait_bits(s_dpp_event_group,
++                            DPP_CONN_STATUS_DONE, 0, 0, os_task_ms_to_tick(2000));
++    if (!(bits & DPP_CONN_STATUS_DONE)) {
++        return ESP_ERR_TIMEOUT;
++    }
++    return bits & DPP_CONN_STATUS_OK ? ESP_OK : ESP_FAIL;
++}
++
+ static void esp_dpp_auth_resp_retry_timeout(void *eloop_ctx, void *timeout_ctx)
+ {
+     struct dpp_authentication *auth;
+@@ -1355,7 +1427,16 @@ gas_fail:
+ static void esp_dpp_finish_config(void)
+ {
+     /* Keep auth and the validated event alive until Configuration Result TX. */
+-    if (s_dpp_ctx.config_event) {
++    if (s_dpp_ctx.config_event || (s_dpp_ctx.pending_tx_op_in_progress &&
++            s_dpp_ctx.pending_tx_op.type == DPP_TX_CONNECTION_STATUS_RESULT)) {
++        return;
++    }
++
++    if (s_dpp_ctx.dpp_auth && s_dpp_ctx.dpp_auth->conn_status_requested) {
++        /* Keep the authenticated peer/keys until the app reports its actual
++         * connection outcome. Stop provisioning ROC so STA can connect. */
++        dpp_cancel_auth_gas_eloop_timeouts();
++        listen_stop_handler(NULL, NULL);
+         return;
+     }
+ 
+@@ -1899,6 +1980,11 @@ static void tx_status_eloop_handler(void *eloop_ctx, void *event_data)
+             return;
+         }
+         esp_dpp_finish_config();
++    } else if (type == DPP_TX_CONNECTION_STATUS_RESULT) {
++        wpa_printf(MSG_INFO, "DPP: Connection Status Result TX status=%d", evt->status);
++        os_event_group_set_bits(s_dpp_event_group, DPP_CONN_STATUS_DONE |
++                                (evt->status == WIFI_ACTION_TX_DONE ? DPP_CONN_STATUS_OK : 0));
++        esp_dpp_finish_config();
+     } else if (type == DPP_TX_AUTHENTICATION_RESP) {
+         eloop_cancel_timeout(esp_dpp_auth_resp_retry_timeout, NULL, NULL);
+         if (evt->status == WIFI_ACTION_TX_FAILED) {
+diff --git a/components/wpa_supplicant/esp_supplicant/src/esp_dpp_i.h b/components/wpa_supplicant/esp_supplicant/src/esp_dpp_i.h
+index 9395699..ec78f16 100644
+--- a/components/wpa_supplicant/esp_supplicant/src/esp_dpp_i.h
++++ b/components/wpa_supplicant/esp_supplicant/src/esp_dpp_i.h
+@@ -37,6 +37,7 @@ enum dpp_tx_frame_type {
+     DPP_TX_GAS_CONFIG_REQ,
+     DPP_TX_GAS_COMEBACK,
+     DPP_TX_CONFIGURATION_RESULT,
++    DPP_TX_CONNECTION_STATUS_RESULT,
+ };
+ 
+ struct esp_dpp_context_t {
+diff --git a/components/wpa_supplicant/src/common/dpp.c b/components/wpa_supplicant/src/common/dpp.c
+index 8757663..e5a8646 100644
+--- a/components/wpa_supplicant/src/common/dpp.c
++++ b/components/wpa_supplicant/src/common/dpp.c
+@@ -4600,8 +4600,8 @@ fail:
+ int dpp_conf_resp_rx(struct dpp_authentication *auth,
+                      const uint8_t *resp, uint32_t resp_len)
+ {
+-	const u8 *wrapped_data, *e_nonce, *status, *conf_obj;
+-	u16 wrapped_data_len, e_nonce_len, status_len, conf_obj_len;
++	const u8 *wrapped_data, *e_nonce, *status, *conf_obj, *send_conn_status;
++	u16 wrapped_data_len, e_nonce_len, status_len, conf_obj_len, send_conn_status_len;
+ 	const u8 *addr[1];
+ 	size_t len[1];
+ 	u8 *unwrapped = NULL;
+@@ -4677,6 +4677,15 @@ int dpp_conf_resp_rx(struct dpp_authentication *auth,
+ 		goto fail;
+ 	}
+ 
++	send_conn_status = dpp_get_attr(unwrapped, unwrapped_len,
++					DPP_ATTR_SEND_CONN_STATUS, &send_conn_status_len);
++	if (send_conn_status && send_conn_status_len != 0) {
++		dpp_auth_fail(auth, "Invalid Send Connection Status attribute");
++		goto fail;
++	}
++	auth->conn_status_requested = auth->peer_version >= 2 && send_conn_status;
++	wpa_printf(MSG_INFO, "DPP: Connection Status requested=%d", auth->conn_status_requested);
++
+ 	conf_obj = dpp_get_attr(unwrapped, unwrapped_len, DPP_ATTR_CONFIG_OBJ,
+ 				&conf_obj_len);
+ 	if (!conf_obj) {
+@@ -4744,6 +4753,66 @@ fail:
+ 	return NULL;
+ }
+ 
++struct wpabuf * dpp_build_conn_status_result(struct dpp_authentication *auth,
++					   enum dpp_status_error result,
++					   const u8 *ssid, size_t ssid_len,
++					   const char *channel_list)
++{
++	struct wpabuf *json = NULL, *clear = NULL, *msg = NULL;
++	const u8 *addr[2];
++	size_t len[2], clear_len;
++	u8 *wrapped;
++
++	if (ssid_len > 32)
++		return NULL;
++	json = wpabuf_alloc(128 + (channel_list ? os_strlen(channel_list) : 0));
++	if (!json)
++		goto fail;
++	json_start_object(json, NULL);
++	json_add_int(json, "result", result);
++	json_value_sep(json);
++	if (json_add_base64url(json, "ssid64", ssid, ssid_len) < 0)
++		goto fail;
++	if (channel_list) {
++		json_value_sep(json);
++		json_add_string(json, "channelList", channel_list);
++	}
++	json_end_object(json);
++
++	clear_len = 4 + auth->curve->nonce_len + 4 + wpabuf_len(json);
++	clear = wpabuf_alloc(clear_len);
++	msg = dpp_alloc_msg(DPP_PA_CONNECTION_STATUS_RESULT,
++			    4 + clear_len + AES_BLOCK_SIZE);
++	if (!clear || !msg)
++		goto fail;
++	wpabuf_put_le16(clear, DPP_ATTR_ENROLLEE_NONCE);
++	wpabuf_put_le16(clear, auth->curve->nonce_len);
++	wpabuf_put_data(clear, auth->e_nonce, auth->curve->nonce_len);
++	wpabuf_put_le16(clear, DPP_ATTR_CONN_STATUS);
++	wpabuf_put_le16(clear, wpabuf_len(json));
++	wpabuf_put_buf(clear, json);
++
++	addr[0] = wpabuf_head_u8(msg) + 2;
++	len[0] = DPP_HDR_LEN;
++	addr[1] = wpabuf_put(msg, 0);
++	len[1] = 0;
++	wpabuf_put_le16(msg, DPP_ATTR_WRAPPED_DATA);
++	wpabuf_put_le16(msg, clear_len + AES_BLOCK_SIZE);
++	wrapped = wpabuf_put(msg, clear_len + AES_BLOCK_SIZE);
++	if (aes_siv_encrypt(auth->ke, auth->curve->hash_len,
++			    wpabuf_head(clear), wpabuf_len(clear),
++			    2, addr, len, wrapped) < 0)
++		goto fail;
++	wpabuf_free(json);
++	wpabuf_clear_free(clear);
++	return msg;
++fail:
++	wpabuf_free(json);
++	wpabuf_clear_free(clear);
++	wpabuf_free(msg);
++	return NULL;
++}
++
+ void dpp_configurator_free(struct dpp_configurator *conf)
+ {
+ 	if (!conf)

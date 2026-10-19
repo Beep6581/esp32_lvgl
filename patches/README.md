@@ -1,4 +1,4 @@
-# Experimental ESP-IDF DPP Configuration Result patch
+# Experimental ESP-IDF DPP completion patches
 
 `esp-idf-v6.1-dpp-configuration-result.patch` applies to **ESP-IDF v6.1,
 commit `fff9895c82d744c7237be8847347bdd1b07c6643`**. Prepared 2026-10-16.
@@ -19,13 +19,32 @@ The application continues testing candidates in RAM and persisting them only
 after GOT_IP. Configuration Result means configuration acceptance, not proof
 of AP connectivity or persistent storage.
 
-**Known limitation:** the captured Pixel also requests a separate Connection
-Status Result (`sendConnStatus`). This patch deliberately implements only the
-requested Configuration Result exchange. It may resolve the two-second timeout
-but expose a later Connection Status Result timeout. Full Pixel success is not
-yet established. Completing that separate exchange would require retaining the
-DPP session through station connection, sending the actual connection outcome,
-and coordinating teardown. That extension is outside this isolated experiment.
+The first patch alone was tested: the ESP32 connected in about one second, but
+the Pixel failed after approximately ten seconds. That is consistent with a
+later Connection Status Result timeout, not proof of it without another capture.
+
+`esp-idf-v6.1-dpp-connection-status-result.patch` is the 2026-10-19 follow-up.
+Apply it **after** the first patch. It parses the authenticated `sendConnStatus`
+request and retains the session keys/peer while stopping provisioning listen.
+The optional `esp_supp_dpp_report_connection_status()` API verifies that the
+station is associated with an accepted SSID, then sends the encrypted Connection
+Status Result on the original DPP channel. Its payload contains the Enrollee
+Nonce and connection-status JSON (`result: 0`, `ssid64`).
+
+The project's existing background DPP cleanup task calls that API after GOT_IP,
+before stop/deinit. It waits for matching action TX status (at most two seconds),
+without holding the DPP lock or blocking the Wi-Fi event loop/UI. Cancellation
+wakes the wait; failure/timeout does not undo the working connection or saved
+credentials. Incoming action processing cannot free auth during the final TX.
+The project hook is feature-macro guarded so stock ESP-IDF still builds.
+
+This is a success-path interoperability experiment, not a complete upstream
+connection-outcome API: failed AP attempts still use the existing Retry/Cancel
+flow, and no failure Connection Status Result is synthesized. Cancel/deinit frees
+the retained session. Slow DHCP could exceed the phone's completion deadline;
+reporting at authenticated association instead would require a separate lifecycle
+hook. A matching TX completion is not proof that Android accepted the payload.
+Pixel success with this follow-up is not yet verified.
 
 The frame encoder follows the BSD-licensed hostap implementation available in
 [AOSP's `dpp_build_conf_result()`](https://android.googlesource.com/platform/external/wpa_supplicant_8/+/refs/tags/android-mainline-12.0.0_r95/src/common/dpp.c),
@@ -48,6 +67,8 @@ changes. Then:
 ```sh
 git -C "$IDF_PATH" apply --check "$PWD/patches/esp-idf-v6.1-dpp-configuration-result.patch"
 git -C "$IDF_PATH" apply "$PWD/patches/esp-idf-v6.1-dpp-configuration-result.patch"
+git -C "$IDF_PATH" apply --check "$PWD/patches/esp-idf-v6.1-dpp-connection-status-result.patch"
+git -C "$IDF_PATH" apply "$PWD/patches/esp-idf-v6.1-dpp-connection-status-result.patch"
 idf.py build
 ```
 
@@ -58,7 +79,10 @@ Validation on 2026-10-16: `idf.py build` succeeded with the patched SDK and the
 existing Screen Diagnostics configuration. The changed DPP files produced no
 compiler warnings. Existing FreeRTOS unused-function and LVGL deprecation
 warnings remain. Patch application and reverse-application checks passed.
-Pixel/hardware validation is pending; no runtime regression claim is made.
+Validation on 2026-10-19: the follow-up also built successfully with the existing
+Screen Diagnostics configuration, with no compiler warnings in that incremental
+build. Forward/reverse patch checks passed. Pixel/hardware validation of the
+follow-up is pending; no runtime regression claim is made.
 
 ## Simple Pixel test (no ADB)
 
@@ -82,6 +106,8 @@ capture is required for this experiment.
 From this project root in the same activated environment:
 
 ```sh
+git -C "$IDF_PATH" apply --reverse --check "$PWD/patches/esp-idf-v6.1-dpp-connection-status-result.patch"
+git -C "$IDF_PATH" apply --reverse "$PWD/patches/esp-idf-v6.1-dpp-connection-status-result.patch"
 git -C "$IDF_PATH" apply --reverse --check "$PWD/patches/esp-idf-v6.1-dpp-configuration-result.patch"
 git -C "$IDF_PATH" apply --reverse "$PWD/patches/esp-idf-v6.1-dpp-configuration-result.patch"
 git -C "$IDF_PATH" status --short
@@ -91,3 +117,5 @@ idf.py build
 If the reverse check fails because those SDK files were subsequently edited,
 inspect the conflict instead of resetting the whole SDK. Flash the rebuilt
 unpatched firmware if you also want to remove the experiment from the device.
+Reverse only the follow-up patch to compare against the first experiment. The
+guarded application hook needs no source change when either SDK patch is removed.

@@ -282,6 +282,17 @@ static esp_err_t stop_dpp_locked(void) {
 static void dpp_cleanup_task(void* argument) {
     (void)argument;
 
+#ifdef ESP_SUPP_DPP_HAS_CONNECTION_STATUS_REPORT
+    /* Experimental SDK extension; wait here, never in the Wi-Fi/IP event loop.
+     * The SDK reports success only for an accepted, currently associated SSID. */
+    lock();
+    const bool report_connection = s_dpp_config_received && state_is_connected(s_status.state);
+    unlock();
+    if (report_connection) {
+        const esp_err_t report_result = esp_supp_dpp_report_connection_status();
+        ESP_LOGI(TAG, "DPP connection status report: %s", esp_err_to_name(report_result));
+    }
+#endif
     const esp_err_t stop_result = esp_supp_dpp_stop_listen();
     const esp_err_t deinit_result = esp_supp_dpp_deinit();
 
