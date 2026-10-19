@@ -2,6 +2,16 @@ cmake_minimum_required(VERSION 3.16)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(hello_lvgl)
 
+# Keep LVGL's private pool out of internal RAM and report assertions before abort.
+idf_component_get_property(lvgl_component lvgl__lvgl COMPONENT_LIB)
+target_compile_definitions(${lvgl_component} PUBLIC
+    LV_ASSERT_USE_CUSTOM_INCLUDE=1
+    LV_ASSERT_CUSTOM_INCLUDE="${CMAKE_CURRENT_SOURCE_DIR}/config/lvgl_assert_handler.h"
+)
+target_compile_definitions(${lvgl_component} PRIVATE
+    LV_MEM_POOL_INCLUDE="${CMAKE_CURRENT_SOURCE_DIR}/config/lvgl_psram_pool.h"
+)
+
 #idf_build_set_property(
 #    COMPILE_OPTIONS
 #    "-Wno-error=unused-const-variable"

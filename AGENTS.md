@@ -46,6 +46,8 @@ The present validated master baseline is:
 - 64 KiB D-cache with 64-byte cache lines.
 - ESP32-S3 CPU at 240 MHz, LVGL refresh period 15 ms, and two LVGL software
   draw units.
+- LVGL's 256 KiB private heap is allocated in PSRAM through the project-owned
+  pool hook. Keep internal RAM available for display bounce buffers.
 - Air Quality is the repository default app mode; a local generated
   `sdkconfig` may select Screen Diagnostics for testing.
 

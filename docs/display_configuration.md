@@ -113,7 +113,7 @@ design target.
 | Bounce-buffer port mode | Enabled | Source setting. Selects the RGB frame-buffer-complete callback appropriate to ESP-IDF bounce-buffer mode. |
 | LVGL refresh period | 15 ms | Active and repository default. A 10 ms test did not improve the representative Dashboard result. |
 | LVGL software draw units | 2 | Active and repository default. Improved the demanding test with 64 KiB D-cache; it did not help with 32 KiB. |
-| LVGL private heap | 131072 bytes (128 KiB) | Active and repository default. 64 KiB was exhausted while drawing three charts with many points and caused a crash. |
+| LVGL private heap | 262144 bytes (256 KiB), allocated in PSRAM | Active and repository default. Crowded-chart rendering exhausted the previous 128 KiB pool; see the heap validation below. |
 | LVGL object style cache | Enabled | Active generated config. Neutral in the simple solid-swipe test, retained because a real UI performs more style lookup work. It is currently an LVGL default and is not explicit in `sdkconfig.defaults`. |
 | LVGL Sysmon/performance overlay | Disabled | Active generated config. Removed because its label work perturbed measurements and its reported 100% CPU result was invalid without the required task/idle accounting. |
 | LVGL profiler | Disabled | Active generated config. Profiling was used during investigation, but is not part of the normal configuration. |
@@ -126,6 +126,35 @@ to repository defaults in commit `81eb2b7`, then removed when the 80 MHz PSRAM
 fix was recorded in `34bc6e1`. The history does not establish whether disabling
 restart-on-VSYNC was independently tested or was only a configuration cleanup,
 so no stronger rationale is claimed.
+
+### LVGL heap validation
+
+The Air Quality application stalled around 378 history points. A logged
+assertion confirmed allocation failure in `lv_draw_line()` while preparing a
+temporary points buffer. The old default assertion handler spun forever, causing
+repeated task-watchdog reports instead of identifying the allocation failure.
+
+Increasing the static internal-RAM pool from 128 to 256 KiB failed to link:
+DRAM overflowed by 40,400 bytes. The project now uses LVGL's supported
+`LV_MEM_POOL_INCLUDE` / `LV_MEM_POOL_ALLOC` hook in `config/lvgl_psram_pool.h`
+to allocate the pool explicitly from PSRAM. LVGL still uses its built-in
+allocator; only the backing storage changes. The pool is retained across LVGL
+deinit/init, matching the lifetime of the original static array. Allocation
+failure aborts rather than falling back to internal RAM. No managed components
+are modified, and the two 40-line bounce buffers remain unchanged.
+
+An accelerated hardware run reached 8,640 samples and continued through ring
+buffer wraparound. Recorded peak pool usage was 160,696 bytes, exceeding the old
+128 KiB capacity. Free memory before drawing repeatedly returned to 208,468
+bytes near wraparound; the supplied excerpt showed no accumulating leak.
+The test validates capacity and wraparound, not a full day of elapsed-time
+behavior or unchanged rendering performance. Normal sampling has been restored
+to 10 seconds, with the existing first-valid-source sampling preserved; a normal
+overnight run remains the next validation step.
+
+`config/lvgl_assert_handler.h` prints assertion file, line and function through
+ROM output and aborts for a backtrace even with LVGL logging disabled. Temporary
+accelerated-history and per-chart heap logs are not part of normal operation.
 
 ### Why DIRECT plus tearing avoidance is a pair here
 
@@ -537,14 +566,14 @@ sdkconfig           generated active/local build configuration
 `main/Kconfig.projbuild` and `sdkconfig.defaults` select Air Quality as the
 repository default. A fresh configuration generated from the committed
 defaults therefore boots the normal Air Quality application. The current
-generated `sdkconfig` selects Screen Diagnostics for local display testing;
-this intentional local difference does not change the repository default.
+generated `sdkconfig` also selects Air Quality for the chart stability test;
+Screen Diagnostics remains selectable for display testing.
 Both files currently enable `CONFIG_UI_METRICS`, although those counters only
 have practical effect in Screen Diagnostics.
 
 Several deliberate values are explicit in both files: performance compiler
 optimization, Octal PSRAM at 80 MHz with XIP, CPU at 240 MHz, 64 KiB/64-byte
-D-cache, 1000 Hz FreeRTOS tick, 128 KiB LVGL heap, 15 ms LVGL refresh, and two
+D-cache, 1000 Hz FreeRTOS tick, 256 KiB LVGL heap in PSRAM, 15 ms LVGL refresh, and two
 software draw units.
 
 Other tested choices are effective in generated `sdkconfig` but absent from
