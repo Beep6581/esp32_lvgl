@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <stdlib.h>
+#include <time.h>
 
 #include "display.h"
 #include "i2c_bus.h"
@@ -126,6 +128,13 @@ void app_main(void) {
 
     // Allocate the RGB DMA bounce buffers before Wi-Fi fragments internal RAM.
     ESP_ERROR_CHECK(display_prepare());
+
+    // Sweden: CET in winter, CEST in summer. System timestamps remain UTC.
+    if (setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1) != 0) {
+        ESP_LOGE(TAG, "Failed to set Sweden timezone");
+        abort();
+    }
+    tzset();
 
     bool provisioning_required = false;
     ESP_ERROR_CHECK(wifi_manager_prepare(&provisioning_required));

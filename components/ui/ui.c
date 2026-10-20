@@ -738,12 +738,12 @@ static void remember_sources_with_plot_data(const air_quality_snapshot_t* snapsh
 
 static void clock_label_update(void) {
     const time_t now = time(NULL);
-    struct tm utc;
+    struct tm local_time;
     char text[32];
     /* Match the Wi-Fi manager's plausibility threshold (2024-01-01 UTC).
      * This distinguishes unset time, not proof of a fresh SNTP exchange. */
-    if (now >= 1704067200 && gmtime_r(&now, &utc) != NULL) {
-        strftime(text, sizeof(text), "%H:%M:%S UTC", &utc);
+    if (now >= 1704067200 && localtime_r(&now, &local_time) != NULL) {
+        strftime(text, sizeof(text), "%H:%M:%S %Z", &local_time);
     } else {
         const uint32_t seconds = (uint32_t)(esp_timer_get_time() / 1000000);
         snprintf(text, sizeof(text), "UP %02lu:%02lu:%02lu",
