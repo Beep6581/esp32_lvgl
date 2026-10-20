@@ -156,13 +156,21 @@ rather than reproducing whole files.
 
 ## Build and review workflow
 
-After a meaningful change, if the ESP-IDF environment is available:
+The user runs compilation. Do not automatically run or monitor builds after changes.
+Run a build only when the user explicitly requests it, or reports compilation
+errors and asks you to investigate them.
 
-1. Run `idf.py build`.
-2. Fix build errors caused by the change.
-3. Inspect warnings relevant to the changed code.
-4. Review `git diff` for accidental unrelated changes.
-5. Report the build result and any hardware behavior that still needs real-device testing.
+After a meaningful change:
+
+1. Review `git diff` for accidental unrelated changes.
+2. Report whether the change is build-verified; if no successful build was
+   observed, state that it is not build-verified.
+3. Identify any hardware behavior that still needs real-device testing.
+4. Provide a short suggested commit message. Leave committing to the user unless
+   explicitly asked to commit.
+
+When investigating reported compilation errors, fix errors caused by the change
+and inspect warnings relevant to the changed code. Keep build output concise.
 
 Do not use `idf.py fullclean` routinely; use it only when there is a reason to invalidate the build tree.
 Do not change `sdkconfig`/`sdkconfig.defaults` casually. Preserve reproducible configuration changes in the appropriate project configuration mechanism.
