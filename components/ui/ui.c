@@ -8,10 +8,12 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "esp_heap_caps.h"
 #include "esp_log.h"
 #include "esp_lvgl_port.h"
+#include "esp_timer.h"
 #include "lvgl.h"
 
 static const char* TAG = "ui";
@@ -85,6 +87,7 @@ static lv_obj_t* s_chart_latest_label[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOUR
 static lv_chart_series_t* s_series[AIR_QUALITY_METRIC_COUNT][AIR_QUALITY_SOURCE_COUNT];
 static lv_obj_t* s_lbl_x_left;
 static lv_obj_t* s_lbl_x_right;
+static lv_obj_t* s_clock_label;
 static lv_obj_t* s_comparison_table;
 
 static air_quality_snapshot_t* s_history;
@@ -733,9 +736,28 @@ static void remember_sources_with_plot_data(const air_quality_snapshot_t* snapsh
     }
 }
 
+static void clock_label_update(void) {
+    const time_t now = time(NULL);
+    struct tm utc;
+    char text[32];
+    /* Match the Wi-Fi manager's plausibility threshold (2024-01-01 UTC).
+     * This distinguishes unset time, not proof of a fresh SNTP exchange. */
+    if (now >= 1704067200 && gmtime_r(&now, &utc) != NULL) {
+        strftime(text, sizeof(text), "%H:%M:%S UTC", &utc);
+    } else {
+        const uint32_t seconds = (uint32_t)(esp_timer_get_time() / 1000000);
+        snprintf(text, sizeof(text), "UP %02lu:%02lu:%02lu",
+                 (unsigned long)(seconds / 3600U),
+                 (unsigned long)((seconds / 60U) % 60U),
+                 (unsigned long)(seconds % 60U));
+    }
+    lv_label_set_text(s_clock_label, text);
+}
+
 static void ui_timer_cb(lv_timer_t* t) {
     (void)t;
 
+    clock_label_update();
     air_quality_snapshot_t snapshot = air_quality_get_latest();
     source_selector_update(&snapshot);
     comparison_table_update(&snapshot);
@@ -975,6 +997,13 @@ void ui_init(lv_display_t* disp) {
     plot_screen_create(plot_tab);
     table_screen_create(table_tab);
     lv_tabview_set_active(s_tabview, 0, LV_ANIM_OFF);
+
+    /* Overlay the unused bottom margin without changing either page's layout. */
+    s_clock_label = lv_label_create(scr);
+    lv_obj_set_style_text_font(s_clock_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_clock_label, lv_color_hex(UI_COLOR_TEXT), 0);
+    lv_obj_align(s_clock_label, LV_ALIGN_BOTTOM_MID, 0, -2);
+    clock_label_update();
 
     air_quality_snapshot_t snapshot = air_quality_get_latest();
     source_selector_update(&snapshot);

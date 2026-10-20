@@ -11,4 +11,5 @@ idf_component_register(
     SRCS ${ui_sources}
     INCLUDE_DIRS "include"
     REQUIRES ${ui_requires}
+    PRIV_REQUIRES esp_timer
 )
