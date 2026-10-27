@@ -45,8 +45,12 @@ const display_rgb_timing_t* display_get_rgb_timing(void) {
     return &s_rgb_timing;
 }
 
+/* Refer to:
+ * GC9503V datasheet, version 1.00 2017.03.30
+ */
+
 /* Based on:
- * https://components.espressif.com/components/espressif/esp_lcd_gc9503/versions/3.0.1/readme
+ * https://components.espressif.com/componenits/espressif/esp_lcd_gc9503/versions/3.0.1/readme
  */
 
 /* Based on:
@@ -112,7 +116,7 @@ static const gc9503_lcd_init_cmd_t gc9503v_480_init[] = {
     //{0xb1, (uint8_t[]){0x10}, 1, 0}, // DISPLAY_CTL, datasheet says default 0x10 (BGR CFA), else 0x30 (RGB CFA). Handled by esp_lcd_panel_dev_config_t
     //{0x3a, (uint8_t[]){0x66}, 1, 0}, // RGB Interface Format. Use 110 18-bit (0x66), because 101 16-bit (0x50) ignores MSB R and B.
     {0x51, (uint8_t[]){0x7F}, 1, 0}, // Write Display Brightness. Default 0x3A or 0x51
-    {0xB0, (uint8_t[]){0x00}, 1, 0}, // RGB Interface Signals Control, DE mode, rising edge, polarity high. Sync and pulse bytes ignored in DE mode.
+    {0xB0, (uint8_t[]){0x00}, 1, 0}, // RGB Interface Signals Control, page 132. DE mode, PCLK rising, DE high, HS/VS active low. Internal porch parameters unused in DE mode.
     {0x11, (uint8_t[]){0x00}, 1, 120},
     {0x29, (uint8_t[]){0x00}, 1, 20},
 };
