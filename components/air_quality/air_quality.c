@@ -20,10 +20,8 @@ static const char* TAG = "air_quality";
 #define XY_MD0X_MODBUS_ADDR 1
 
 typedef enum {
-    SENSOR_SM_PROBE = 0,
-    SENSOR_SM_IDENTIFY,
+    SENSOR_SM_IDENTIFY = 0,
     SENSOR_SM_START,
-    SENSOR_SM_WAIT_FIRST,
     SENSOR_SM_RUN,
 } sensor_sm_t;
 
@@ -31,8 +29,8 @@ static TaskHandle_t s_task = NULL;
 static SemaphoreHandle_t s_lock = NULL;
 static air_quality_snapshot_t s_latest = {0};
 
-static sensor_sm_t s_scd41_sm = SENSOR_SM_PROBE;
-static sensor_sm_t s_sht20_sm = SENSOR_SM_PROBE;
+static sensor_sm_t s_scd41_sm = SENSOR_SM_IDENTIFY;
+static sensor_sm_t s_sht20_sm = SENSOR_SM_IDENTIFY;
 
 static uint32_t s_scd41_ready_fail_count = 0;
 static uint32_t s_scd41_read_fail_count = 0;
@@ -51,10 +49,6 @@ static void set_latest(const air_quality_snapshot_t* d) {
     } else {
         s_latest = *d;
     }
-}
-
-static air_quality_snapshot_t get_latest_no_lock(void) {
-    return s_latest;
 }
 
 static void init_snapshot(air_quality_snapshot_t* d) {
@@ -92,7 +86,7 @@ static bool i2c_addr_present(uint8_t addr_7bit) {
 }
 
 static void reset_scd41(air_quality_snapshot_t* d) {
-    s_scd41_sm = SENSOR_SM_PROBE;
+    s_scd41_sm = SENSOR_SM_IDENTIFY;
     s_scd41_ready_fail_count = 0;
     s_scd41_read_fail_count = 0;
     s_scd41_last_sample_ms = 0;
@@ -107,7 +101,7 @@ static void reset_scd41(air_quality_snapshot_t* d) {
 }
 
 static void reset_sht20(air_quality_snapshot_t* d) {
-    s_sht20_sm = SENSOR_SM_PROBE;
+    s_sht20_sm = SENSOR_SM_IDENTIFY;
     if (d) {
         air_quality_source_data_t* source = &d->source[AIR_QUALITY_SOURCE_SHT20];
         source->online = false;
@@ -131,10 +125,6 @@ static void run_scd41_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
 
     for (;;) {
         switch (s_scd41_sm) {
-        case SENSOR_SM_PROBE:
-            s_scd41_sm = SENSOR_SM_IDENTIFY;
-            continue;
-
         case SENSOR_SM_IDENTIFY: {
             const esp_err_t err = scd4x_esp_init(SCD41_ADDR);
             if (err != ESP_OK) {
@@ -241,7 +231,6 @@ static void run_scd41_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
             return;
         }
 
-        case SENSOR_SM_WAIT_FIRST:
         default:
             s_scd41_sm = SENSOR_SM_IDENTIFY;
             continue;
@@ -263,10 +252,6 @@ static void run_sht20_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
 
     for (;;) {
         switch (s_sht20_sm) {
-        case SENSOR_SM_PROBE:
-            s_sht20_sm = SENSOR_SM_IDENTIFY;
-            continue;
-
         case SENSOR_SM_IDENTIFY: {
             const esp_err_t init_err = sht20_init(SHT20_ADDR);
             if (init_err != ESP_OK) {
@@ -310,8 +295,6 @@ static void run_sht20_sm(air_quality_snapshot_t* d, bool present, uint32_t now_m
             return;
         }
 
-        case SENSOR_SM_START:
-        case SENSOR_SM_WAIT_FIRST:
         default:
             s_sht20_sm = SENSOR_SM_IDENTIFY;
             continue;
@@ -374,7 +357,7 @@ static void air_quality_task(void* arg) {
     ESP_LOGI(TAG, "Sensors present: SCD41=%d SHT20=%d XY-MD0x-configured=%d", scd41_present ? 1 : 0, sht20_present ? 1 : 0, s_xy_md0x_initialized ? 1 : 0);
 
     for (;;) {
-        air_quality_snapshot_t d = get_latest_no_lock();
+        air_quality_snapshot_t d = air_quality_get_latest();
         const uint32_t now_ms = (uint32_t)esp_log_timestamp();
         d.timestamp_ms = now_ms;
 
