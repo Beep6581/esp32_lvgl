@@ -73,7 +73,6 @@ typedef struct {
 } value_range_t;
 
 static lv_obj_t* s_tabview;
-static lv_timer_t* s_ui_timer;
 static lv_obj_t* s_crosshair;
 
 static lv_obj_t* s_metric_selector;
@@ -826,11 +825,16 @@ static void style_selector(lv_obj_t* selector) {
     lv_obj_set_style_bg_color(selector, lv_color_hex(UI_COLOR_BORDER), LV_PART_ITEMS | LV_STATE_CHECKED);
 }
 
-static lv_obj_t* create_chart_value_label(lv_obj_t* parent, uint32_t color) {
+static lv_obj_t* create_label(lv_obj_t* parent, uint32_t color, const lv_font_t* font) {
     lv_obj_t* label = lv_label_create(parent);
-    lv_obj_set_width(label, CHART_LABEL_WIDTH);
     lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
-    lv_obj_set_style_text_font(label, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(label, font, 0);
+    return label;
+}
+
+static lv_obj_t* create_chart_value_label(lv_obj_t* parent, uint32_t color) {
+    lv_obj_t* label = create_label(parent, color, &lv_font_montserrat_12);
+    lv_obj_set_width(label, CHART_LABEL_WIDTH);
     lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, 0);
     lv_obj_set_style_bg_color(label, lv_color_hex(UI_COLOR_BG), 0);
     lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
@@ -867,9 +871,7 @@ static void create_chart(lv_obj_t* parent, air_quality_metric_t metric) {
         s_chart_latest_label[metric][source] = create_chart_value_label(parent, s_source_color[source]);
     }
 
-    s_chart_title[metric] = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_chart_title[metric], lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_text_font(s_chart_title[metric], &lv_font_montserrat_12, 0);
+    s_chart_title[metric] = create_label(parent, UI_COLOR_TEXT, &lv_font_montserrat_12);
     lv_label_set_text_fmt(s_chart_title[metric], "%s [%s]", s_metric_name[metric], s_metric_unit[metric]);
 }
 
@@ -925,14 +927,10 @@ static void plot_screen_create(lv_obj_t* parent) {
         ESP_LOGE(TAG, "charts created without external data buffers");
     }
 
-    s_lbl_x_left = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_lbl_x_left, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_text_font(s_lbl_x_left, &lv_font_montserrat_12, 0);
+    s_lbl_x_left = create_label(parent, UI_COLOR_TEXT, &lv_font_montserrat_12);
     lv_label_set_text(s_lbl_x_left, "--:--");
 
-    s_lbl_x_right = lv_label_create(parent);
-    lv_obj_set_style_text_color(s_lbl_x_right, lv_color_hex(UI_COLOR_TEXT), 0);
-    lv_obj_set_style_text_font(s_lbl_x_right, &lv_font_montserrat_12, 0);
+    s_lbl_x_right = create_label(parent, UI_COLOR_TEXT, &lv_font_montserrat_12);
     lv_obj_set_width(s_lbl_x_right, 120);
     lv_obj_set_style_text_align(s_lbl_x_right, LV_TEXT_ALIGN_RIGHT, 0);
     lv_label_set_text(s_lbl_x_right, "--:--:--");
@@ -999,9 +997,7 @@ void ui_init(lv_display_t* disp) {
     lv_tabview_set_active(s_tabview, 0, LV_ANIM_OFF);
 
     /* Overlay the unused bottom margin without changing either page's layout. */
-    s_clock_label = lv_label_create(scr);
-    lv_obj_set_style_text_font(s_clock_label, &lv_font_montserrat_14, 0);
-    lv_obj_set_style_text_color(s_clock_label, lv_color_hex(UI_COLOR_TEXT), 0);
+    s_clock_label = create_label(scr, UI_COLOR_TEXT, &lv_font_montserrat_14);
     lv_obj_align(s_clock_label, LV_ALIGN_BOTTOM_MID, 0, -2);
     clock_label_update();
 
@@ -1010,7 +1006,7 @@ void ui_init(lv_display_t* disp) {
     comparison_table_update(&snapshot);
     chart_redraw();
 
-    s_ui_timer = lv_timer_create(ui_timer_cb, 1000, NULL);
+    lv_timer_create(ui_timer_cb, 1000, NULL);
 
     crosshair_create(scr);
 

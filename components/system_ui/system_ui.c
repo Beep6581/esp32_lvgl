@@ -44,11 +44,6 @@ typedef enum {
     SYSTEM_UI_ACTION_REFRESH,
 } system_ui_action_t;
 
-typedef enum {
-    SYSTEM_UI_PAGE_WIFI,
-    SYSTEM_UI_PAGE_C64COLORS,
-} system_ui_page_t;
-
 static const char* TAG = "system_ui";
 
 static lv_display_t* s_display;
@@ -65,7 +60,6 @@ static lv_obj_t* s_external_ip_label;
 static lv_obj_t* s_qr;
 static lv_obj_t* s_button_panel;
 static lv_obj_t* s_forget_dialog;
-static lv_timer_t* s_update_timer;
 static wifi_manager_status_t s_last_status;
 static lv_point_t s_press_point;
 static char s_last_qr_uri[WIFI_MANAGER_DPP_URI_CAPACITY];
@@ -200,6 +194,14 @@ static void forget_confirm_event_cb(lv_event_t* event) {
     close_forget_dialog();
 }
 
+static void style_bordered_box(lv_obj_t* box, uint32_t background_color) {
+    lv_obj_set_style_bg_color(box, lv_color_hex(background_color), 0);
+    lv_obj_set_style_border_color(box, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
+    lv_obj_set_style_border_width(box, 2, 0);
+    lv_obj_set_style_radius(box, 0, 0);
+    lv_obj_set_style_shadow_width(box, 0, 0);
+}
+
 static void show_forget_confirmation(void) {
     if (s_forget_dialog != NULL) {
         return;
@@ -211,12 +213,8 @@ static void show_forget_confirmation(void) {
     lv_obj_set_style_bg_opa(backdrop, LV_OPA_90, 0);
 
     lv_obj_set_size(s_forget_dialog, 380, 190);
-    lv_obj_set_style_bg_color(s_forget_dialog, lv_color_hex(SYSTEM_UI_COLOR_WORK), 0);
+    style_bordered_box(s_forget_dialog, SYSTEM_UI_COLOR_WORK);
     lv_obj_set_style_bg_opa(s_forget_dialog, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(s_forget_dialog, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
-    lv_obj_set_style_border_width(s_forget_dialog, 2, 0);
-    lv_obj_set_style_radius(s_forget_dialog, 0, 0);
-    lv_obj_set_style_shadow_width(s_forget_dialog, 0, 0);
     lv_obj_set_style_text_color(s_forget_dialog, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
     lv_obj_set_style_text_font(s_forget_dialog, &lv_font_unscii_16, 0);
 
@@ -227,22 +225,14 @@ static void show_forget_confirmation(void) {
 
     lv_obj_t* cancel_button = lv_msgbox_add_footer_button(s_forget_dialog, "CANCEL");
     lv_obj_set_size(cancel_button, SYSTEM_UI_DIALOG_BUTTON_WIDTH, SYSTEM_UI_DIALOG_BUTTON_HEIGHT);
-    lv_obj_set_style_bg_color(cancel_button, lv_color_hex(SYSTEM_UI_COLOR_WORK), 0);
-    lv_obj_set_style_border_color(cancel_button, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
-    lv_obj_set_style_border_width(cancel_button, 2, 0);
-    lv_obj_set_style_radius(cancel_button, 0, 0);
-    lv_obj_set_style_shadow_width(cancel_button, 0, 0);
+    style_bordered_box(cancel_button, SYSTEM_UI_COLOR_WORK);
     lv_obj_set_style_text_font(cancel_button, &lv_font_unscii_16, 0);
     lv_obj_add_event_cb(cancel_button, forget_cancel_event_cb, LV_EVENT_CLICKED, NULL);
 
     lv_obj_t* forget_button = lv_msgbox_add_footer_button(s_forget_dialog, "FORGET");
     lv_obj_set_size(forget_button, SYSTEM_UI_DIALOG_BUTTON_WIDTH, SYSTEM_UI_DIALOG_BUTTON_HEIGHT);
-    lv_obj_set_style_bg_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_OUTER), 0);
+    style_bordered_box(forget_button, SYSTEM_UI_COLOR_OUTER);
     lv_obj_set_style_text_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_WORK), 0);
-    lv_obj_set_style_border_color(forget_button, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
-    lv_obj_set_style_border_width(forget_button, 2, 0);
-    lv_obj_set_style_radius(forget_button, 0, 0);
-    lv_obj_set_style_shadow_width(forget_button, 0, 0);
     lv_obj_set_style_text_font(forget_button, &lv_font_unscii_16, 0);
     lv_obj_add_event_cb(forget_button, forget_confirm_event_cb, LV_EVENT_CLICKED, NULL);
 }
@@ -292,12 +282,8 @@ static void create_action_button(const char* text, system_ui_action_t action, bo
     const int32_t column = (int32_t)(index % 2U);
     const int32_t row = (int32_t)(index / 2U);
     lv_obj_set_pos(button, column * (SYSTEM_UI_BUTTON_WIDTH + SYSTEM_UI_BUTTON_GAP), row * (SYSTEM_UI_BUTTON_HEIGHT + SYSTEM_UI_BUTTON_GAP));
-    lv_obj_set_style_bg_color(button, lv_color_hex(destructive ? SYSTEM_UI_COLOR_OUTER : SYSTEM_UI_COLOR_WORK), 0);
+    style_bordered_box(button, destructive ? SYSTEM_UI_COLOR_OUTER : SYSTEM_UI_COLOR_WORK);
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_color(button, lv_color_hex(SYSTEM_UI_COLOR_TEXT), 0);
-    lv_obj_set_style_border_width(button, 2, 0);
-    lv_obj_set_style_radius(button, 0, 0);
-    lv_obj_set_style_shadow_width(button, 0, 0);
     lv_obj_set_style_outline_width(button, 0, 0);
     lv_obj_set_style_bg_color(button, lv_color_hex(SYSTEM_UI_COLOR_BUTTON_PRESSED), LV_STATE_PRESSED);
     lv_obj_add_event_cb(button, action_event_cb, LV_EVENT_CLICKED, (void*)(uintptr_t)action);
@@ -478,13 +464,8 @@ static lv_obj_t* create_label(lv_obj_t* parent, int32_t y, lv_text_align_t align
 }
 
 static lv_obj_t* create_status_label(int32_t y, uint32_t color) {
-    lv_obj_t* label = lv_label_create(s_status_panel);
+    lv_obj_t* label = create_label(s_status_panel, y, LV_TEXT_ALIGN_LEFT, color);
     lv_obj_set_width(label, SYSTEM_UI_STATUS_PANEL_WIDTH);
-    lv_obj_set_pos(label, 0, y);
-    lv_obj_set_style_text_color(label, lv_color_hex(color), 0);
-    lv_obj_set_style_text_font(label, &lv_font_unscii_16, 0);
-    lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_LEFT, 0);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
     return label;
 }
 
@@ -619,7 +600,7 @@ esp_err_t system_ui_init(lv_display_t* display, bool open_initially, system_ui_c
     lv_label_set_text(instruction, "SWIPE UP TO RETURN");
 
     s_last_status.state = (wifi_manager_state_t)-1;
-    s_update_timer = lv_timer_create(update_timer_cb, 250, NULL);
+    lv_timer_create(update_timer_cb, 250, NULL);
     lv_indev_add_event_cb(s_pointer_indev, input_event_cb, LV_EVENT_PRESSED, NULL);
     lv_indev_add_event_cb(s_pointer_indev, input_event_cb, LV_EVENT_GESTURE_DOWN, NULL);
     lv_indev_add_event_cb(s_pointer_indev, input_event_cb, LV_EVENT_GESTURE_UP, NULL);

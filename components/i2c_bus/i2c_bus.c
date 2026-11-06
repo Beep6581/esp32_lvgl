@@ -31,10 +31,6 @@ static void i2c_bus_unlock(void) {
     }
 }
 
-bool i2c_bus_is_initialized(void) {
-    return (s_bus != NULL);
-}
-
 i2c_master_bus_handle_t i2c_bus_get_handle(void) {
     return s_bus;
 }
@@ -90,30 +86,4 @@ esp_err_t i2c_bus_probe(uint8_t addr_7bit, int timeout_ms) {
         return ESP_ERR_INVALID_STATE;
     }
     return i2c_master_probe(s_bus, addr_7bit, timeout_ms);
-}
-
-esp_err_t i2c_bus_scan(uint8_t* out_addrs, size_t max_addrs, size_t* out_count) {
-    if (out_count == NULL) {
-        return ESP_ERR_INVALID_ARG;
-    }
-    *out_count = 0;
-
-    if (s_bus == NULL) {
-        return ESP_ERR_INVALID_STATE;
-    }
-
-    const int timeout_ms = 50;
-
-    //
-    for (uint16_t addr = 0x08; addr <= 0x77; addr++) {
-        const esp_err_t err = i2c_bus_probe((uint8_t)addr, timeout_ms);
-        if (err == ESP_OK) {
-            if (*out_count < max_addrs && out_addrs != NULL) {
-                out_addrs[*out_count] = (uint8_t)addr;
-            }
-            (*out_count)++;
-        }
-    }
-
-    return ESP_OK;
 }

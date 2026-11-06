@@ -2,6 +2,8 @@
 #include "rgb565.h"
 #include "fb_text.h"
 
+#include <stddef.h>
+
 #include "esp_err.h"
 #include "esp_log.h"
 
@@ -26,6 +28,15 @@ static void u16_to_binary_string(uint16_t v, char out[17]) {
     out[16] = '\0';
 }
 
+static void show_color(uint16_t* fb1, uint16_t* fb2, int w, int h, uint16_t color) {
+    char label[17];
+    fill_screen_u16(fb1, w, h, color);
+    fill_screen_u16(fb2, w, h, color);
+    u16_to_binary_string(color, label);
+    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_ALIGN_CENTER);
+    vTaskDelay(pdMS_TO_TICKS(1000));
+}
+
 static void lcd_bitwalk_test(esp_lcd_panel_handle_t panel_handle, int w, int h) {
     const char* TAG = "BITWALK";
 
@@ -44,65 +55,24 @@ static void lcd_bitwalk_test(esp_lcd_panel_handle_t panel_handle, int w, int h) 
     fill_screen_u16(fb2, w, h, RGB565_WHITE);
     vTaskDelay(pdMS_TO_TICKS(1000));
 
-    uint16_t color;
-    color = RGB565_REDMID;
-    ESP_LOGI(TAG, "Mid-red  0x%04X", color);
-    fill_screen_u16(fb1, w, h, color);
-    fill_screen_u16(fb2, w, h, color);
-    // snprintf(label, sizeof(label), "0x%04X", (unsigned)color);
-    u16_to_binary_string(color, label);
-    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    color = RGB565_RED;
-    ESP_LOGI(TAG, "Full-red 0x%04X", color);
-    fill_screen_u16(fb1, w, h, 0xF800);
-    fill_screen_u16(fb2, w, h, 0xF800);
-    u16_to_binary_string(color, label);
-    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    color = RGB565_GREENMID;
-    ESP_LOGI(TAG, "Mid-grn  0x%04X", color);
-    fill_screen_u16(fb1, w, h, 0x03E0);
-    fill_screen_u16(fb2, w, h, 0x03E0);
-    u16_to_binary_string(color, label);
-    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    color = RGB565_GREEN;
-    ESP_LOGI(TAG, "Full-grn 0x%04X", color);
-    fill_screen_u16(fb1, w, h, 0x07E0);
-    fill_screen_u16(fb2, w, h, 0x07E0);
-    u16_to_binary_string(color, label);
-    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    color = RGB565_BLUEMID;
-    ESP_LOGI(TAG, "Mid-blu  0x%04X", color);
-    fill_screen_u16(fb1, w, h, 0x000F);
-    fill_screen_u16(fb2, w, h, 0x000F);
-    u16_to_binary_string(color, label);
-    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
-
-    color = RGB565_BLUE;
-    ESP_LOGI(TAG, "Full-blu 0x%04X", color);
-    fill_screen_u16(fb1, w, h, 0x001F);
-    fill_screen_u16(fb2, w, h, 0x001F);
-    u16_to_binary_string(color, label);
-    fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP_LOGI(TAG, "Mid-red  0x%04X", RGB565_REDMID);
+    show_color(fb1, fb2, w, h, RGB565_REDMID);
+    ESP_LOGI(TAG, "Full-red 0x%04X", RGB565_RED);
+    show_color(fb1, fb2, w, h, RGB565_RED);
+    ESP_LOGI(TAG, "Mid-grn  0x%04X", RGB565_GREENMID);
+    show_color(fb1, fb2, w, h, RGB565_GREENMID);
+    ESP_LOGI(TAG, "Full-grn 0x%04X", RGB565_GREEN);
+    show_color(fb1, fb2, w, h, RGB565_GREEN);
+    ESP_LOGI(TAG, "Mid-blu  0x%04X", RGB565_BLUEMID);
+    show_color(fb1, fb2, w, h, RGB565_BLUEMID);
+    ESP_LOGI(TAG, "Full-blu 0x%04X", RGB565_BLUE);
+    show_color(fb1, fb2, w, h, RGB565_BLUE);
 
     for (int bit = 0; bit < 16; bit++) {        // bit=12
         uint16_t pixel = (uint16_t)(1u << bit); // pixel=4096
         u16_to_binary_string(pixel, label);     // label=0001000000000000
         ESP_LOGI(TAG, "bit=%2d  pixel=0x%04X  binary=%s", bit, pixel, label);
-        fill_screen_u16(fb1, w, h, pixel);
-        fill_screen_u16(fb2, w, h, pixel);
-        u16_to_binary_string(pixel, label);
-        fb_draw_text_2fb(fb1, fb2, w, h, label, RGB565_MAGENTA, 4, FB_FONT_5X7, FB_ALIGN_CENTER);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        show_color(fb1, fb2, w, h, pixel);
     }
 }
 
@@ -124,19 +94,9 @@ void demo_bitwalk(esp_lcd_panel_handle_t panel_handle) {
     }
     enum { W = 50, H = 50 };
     static uint16_t block[W * H];
-    for (int i = 0; i < W * H; ++i)
-        block[i] = RGB565_WHITE;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W * 0, 0, W * 1, H, block));
-    for (int i = 0; i < W * H; ++i)
-        block[i] = RGB565_BLACK;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W * 1, 0, W * 2, H, block));
-    for (int i = 0; i < W * H; ++i)
-        block[i] = RGB565_RED;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W * 2, 0, W * 3, H, block));
-    for (int i = 0; i < W * H; ++i)
-        block[i] = RGB565_GREEN;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W * 3, 0, W * 4, H, block));
-    for (int i = 0; i < W * H; ++i)
-        block[i] = RGB565_BLUE;
-    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W * 4, 0, W * 5, H, block));
+    const uint16_t colors[] = {RGB565_WHITE, RGB565_BLACK, RGB565_RED, RGB565_GREEN, RGB565_BLUE};
+    for (size_t i = 0; i < sizeof(colors) / sizeof(colors[0]); i++) {
+        fill_screen_u16(block, W, H, colors[i]);
+        ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, W * i, 0, W * (i + 1), H, block));
+    }
 }
