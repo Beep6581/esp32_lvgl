@@ -220,17 +220,13 @@ static esp_err_t make_wifi_config_from_dpp(const esp_dpp_config_data_t* dpp, wif
 }
 
 static void copy_ssid_from_wifi_config(char* destination, const wifi_config_t* config) {
-    size_t length = 0U;
-    if (config != NULL) {
-        length = strnlen((const char*)config->sta.ssid, sizeof(config->sta.ssid));
+    if (config == NULL) {
+        destination[0] = '\0';
+        return;
     }
-    if (length >= WIFI_MANAGER_SSID_CAPACITY) {
-        length = WIFI_MANAGER_SSID_CAPACITY - 1U;
-    }
-    if (length > 0U) {
-        memcpy(destination, config->sta.ssid, length);
-    }
-    destination[length] = '\0';
+
+    snprintf(destination, WIFI_MANAGER_SSID_CAPACITY, "%.*s",
+             (int)sizeof(config->sta.ssid), (const char*)config->sta.ssid);
 }
 
 static void clear_connection_status_locked(void) {

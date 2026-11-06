@@ -136,14 +136,6 @@ static void* plot_alloc(size_t size) {
     return p;
 }
 
-static void format_milli_1dp(char* out, size_t out_len, int32_t milli) {
-    if (out == NULL || out_len == 0) {
-        return;
-    }
-
-    snprintf(out, out_len, "%.1f", milli / 1000.0);
-}
-
 static void format_duration_hms(char* out, size_t out_len, uint32_t ms) {
     if (out == NULL || out_len == 0) {
         return;
@@ -174,7 +166,7 @@ static void format_metric_value(char* out, size_t out_len, air_quality_metric_t 
     if (metric == AIR_QUALITY_METRIC_CO2) {
         snprintf(out, out_len, "%ld", (long)value);
     } else {
-        format_milli_1dp(out, out_len, value);
+        snprintf(out, out_len, "%.1f", value / 1000.0);
     }
 }
 

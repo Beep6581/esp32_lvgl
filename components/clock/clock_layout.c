@@ -4,6 +4,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "esp_heap_caps.h"
@@ -159,14 +160,8 @@ esp_err_t clock_layout_build_time(clock_layout_t* layout, uint8_t hour, uint8_t 
         return ESP_ERR_INVALID_ARG;
     }
 
-    char text[6] = {
-        (char)('0' + hour / 10),
-        (char)('0' + hour % 10),
-        ':',
-        (char)('0' + minute / 10),
-        (char)('0' + minute % 10),
-        '\0',
-    };
+    char text[6];
+    snprintf(text, sizeof(text), "%02u:%02u", (unsigned)hour, (unsigned)minute);
 
     uint16_t digit_advance = 0;
     uint16_t tallest_glyph = 0;
