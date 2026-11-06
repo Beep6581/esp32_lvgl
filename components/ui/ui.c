@@ -141,20 +141,7 @@ static void format_milli_1dp(char* out, size_t out_len, int32_t milli) {
         return;
     }
 
-    int32_t tenths;
-    if (milli >= 0) {
-        tenths = (milli + 50) / 100;
-    } else {
-        tenths = (milli - 50) / 100;
-    }
-
-    const int32_t whole = tenths / 10;
-    int32_t frac = tenths % 10;
-    if (frac < 0) {
-        frac = -frac;
-    }
-
-    snprintf(out, out_len, "%ld.%ld", (long)whole, (long)frac);
+    snprintf(out, out_len, "%.1f", milli / 1000.0);
 }
 
 static void format_duration_hms(char* out, size_t out_len, uint32_t ms) {
