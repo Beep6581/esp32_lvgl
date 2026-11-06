@@ -170,17 +170,17 @@ static esp_err_t display_nvs_init(void) {
 static display_timing_mode_t display_get_saved_timing_mode(void) {
     esp_err_t err = display_nvs_init();
     if (err != ESP_OK) {
-        return DISPLAY_TIMING_MIN_HBP_54HZ;
+        return DISPLAY_TIMING_MIN_MD_HBP;
     }
 
     nvs_handle_t nvs = 0;
     err = nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READONLY, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return DISPLAY_TIMING_MIN_HBP_54HZ;
+        return DISPLAY_TIMING_MIN_MD_HBP;
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs_open read failed: %s", esp_err_to_name(err));
-        return DISPLAY_TIMING_MIN_HBP_54HZ;
+        return DISPLAY_TIMING_MIN_MD_HBP;
     }
 
     uint8_t saved_mode = 0;
@@ -188,15 +188,15 @@ static display_timing_mode_t display_get_saved_timing_mode(void) {
     nvs_close(nvs);
 
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return DISPLAY_TIMING_MIN_HBP_54HZ;
+        return DISPLAY_TIMING_MIN_MD_HBP;
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs_get_u8 timing mode failed: %s", esp_err_to_name(err));
-        return DISPLAY_TIMING_MIN_HBP_54HZ;
+        return DISPLAY_TIMING_MIN_MD_HBP;
     }
     if (saved_mode >= DISPLAY_TIMING_COUNT) {
         ESP_LOGW(TAG, "ignoring invalid saved timing mode: %u", (unsigned)saved_mode);
-        return DISPLAY_TIMING_MIN_HBP_54HZ;
+        return DISPLAY_TIMING_MIN_MD_HBP;
     }
 
     return (display_timing_mode_t)saved_mode;
@@ -346,19 +346,19 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
         all within the documented 54-66 Hz range.
         */
 
-    case DISPLAY_TIMING_MIN_HBP:
-        timing_name = "MIN HBP";
+    case DISPLAY_TIMING_MIN_A22:
+        timing_name = "MIN A22";
         timing.pclk_hz = 16600000;
-        timing.hsync_pulse_width = 1;
-        timing.hsync_back_porch = 72;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 1;
-        timing.vsync_back_porch = 1;
-        timing.vsync_front_porch = 16;
+        timing.hsync_pulse_width = 10;
+        timing.hsync_back_porch = 40;
+        timing.hsync_front_porch = 30;
+        timing.vsync_pulse_width = 10;
+        timing.vsync_back_porch = 40;
+        timing.vsync_front_porch = 8;
         break;
 
-    case DISPLAY_TIMING_MIN_HBP_54HZ:
-        timing_name = "MIN HBP 54Hz";
+    case DISPLAY_TIMING_MIN_MD_HBP:
+        timing_name = "MIN MD HBP";
         timing.pclk_hz = 16600000;
         timing.hsync_pulse_width = 1;
         timing.hsync_back_porch = 72;
@@ -368,26 +368,28 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
         timing.vsync_front_porch = 71;
         break;
 
-    case DISPLAY_TIMING_MIN_HSYNC:
-        timing_name = "MIN HSYNC";
+    // 60.006 Hz
+    case DISPLAY_TIMING_MIN_MD_1:
+        timing_name = "MIN MD 1";
         timing.pclk_hz = 16600000;
-        timing.hsync_pulse_width = 71;
-        timing.hsync_back_porch = 2;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 1;
-        timing.vsync_back_porch = 1;
-        timing.vsync_front_porch = 1;
+        timing.hsync_pulse_width = 10;
+        timing.hsync_back_porch = 32;
+        timing.hsync_front_porch = 38;
+        timing.vsync_pulse_width = 5;
+        timing.vsync_back_porch = 5;
+        timing.vsync_front_porch = 4;
         break;
 
-    case DISPLAY_TIMING_MID_HBP:
-        timing_name = "MID HBP";
-        timing.pclk_hz = 26407680;
-        timing.hsync_pulse_width = 1;
-        timing.hsync_back_porch = 115;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 64;
-        timing.vsync_back_porch = 64;
-        timing.vsync_front_porch = 128;
+    // 55.0985 Hz
+    case DISPLAY_TIMING_MIN_MD_2:
+        timing_name = "MIN MD 2";
+        timing.pclk_hz = 16600000;
+        timing.hsync_pulse_width = 10;
+        timing.hsync_back_porch = 32;
+        timing.hsync_front_porch = 38;
+        timing.vsync_pulse_width = 5;
+        timing.vsync_back_porch = 5;
+        timing.vsync_front_porch = 48;
         break;
 
     case DISPLAY_TIMING_MID_BAL:
