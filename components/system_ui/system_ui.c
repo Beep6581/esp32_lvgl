@@ -13,7 +13,7 @@
 #define SYSTEM_UI_WORK_MARGIN 20
 #define SYSTEM_UI_WORK_WIDTH (BOARD_LCD_HRES - (SYSTEM_UI_WORK_MARGIN * 2))
 #define SYSTEM_UI_WORK_HEIGHT (BOARD_LCD_VRES - (SYSTEM_UI_WORK_MARGIN * 2))
-#define SYSTEM_UI_QR_SIZE 290
+#define SYSTEM_UI_QR_SIZE 270
 #define SYSTEM_UI_BUTTON_WIDTH 188
 #define SYSTEM_UI_BUTTON_HEIGHT 42
 #define SYSTEM_UI_DIALOG_BUTTON_WIDTH 184
@@ -58,6 +58,7 @@ static lv_obj_t* s_ip_label;
 static lv_obj_t* s_internet_label;
 static lv_obj_t* s_external_ip_label;
 static lv_obj_t* s_qr;
+static lv_obj_t* s_qr_band_label;
 static lv_obj_t* s_button_panel;
 static lv_obj_t* s_forget_dialog;
 static wifi_manager_status_t s_last_status;
@@ -387,6 +388,7 @@ static void update_qr(const wifi_manager_status_t* status) {
     if (status->dpp_uri[0] == '\0') {
         s_last_qr_uri[0] = '\0';
         lv_obj_set_hidden(s_qr, true);
+        lv_obj_set_hidden(s_qr_band_label, true);
         lv_obj_set_hidden(s_status_panel, false);
         return;
     }
@@ -396,12 +398,14 @@ static void update_qr(const wifi_manager_status_t* status) {
         if (result != LV_RESULT_OK) {
             ESP_LOGE(TAG, "failed to encode DPP QR URI");
             lv_obj_set_hidden(s_qr, true);
+            lv_obj_set_hidden(s_qr_band_label, true);
             lv_obj_set_hidden(s_status_panel, false);
             return;
         }
         memcpy(s_last_qr_uri, status->dpp_uri, sizeof(s_last_qr_uri));
     }
     lv_obj_set_hidden(s_qr, false);
+    lv_obj_set_hidden(s_qr_band_label, false);
     lv_obj_set_hidden(s_status_panel, true);
 }
 
@@ -532,6 +536,10 @@ static void create_wifi_config_page(lv_obj_t* page) {
     lv_qrcode_set_quiet_zone(s_qr, true);
     lv_obj_align(s_qr, LV_ALIGN_CENTER, 0, -8);
     lv_obj_set_hidden(s_qr, true);
+
+    s_qr_band_label = create_label(page, 54, LV_TEXT_ALIGN_CENTER, SYSTEM_UI_COLOR_TEXT);
+    lv_label_set_text(s_qr_band_label, "2.4 GHz only");
+    lv_obj_set_hidden(s_qr_band_label, true);
 
     s_button_panel = lv_obj_create(page);
     lv_obj_set_style_bg_opa(s_button_panel, LV_OPA_TRANSP, 0);
