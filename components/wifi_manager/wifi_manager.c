@@ -72,6 +72,7 @@ static bool s_intentional_disconnect;
 static bool s_station_started;
 static bool s_dpp_listening;
 static bool s_dpp_cleanup_running;
+static bool s_dpp_lifecycle_busy;
 static bool s_probe_running;
 static bool s_sntp_initialized;
 static uint8_t s_connect_attempts;
@@ -249,19 +250,25 @@ static esp_err_t init_wifi_driver(void) {
 }
 
 static esp_err_t stop_dpp_locked(void) {
+    if (s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
+        return ESP_ERR_INVALID_STATE;
+    }
     if (!s_dpp_initialized) {
         return ESP_OK;
     }
-    if (s_dpp_cleanup_running) {
-        return ESP_OK;
-    }
 
+    // Callers hold s_lock once and run outside the event loop. DPP shutdown
+    // waits for that loop, so its handlers must be able to acquire s_lock.
+    s_dpp_lifecycle_busy = true;
+    unlock();
     esp_err_t result = esp_supp_dpp_stop_listen();
     if (result != ESP_OK) {
         ESP_LOGW(TAG, "esp_supp_dpp_stop_listen failed: %s", esp_err_to_name(result));
     }
 
     const esp_err_t deinit_result = esp_supp_dpp_deinit();
+    lock();
+    s_dpp_lifecycle_busy = false;
     if (deinit_result != ESP_OK) {
         ESP_LOGE(TAG, "esp_supp_dpp_deinit failed: %s", esp_err_to_name(deinit_result));
         return deinit_result;
@@ -379,7 +386,7 @@ static esp_err_t start_provisioning_locked(void) {
     if (!s_started) {
         return ESP_ERR_INVALID_STATE;
     }
-    if (s_dpp_cleanup_running) {
+    if (s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
         return ESP_ERR_INVALID_STATE;
     }
 
@@ -404,7 +411,12 @@ static esp_err_t start_provisioning_locked(void) {
     s_dpp_config_received = false;
     s_connect_attempts = 0U;
 
+    // Initialization also waits for event-handler registration in the SDK.
+    s_dpp_lifecycle_busy = true;
+    unlock();
     esp_err_t err = esp_supp_dpp_init();
+    lock();
+    s_dpp_lifecycle_busy = false;
     if (err != ESP_OK) {
         s_status.state = WIFI_MANAGER_STATE_PROVISIONING_FAILED;
         return err;
@@ -667,6 +679,9 @@ static void handle_disconnect_locked(const wifi_event_sta_disconnected_t* event)
         s_intentional_disconnect = false;
         return;
     }
+    if (s_dpp_lifecycle_busy) {
+        return;
+    }
 
     const bool candidate = s_status.state == WIFI_MANAGER_STATE_TESTING_CANDIDATE;
     const bool reconnect = candidate || s_status.state == WIFI_MANAGER_STATE_CONNECTING || state_is_connected(s_status.state);
@@ -721,6 +736,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
     (void)arg;
 
     lock();
+    // During init/teardown only account for disconnects. Do not accept a
+    // candidate or start another DPP operation while the SDK is changing it.
+    if (s_dpp_lifecycle_busy && (event_base != WIFI_EVENT || event_id != WIFI_EVENT_STA_DISCONNECTED)) {
+        unlock();
+        return;
+    }
     if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         handle_got_ip_locked(event_data);
         unlock();
@@ -762,6 +783,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
             break;
 
         case WIFI_EVENT_DPP_URI_READY: {
+            if (!s_dpp_initialized || s_dpp_cleanup_running) {
+                break;
+            }
             const wifi_event_dpp_uri_ready_t* event = event_data;
             if (event == NULL || event->uri_data_len < 2U || event->uri_data_len > sizeof(s_status.dpp_uri) ||
                 event->uri[event->uri_data_len - 1U] != '\0') {
@@ -791,6 +815,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         }
 
         case WIFI_EVENT_DPP_CFG_RECVD: {
+            if (!s_dpp_initialized || s_dpp_cleanup_running || s_status.state != WIFI_MANAGER_STATE_PROVISIONING) {
+                break;
+            }
             const esp_err_t err = receive_dpp_config_locked(event_data);
             if (err != ESP_OK) {
                 ESP_LOGE(TAG, "failed to apply DPP candidate: %s", esp_err_to_name(err));
@@ -800,6 +827,9 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t e
         }
 
         case WIFI_EVENT_DPP_FAILED: {
+            if (!s_dpp_initialized || s_dpp_cleanup_running) {
+                break;
+            }
             const wifi_event_dpp_failed_t* event = event_data;
             const esp_err_t reason = event != NULL ? (esp_err_t)event->failure_reason : ESP_ERR_DPP_FAILURE;
             if (s_dpp_config_received) {
@@ -975,6 +1005,10 @@ void wifi_manager_get_status(wifi_manager_status_t* status) {
 
 esp_err_t wifi_manager_retry(void) {
     lock();
+    if (s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     esp_err_t err;
     if (s_status.state == WIFI_MANAGER_STATE_CANDIDATE_FAILED) {
         err = s_candidate_valid && s_dpp_initialized ? apply_candidate_locked() : start_provisioning_locked();
@@ -1005,6 +1039,10 @@ esp_err_t wifi_manager_start_provisioning(void) {
 
 esp_err_t wifi_manager_continue_offline(void) {
     lock();
+    if (s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     s_intentional_disconnect = true;
     esp_wifi_disconnect();
     const esp_err_t dpp_result = stop_dpp_locked();
@@ -1021,7 +1059,7 @@ esp_err_t wifi_manager_continue_offline(void) {
 
 esp_err_t wifi_manager_cancel_configuration(void) {
     lock();
-    if (!s_status.reconfiguration) {
+    if (!s_status.reconfiguration || s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
         unlock();
         return ESP_ERR_INVALID_STATE;
     }
@@ -1038,6 +1076,10 @@ esp_err_t wifi_manager_cancel_configuration(void) {
 
 esp_err_t wifi_manager_disconnect(void) {
     lock();
+    if (s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     const esp_err_t dpp_result = stop_dpp_locked();
     s_intentional_disconnect = true;
     const esp_err_t disconnect_result = esp_wifi_disconnect();
@@ -1050,6 +1092,10 @@ esp_err_t wifi_manager_disconnect(void) {
 
 esp_err_t wifi_manager_forget_network(void) {
     lock();
+    if (s_dpp_lifecycle_busy || s_dpp_cleanup_running) {
+        unlock();
+        return ESP_ERR_INVALID_STATE;
+    }
     const esp_err_t dpp_result = stop_dpp_locked();
     s_intentional_disconnect = true;
     esp_wifi_disconnect();
