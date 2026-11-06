@@ -36,8 +36,8 @@ Do not expose sensor register/protocol details to the UI.
 
 The present validated master baseline is:
 
-- Default LCD timing: `DISPLAY_TIMING_MIN_HBP_54HZ` (16.6 MHz PCLK,
-  approximately 54.09 Hz).
+- Default LCD timing: `DISPLAY_TIMING_MIN_MD_2` (16.6 MHz PCLK,
+  approximately 55.10 Hz). Valid saved NVS timing selections override this default.
 - Two RGB framebuffers in PSRAM.
 - RGB bounce-buffer mode with 40 lines per buffer.
 - `bb_mode = 1`, `avoid_tearing = 1`, `full_refresh = 0`, and

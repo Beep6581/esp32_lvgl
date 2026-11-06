@@ -170,17 +170,17 @@ static esp_err_t display_nvs_init(void) {
 static display_timing_mode_t display_get_saved_timing_mode(void) {
     esp_err_t err = display_nvs_init();
     if (err != ESP_OK) {
-        return DISPLAY_TIMING_MIN_MD_HBP;
+        return DISPLAY_TIMING_MIN_MD_2;
     }
 
     nvs_handle_t nvs = 0;
     err = nvs_open(DISPLAY_NVS_NAMESPACE, NVS_READONLY, &nvs);
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return DISPLAY_TIMING_MIN_MD_HBP;
+        return DISPLAY_TIMING_MIN_MD_2;
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs_open read failed: %s", esp_err_to_name(err));
-        return DISPLAY_TIMING_MIN_MD_HBP;
+        return DISPLAY_TIMING_MIN_MD_2;
     }
 
     uint8_t saved_mode = 0;
@@ -188,15 +188,15 @@ static display_timing_mode_t display_get_saved_timing_mode(void) {
     nvs_close(nvs);
 
     if (err == ESP_ERR_NVS_NOT_FOUND) {
-        return DISPLAY_TIMING_MIN_MD_HBP;
+        return DISPLAY_TIMING_MIN_MD_2;
     }
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "nvs_get_u8 timing mode failed: %s", esp_err_to_name(err));
-        return DISPLAY_TIMING_MIN_MD_HBP;
+        return DISPLAY_TIMING_MIN_MD_2;
     }
     if (saved_mode >= DISPLAY_TIMING_COUNT) {
         ESP_LOGW(TAG, "ignoring invalid saved timing mode: %u", (unsigned)saved_mode);
-        return DISPLAY_TIMING_MIN_MD_HBP;
+        return DISPLAY_TIMING_MIN_MD_2;
     }
 
     return (display_timing_mode_t)saved_mode;

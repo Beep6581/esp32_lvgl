@@ -252,24 +252,24 @@ The timing selector stores a mode in NVS under `display/timing_mode` and
 restarts the device when a new diagnostic selection is made. This means the
 actual timing on any one unit can differ from the source fallback.
 
-The normal/default timing selected by the display investigation is
-`DISPLAY_TIMING_MIN_HBP_54HZ`:
+The normal/default timing is now `DISPLAY_TIMING_MIN_MD_2`, selected after
+the user's latest hardware testing:
 
 | Parameter | Value |
 | --- | ---: |
 | Pixel clock | 16,600,000 Hz |
 | Active area | 480 x 480 |
-| HSYNC pulse / HBP / HFP | 1 / 72 / 2 clocks |
-| VSYNC pulse / VBP / VFP | 1 / 1 / 71 lines |
-| Calculated frame rate | about 54.09 Hz |
+| HSYNC pulse / HBP / HFP | 10 / 32 / 38 clocks |
+| VSYNC pulse / VBP / VFP | 5 / 5 / 48 lines |
+| Calculated frame rate | about 55.10 Hz |
 
 The 16.6 MHz clock is the documented lower end of the GC9503V DCLK range. The
-75-clock total horizontal blanking satisfies the documented minimum 4.5 us
-blanking interval at that clock. Testing favored putting the otherwise
+current 80-clock horizontal blanking exceeds the documented minimum 4.5 us
+at that clock. Earlier testing used 75 clocks and favored putting the otherwise
 unspecified blanking in HBP. HFP-heavy variants produced a blank white screen
 and were removed from the selector.
 
-The ~54 Hz mode extends the vertical front porch relative to the otherwise
+The previous ~54 Hz default extended the vertical front porch relative to the otherwise
 similar `DISPLAY_TIMING_MIN_HBP` mode, which runs at about 60.06 Hz. Both worked,
 but the lower frame rate reduced PSRAM/bounce-buffer refill pressure in
 demanding tests. Across the diagnostic timing families, low-clock MIN modes
@@ -309,10 +309,10 @@ Two visual problems encountered during this work should not be conflated:
 
 ### Default selection behavior
 
-`DISPLAY_TIMING_MIN_HBP_54HZ` is the first-boot, missing-NVS, NVS-error, and
+`DISPLAY_TIMING_MIN_MD_2` is the first-boot, missing-NVS, NVS-error, and
 invalid-selection fallback in `display_get_saved_timing_mode()`. It is the
-normal timing for Air Quality, Screen Diagnostics, and future application
-modes unless a mode explicitly selects something else. A valid timing already
+normal timing for Air Quality, Screen Diagnostics, Clock, and future application
+modes using the shared display initialization. A valid timing already
 stored in NVS remains authoritative, so the diagnostic timing selector and all
 alternative timing modes continue to work.
 
