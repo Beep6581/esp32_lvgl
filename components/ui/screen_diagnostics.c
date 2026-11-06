@@ -24,8 +24,8 @@
 #define DASHBOARD_ARC_ANIMATION_MS 2200
 #define DASHBOARD_BAR_ANIMATION_MS 1700
 #define DASHBOARD_SLIDER_ANIMATION_MS 2600
-#define DASHBOARD_CHART_UPDATE_MS 200
-#define DASHBOARD_CHART_POINT_COUNT 32
+#define DASHBOARD_CHART_UPDATE_MS 100
+#define DASHBOARD_CHART_POINT_COUNT 64
 #define TIMING_BUTTON_WIDTH 72
 #define TIMING_BUTTON_HEIGHT 42
 #define TIMING_BUTTON_GAP 14
@@ -41,14 +41,16 @@ static lv_obj_t* s_diagnostic_tabview;
 static lv_obj_t* s_dashboard_value_label;
 static lv_obj_t* s_dashboard_chart;
 static lv_chart_series_t* s_dashboard_chart_series;
-static uint32_t s_dashboard_chart_step;
+/* One extra point supports interpolated intersections at both chart edges. */
+static int32_t s_dashboard_chart_x[DASHBOARD_CHART_POINT_COUNT + 1];
+static int32_t s_dashboard_chart_y[DASHBOARD_CHART_POINT_COUNT + 1];
 
 enum {
     DIAGNOSTIC_TAB_RGB,
     DIAGNOSTIC_TAB_HUE,
+    DIAGNOSTIC_TAB_DASHBOARD,
     DIAGNOSTIC_TAB_SWIPE,
     DIAGNOSTIC_TAB_SOLID,
-    DIAGNOSTIC_TAB_DASHBOARD,
 };
 
 #if CONFIG_UI_METRICS
@@ -378,14 +380,35 @@ static void dashboard_slider_set_value(void* slider, int32_t value) {
 #endif
 }
 
-static void dashboard_chart_timer_cb(lv_timer_t* timer) {
+static void dashboard_chart_scroll(void* chart, int32_t elapsed_ms) {
+    /* Rapid irregular fluctuations over a slower uneven wave; deterministic
+     * so successive performance runs exercise the same workload. */
     static const int32_t values[DASHBOARD_CHART_POINT_COUNT] = {
-        42, 45, 49, 53, 58, 62, 66, 69, 72, 74, 73, 71, 68, 64, 61, 57, 54, 51, 48, 46, 44, 43, 45, 48, 52, 57, 61, 65, 62, 58, 53, 47,
+        28, 12, 35, 19, 42, 23, 32, 51, 34, 57, 40, 65, 47, 72, 55, 81, 61, 89, 68, 78, 58, 91, 70, 96, 74, 85, 62, 88, 64, 79, 54, 72,
+        48, 65, 39, 58, 33, 46, 24, 43, 21, 36, 14, 31, 9,  27, 5,  22, 13, 35, 18, 44, 26, 51, 32, 47, 23, 42, 17, 36, 12, 29, 8,  24,
     };
 
-    (void)timer;
-    lv_chart_set_next_value(s_dashboard_chart, s_dashboard_chart_series, values[s_dashboard_chart_step % DASHBOARD_CHART_POINT_COUNT]);
-    s_dashboard_chart_step++;
+    const uint32_t step = (uint32_t)elapsed_ms / DASHBOARD_CHART_UPDATE_MS;
+    const int32_t offset = elapsed_ms % DASHBOARD_CHART_UPDATE_MS;
+    for (uint32_t i = 0; i <= DASHBOARD_CHART_POINT_COUNT; i++) {
+        s_dashboard_chart_x[i] = (int32_t)(i * DASHBOARD_CHART_UPDATE_MS) - offset;
+        const uint32_t index = (step + i) % DASHBOARD_CHART_POINT_COUNT;
+        const int32_t previous = values[(index + DASHBOARD_CHART_POINT_COUNT - 1) % DASHBOARD_CHART_POINT_COUNT];
+        const int32_t next = values[(index + 1) % DASHBOARD_CHART_POINT_COUNT];
+        /* Blend neighboring samples to reduce the rapid fluctuations. */
+        s_dashboard_chart_y[i] = (previous + 4 * values[index] + next) / 6;
+    }
+    /* LVGL clamps out-of-range X values. Interpolate their Y values too so
+     * entering/leaving segments meet the edges without vertical jumps. */
+    s_dashboard_chart_x[0] = 0;
+    s_dashboard_chart_y[0] += (s_dashboard_chart_y[1] - s_dashboard_chart_y[0]) * offset / DASHBOARD_CHART_UPDATE_MS;
+    const uint32_t last = DASHBOARD_CHART_POINT_COUNT;
+    s_dashboard_chart_x[last] = (DASHBOARD_CHART_POINT_COUNT - 1) * DASHBOARD_CHART_UPDATE_MS;
+    s_dashboard_chart_y[last] = s_dashboard_chart_y[last - 1] + (s_dashboard_chart_y[last] - s_dashboard_chart_y[last - 1]) * offset / DASHBOARD_CHART_UPDATE_MS;
+    lv_chart_refresh(chart);
+#if CONFIG_UI_METRICS
+    diagnostic_animation_callback_record(DIAGNOSTIC_TAB_DASHBOARD);
+#endif
 }
 
 static void dashboard_animation_start(lv_obj_t* object, lv_anim_exec_xcb_t callback, int32_t start, int32_t end, uint32_t duration) {
@@ -493,9 +516,11 @@ static void dashboard_create(lv_obj_t* parent) {
     s_dashboard_chart = lv_chart_create(chart_card);
     lv_obj_set_pos(s_dashboard_chart, 10, 31);
     lv_obj_set_size(s_dashboard_chart, 436, 108);
-    lv_chart_set_type(s_dashboard_chart, LV_CHART_TYPE_LINE);
+    /* SCATTER connects explicit X/Y points, allowing sub-sample horizontal motion. */
+    lv_chart_set_type(s_dashboard_chart, LV_CHART_TYPE_SCATTER);
     lv_chart_set_axis_range(s_dashboard_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-    lv_chart_set_point_count(s_dashboard_chart, DASHBOARD_CHART_POINT_COUNT);
+    lv_chart_set_axis_range(s_dashboard_chart, LV_CHART_AXIS_PRIMARY_X, 0, (DASHBOARD_CHART_POINT_COUNT - 1) * DASHBOARD_CHART_UPDATE_MS);
+    lv_chart_set_point_count(s_dashboard_chart, DASHBOARD_CHART_POINT_COUNT + 1);
     lv_chart_set_div_line_count(s_dashboard_chart, 4, 8);
     lv_chart_set_update_mode(s_dashboard_chart, LV_CHART_UPDATE_MODE_SHIFT);
     lv_obj_set_style_bg_color(s_dashboard_chart, lv_color_hex(0x111C27), 0);
@@ -506,11 +531,19 @@ static void dashboard_create(lv_obj_t* parent) {
     lv_obj_set_style_size(s_dashboard_chart, 0, 0, LV_PART_INDICATOR);
     s_dashboard_chart_series = lv_chart_add_series(s_dashboard_chart, lv_color_hex(0xB679FF), LV_CHART_AXIS_PRIMARY_Y);
 
-    s_dashboard_chart_step = 0;
-    for (uint32_t i = 0; i < DASHBOARD_CHART_POINT_COUNT; i++) {
-        dashboard_chart_timer_cb(NULL);
-    }
-    lv_timer_create(dashboard_chart_timer_cb, DASHBOARD_CHART_UPDATE_MS, NULL);
+    lv_chart_set_series_ext_x_array(s_dashboard_chart, s_dashboard_chart_series, s_dashboard_chart_x);
+    lv_chart_set_series_ext_y_array(s_dashboard_chart, s_dashboard_chart_series, s_dashboard_chart_y);
+    dashboard_chart_scroll(s_dashboard_chart, 0);
+
+    lv_anim_t scroll;
+    lv_anim_init(&scroll);
+    lv_anim_set_var(&scroll, s_dashboard_chart);
+    lv_anim_set_exec_cb(&scroll, dashboard_chart_scroll);
+    lv_anim_set_values(&scroll, 0, DASHBOARD_CHART_POINT_COUNT * DASHBOARD_CHART_UPDATE_MS);
+    lv_anim_set_duration(&scroll, DASHBOARD_CHART_POINT_COUNT * DASHBOARD_CHART_UPDATE_MS);
+    lv_anim_set_repeat_count(&scroll, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&scroll, lv_anim_path_linear);
+    lv_anim_start(&scroll);
 
     dashboard_animation_start(arc, dashboard_arc_set_value, 15, 92, DASHBOARD_ARC_ANIMATION_MS);
     dashboard_animation_start(bar, dashboard_bar_set_value, 20, 95, DASHBOARD_BAR_ANIMATION_MS);
@@ -715,7 +748,7 @@ void ui_screen_diagnostics_init(lv_display_t* disp) {
 #if CONFIG_UI_METRICS
     diagnostic_metrics_start(disp);
 #endif
-    lv_tabview_set_active(s_diagnostic_tabview, DIAGNOSTIC_TAB_HUE, LV_ANIM_OFF);
+    lv_tabview_set_active(s_diagnostic_tabview, DIAGNOSTIC_TAB_DASHBOARD, LV_ANIM_OFF);
 
     lvgl_port_unlock();
 }
