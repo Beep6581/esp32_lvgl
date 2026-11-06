@@ -449,6 +449,9 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
         break;
     }
 
+    ESP_LOGI(TAG, "RGB flags: HS=%u VS=%u DE=%u PCLK_NEG=%u PCLK_IDLE=%u", timing.flags.hsync_idle_low, timing.flags.vsync_idle_low, timing.flags.de_idle_high, timing.flags.pclk_active_neg,
+             timing.flags.pclk_idle_high);
+
     s_rgb_timing.timing = timing;
     s_rgb_timing.name = timing_name;
 
