@@ -39,8 +39,6 @@ static const char* TAG = "screen_diagnostics";
 static uint8_t* s_gradient_buffer;
 static lv_obj_t* s_diagnostic_tabview;
 static lv_obj_t* s_dashboard_value_label;
-static lv_obj_t* s_dashboard_chart;
-static lv_chart_series_t* s_dashboard_chart_series;
 /* One extra point supports interpolated intersections at both chart edges. */
 static int32_t s_dashboard_chart_x[DASHBOARD_CHART_POINT_COUNT + 1];
 static int32_t s_dashboard_chart_y[DASHBOARD_CHART_POINT_COUNT + 1];
@@ -52,6 +50,8 @@ enum {
     DIAGNOSTIC_TAB_SWIPE,
     DIAGNOSTIC_TAB_SOLID,
 };
+
+static const char* const s_diagnostic_tab_name[] = {"RGB", "Hue", "Dashboard", "Swipe", "Solid"};
 
 #if CONFIG_UI_METRICS
 static uint32_t s_diagnostic_animation_exec_count;
@@ -86,10 +86,6 @@ static const lv_point_precise_t s_swipe_diagonal_points[] = {
     {BOARD_LCD_HRES - 60, 60},
 };
 
-static uint8_t blend_channel(uint8_t from, uint8_t to, uint32_t position, uint32_t distance) {
-    return (uint8_t)((from * (distance - position) + to * position) / distance);
-}
-
 static uint32_t quadratic_scale(uint32_t position, uint32_t distance) {
     return position * position / distance;
 }
@@ -102,21 +98,26 @@ static void screen_page_style(lv_obj_t* page) {
     lv_obj_set_style_pad_all(page, 0, 0);
 }
 
-static lv_obj_t* color_bar_create(lv_obj_t* parent, int32_t x, int32_t width, uint32_t color) {
-    lv_obj_t* bar = lv_obj_create(parent);
-    lv_obj_set_pos(bar, x, 0);
-    lv_obj_set_size(bar, width, BOARD_LCD_VRES);
-    lv_obj_remove_flag(bar, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(bar, lv_color_hex(color), 0);
-    lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(bar, 0, 0);
-    lv_obj_set_style_radius(bar, 0, 0);
-    lv_obj_set_style_pad_all(bar, 0, 0);
-    return bar;
+static lv_obj_t* diagnostic_label_create(lv_obj_t* parent, const char* text, lv_color_t color) {
+    lv_obj_t* label = lv_label_create(parent);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_color(label, color, 0);
+    return label;
 }
 
-static void color_bar_set_x(void* bar, int32_t x) {
-    lv_obj_set_x(bar, x);
+static void diagnostic_animation_start(lv_obj_t* object, lv_anim_exec_xcb_t callback, int32_t start, int32_t end, uint32_t duration, bool reverse) {
+    lv_anim_t animation;
+    lv_anim_init(&animation);
+    lv_anim_set_var(&animation, object);
+    lv_anim_set_exec_cb(&animation, callback);
+    lv_anim_set_values(&animation, start, end);
+    lv_anim_set_duration(&animation, duration);
+    if (reverse) {
+        lv_anim_set_reverse_duration(&animation, duration);
+    }
+    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
+    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
+    lv_anim_start(&animation);
 }
 
 static lv_obj_t* diagnostic_rectangle_create(lv_obj_t* parent, int32_t x, int32_t y, int32_t width, int32_t height, lv_color_t color) {
@@ -130,6 +131,12 @@ static lv_obj_t* diagnostic_rectangle_create(lv_obj_t* parent, int32_t x, int32_
     lv_obj_set_style_radius(rectangle, 0, 0);
     lv_obj_set_style_pad_all(rectangle, 0, 0);
     return rectangle;
+}
+
+static lv_obj_t* color_bar_create(lv_obj_t* parent, int32_t x, int32_t width, uint32_t color) {
+    lv_obj_t* bar = diagnostic_rectangle_create(parent, x, 0, width, BOARD_LCD_VRES, lv_color_hex(color));
+    lv_obj_set_clickable(bar, true);
+    return bar;
 }
 
 static void diagnostic_grid_create(lv_obj_t* parent) {
@@ -147,15 +154,7 @@ static void diagnostic_grid_create(lv_obj_t* parent) {
 }
 
 static void swipe_test_page_create(lv_obj_t* parent, int32_t x, lv_color_t background_color, lv_color_t foreground_color, const char* text) {
-    lv_obj_t* page = lv_obj_create(parent);
-    lv_obj_set_pos(page, x, 0);
-    lv_obj_set_size(page, BOARD_LCD_HRES, BOARD_LCD_VRES);
-    lv_obj_remove_flag(page, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_bg_color(page, background_color, 0);
-    lv_obj_set_style_bg_opa(page, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(page, 0, 0);
-    lv_obj_set_style_radius(page, 0, 0);
-    lv_obj_set_style_pad_all(page, 0, 0);
+    lv_obj_t* page = diagnostic_rectangle_create(parent, x, 0, BOARD_LCD_HRES, BOARD_LCD_VRES, background_color);
 
     diagnostic_grid_create(page);
 
@@ -177,11 +176,9 @@ static void swipe_test_page_create(lv_obj_t* parent, int32_t x, lv_color_t backg
     lv_obj_set_style_line_color(diagonal, foreground_color, 0);
     lv_obj_set_style_line_width(diagonal, SWIPE_DIAGNOSTIC_LINE_WIDTH, 0);
 
-    lv_obj_t* label = lv_label_create(page);
-    lv_label_set_text(label, text);
+    lv_obj_t* label = diagnostic_label_create(page, text, foreground_color);
     lv_obj_set_style_bg_color(label, background_color, 0);
     lv_obj_set_style_bg_opa(label, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(label, foreground_color, 0);
     lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_pad_all(label, 8, 0);
     lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 16);
@@ -239,10 +236,9 @@ static void diagnostic_display_event_cb(lv_event_t* event) {
 }
 
 static const char* diagnostic_active_page_name(void) {
-    static const char* const page_name[] = {"RGB", "Hue", "Swipe", "Solid", "Dashboard"};
     const uint32_t active_tab = lv_tabview_get_tab_active(s_diagnostic_tabview);
-    if (active_tab < sizeof(page_name) / sizeof(page_name[0])) {
-        return page_name[active_tab];
+    if (active_tab < sizeof(s_diagnostic_tab_name) / sizeof(s_diagnostic_tab_name[0])) {
+        return s_diagnostic_tab_name[active_tab];
     }
     return "Unknown";
 }
@@ -289,7 +285,7 @@ static void diagnostic_metrics_start(lv_display_t* display) {
 }
 #endif
 
-static void swipe_test_create(lv_obj_t* parent) {
+static lv_obj_t* swipe_track_create(lv_obj_t* parent) {
     lv_obj_t* track = lv_obj_create(parent);
     lv_obj_set_pos(track, 0, 0);
     lv_obj_set_size(track, BOARD_LCD_HRES * 2, BOARD_LCD_VRES);
@@ -297,49 +293,29 @@ static void swipe_test_create(lv_obj_t* parent) {
     lv_obj_set_style_border_width(track, 0, 0);
     lv_obj_set_style_radius(track, 0, 0);
     lv_obj_set_style_pad_all(track, 0, 0);
+    return track;
+}
 
+static void swipe_test_create(lv_obj_t* parent) {
+    lv_obj_t* track = swipe_track_create(parent);
     const display_rgb_timing_t* active_timing = display_get_rgb_timing();
     swipe_test_page_create(track, 0, lv_color_hex(0x101820), lv_color_hex(0x00FFFF), active_timing->name);
     swipe_test_page_create(track, BOARD_LCD_HRES, lv_color_hex(0xF0E8D8), lv_color_hex(0xC00030), active_timing->name);
 
-    lv_anim_t animation;
-    lv_anim_init(&animation);
-    lv_anim_set_var(&animation, track);
-    lv_anim_set_exec_cb(&animation, swipe_track_set_x);
-    lv_anim_set_values(&animation, 0, -BOARD_LCD_HRES);
-    lv_anim_set_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
-    lv_anim_set_reverse_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
-    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
-    lv_anim_start(&animation);
+    diagnostic_animation_start(track, swipe_track_set_x, 0, -BOARD_LCD_HRES, SWIPE_DIAGNOSTIC_ANIMATION_MS, true);
 }
 
 static void solid_swipe_test_create(lv_obj_t* parent) {
-    lv_obj_t* track = lv_obj_create(parent);
-    lv_obj_set_pos(track, 0, 0);
-    lv_obj_set_size(track, BOARD_LCD_HRES * 2, BOARD_LCD_VRES);
-    lv_obj_remove_flag(track, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_set_style_border_width(track, 0, 0);
-    lv_obj_set_style_radius(track, 0, 0);
-    lv_obj_set_style_pad_all(track, 0, 0);
+    lv_obj_t* track = swipe_track_create(parent);
 
     diagnostic_rectangle_create(track, 0, 0, BOARD_LCD_HRES, BOARD_LCD_VRES, lv_color_hex(0xFF0000));
     diagnostic_rectangle_create(track, BOARD_LCD_HRES, 0, BOARD_LCD_HRES, BOARD_LCD_VRES, lv_color_hex(0x00FF00));
 
-    lv_anim_t animation;
-    lv_anim_init(&animation);
-    lv_anim_set_var(&animation, track);
 #if CONFIG_UI_METRICS
-    lv_anim_set_exec_cb(&animation, monitored_swipe_track_set_x);
+    diagnostic_animation_start(track, monitored_swipe_track_set_x, 0, -BOARD_LCD_HRES, SWIPE_DIAGNOSTIC_ANIMATION_MS, true);
 #else
-    lv_anim_set_exec_cb(&animation, swipe_track_set_x);
+    diagnostic_animation_start(track, swipe_track_set_x, 0, -BOARD_LCD_HRES, SWIPE_DIAGNOSTIC_ANIMATION_MS, true);
 #endif
-    lv_anim_set_values(&animation, 0, -BOARD_LCD_HRES);
-    lv_anim_set_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
-    lv_anim_set_reverse_duration(&animation, SWIPE_DIAGNOSTIC_ANIMATION_MS);
-    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
-    lv_anim_start(&animation);
 }
 
 static lv_obj_t* dashboard_card_create(lv_obj_t* parent, int32_t x, int32_t y, int32_t width, int32_t height) {
@@ -381,22 +357,17 @@ static void dashboard_slider_set_value(void* slider, int32_t value) {
 }
 
 static void dashboard_chart_scroll(void* chart, int32_t elapsed_ms) {
-    /* Rapid irregular fluctuations over a slower uneven wave; deterministic
-     * so successive performance runs exercise the same workload. */
+    /* Pre-smoothed irregular wave; fixed samples keep benchmark runs repeatable. */
     static const int32_t values[DASHBOARD_CHART_POINT_COUNT] = {
-        28, 12, 35, 19, 42, 23, 32, 51, 34, 57, 40, 65, 47, 72, 55, 81, 61, 89, 68, 78, 58, 91, 70, 96, 74, 85, 62, 88, 64, 79, 54, 72,
-        48, 65, 39, 58, 33, 46, 24, 43, 21, 36, 14, 31, 9,  27, 5,  22, 13, 35, 18, 44, 26, 51, 32, 47, 23, 42, 17, 36, 12, 29, 8,  24,
+        24, 18, 28, 25, 35, 27, 33, 45, 40, 50, 47, 57, 54, 65, 62, 73, 69, 80, 73, 73, 66, 82, 77, 88, 79, 79, 70, 79, 70, 72, 61, 65,
+        54, 57, 46, 50, 39, 40, 30, 36, 27, 29, 20, 24, 15, 20, 11, 17, 18, 28, 25, 36, 33, 43, 37, 40, 30, 34, 24, 28, 18, 22, 14, 22,
     };
 
     const uint32_t step = (uint32_t)elapsed_ms / DASHBOARD_CHART_UPDATE_MS;
     const int32_t offset = elapsed_ms % DASHBOARD_CHART_UPDATE_MS;
     for (uint32_t i = 0; i <= DASHBOARD_CHART_POINT_COUNT; i++) {
         s_dashboard_chart_x[i] = (int32_t)(i * DASHBOARD_CHART_UPDATE_MS) - offset;
-        const uint32_t index = (step + i) % DASHBOARD_CHART_POINT_COUNT;
-        const int32_t previous = values[(index + DASHBOARD_CHART_POINT_COUNT - 1) % DASHBOARD_CHART_POINT_COUNT];
-        const int32_t next = values[(index + 1) % DASHBOARD_CHART_POINT_COUNT];
-        /* Blend neighboring samples to reduce the rapid fluctuations. */
-        s_dashboard_chart_y[i] = (previous + 4 * values[index] + next) / 6;
+        s_dashboard_chart_y[i] = values[(step + i) % DASHBOARD_CHART_POINT_COUNT];
     }
     /* LVGL clamps out-of-range X values. Interpolate their Y values too so
      * entering/leaving segments meet the edges without vertical jumps. */
@@ -411,19 +382,6 @@ static void dashboard_chart_scroll(void* chart, int32_t elapsed_ms) {
 #endif
 }
 
-static void dashboard_animation_start(lv_obj_t* object, lv_anim_exec_xcb_t callback, int32_t start, int32_t end, uint32_t duration) {
-    lv_anim_t animation;
-    lv_anim_init(&animation);
-    lv_anim_set_var(&animation, object);
-    lv_anim_set_exec_cb(&animation, callback);
-    lv_anim_set_values(&animation, start, end);
-    lv_anim_set_duration(&animation, duration);
-    lv_anim_set_reverse_duration(&animation, duration);
-    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
-    lv_anim_start(&animation);
-}
-
 static void dashboard_button_create(lv_obj_t* parent, int32_t x, const char* text) {
     lv_obj_t* button = lv_button_create(parent);
     lv_obj_set_pos(button, x, 70);
@@ -431,9 +389,7 @@ static void dashboard_button_create(lv_obj_t* parent, int32_t x, const char* tex
     lv_obj_set_style_bg_color(button, lv_color_hex(0x2463A8), 0);
     lv_obj_set_style_radius(button, 7, 0);
 
-    lv_obj_t* label = lv_label_create(button);
-    lv_label_set_text(label, text);
-    lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    lv_obj_t* label = diagnostic_label_create(button, text, lv_color_white());
     lv_obj_center(label);
 }
 
@@ -441,15 +397,11 @@ static void dashboard_create(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_hex(0x0C141D), 0);
 
     lv_obj_t* header = dashboard_card_create(parent, 12, 10, 456, 48);
-    lv_obj_t* title = lv_label_create(header);
-    lv_label_set_text(title, "DEVICE DASHBOARD");
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_t* title = diagnostic_label_create(header, "DEVICE DASHBOARD", lv_color_white());
     lv_obj_set_style_text_font(title, &lv_font_montserrat_16, 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 14, 0);
 
-    lv_obj_t* status = lv_label_create(header);
-    lv_label_set_text(status, "ONLINE");
-    lv_obj_set_style_text_color(status, lv_color_hex(0x55D68B), 0);
+    lv_obj_t* status = diagnostic_label_create(header, "ONLINE", lv_color_hex(0x55D68B));
     lv_obj_align(status, LV_ALIGN_RIGHT_MID, -14, 0);
 
     dashboard_button_create(parent, 12, "Overview");
@@ -457,9 +409,7 @@ static void dashboard_create(lv_obj_t* parent) {
     dashboard_button_create(parent, 332, "History");
 
     lv_obj_t* gauge_card = dashboard_card_create(parent, 12, 122, 210, 184);
-    lv_obj_t* gauge_title = lv_label_create(gauge_card);
-    lv_label_set_text(gauge_title, "SYSTEM LOAD");
-    lv_obj_set_style_text_color(gauge_title, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_t* gauge_title = diagnostic_label_create(gauge_card, "SYSTEM LOAD", lv_color_hex(0xAFC1D2));
     lv_obj_align(gauge_title, LV_ALIGN_TOP_MID, 0, 10);
 
     lv_obj_t* arc = lv_arc_create(gauge_card);
@@ -474,16 +424,12 @@ static void dashboard_create(lv_obj_t* parent) {
     lv_obj_set_style_arc_color(arc, lv_color_hex(0x263747), LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc, lv_color_hex(0x39B8FF), LV_PART_INDICATOR);
 
-    s_dashboard_value_label = lv_label_create(gauge_card);
-    lv_label_set_text(s_dashboard_value_label, "15%");
-    lv_obj_set_style_text_color(s_dashboard_value_label, lv_color_white(), 0);
+    s_dashboard_value_label = diagnostic_label_create(gauge_card, "15%", lv_color_white());
     lv_obj_set_style_text_font(s_dashboard_value_label, &lv_font_montserrat_16, 0);
     lv_obj_align(s_dashboard_value_label, LV_ALIGN_CENTER, 0, 20);
 
     lv_obj_t* control_card = dashboard_card_create(parent, 234, 122, 234, 184);
-    lv_obj_t* output_label = lv_label_create(control_card);
-    lv_label_set_text(output_label, "OUTPUT");
-    lv_obj_set_style_text_color(output_label, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_t* output_label = diagnostic_label_create(control_card, "OUTPUT", lv_color_hex(0xAFC1D2));
     lv_obj_set_pos(output_label, 14, 12);
 
     lv_obj_t* bar = lv_bar_create(control_card);
@@ -493,9 +439,7 @@ static void dashboard_create(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(bar, lv_color_hex(0x263747), LV_PART_MAIN);
     lv_obj_set_style_bg_color(bar, lv_color_hex(0x55D68B), LV_PART_INDICATOR);
 
-    lv_obj_t* target_label = lv_label_create(control_card);
-    lv_label_set_text(target_label, "TARGET");
-    lv_obj_set_style_text_color(target_label, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_t* target_label = diagnostic_label_create(control_card, "TARGET", lv_color_hex(0xAFC1D2));
     lv_obj_set_pos(target_label, 14, 88);
 
     lv_obj_t* slider = lv_slider_create(control_card);
@@ -508,46 +452,37 @@ static void dashboard_create(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(slider, lv_color_white(), LV_PART_KNOB);
 
     lv_obj_t* chart_card = dashboard_card_create(parent, 12, 318, 456, 150);
-    lv_obj_t* chart_title = lv_label_create(chart_card);
-    lv_label_set_text(chart_title, "ACTIVITY - LAST 6 SECONDS");
-    lv_obj_set_style_text_color(chart_title, lv_color_hex(0xAFC1D2), 0);
+    lv_obj_t* chart_title = diagnostic_label_create(chart_card, "ACTIVITY - LAST 6 SECONDS", lv_color_hex(0xAFC1D2));
     lv_obj_set_pos(chart_title, 12, 8);
 
-    s_dashboard_chart = lv_chart_create(chart_card);
-    lv_obj_set_pos(s_dashboard_chart, 10, 31);
-    lv_obj_set_size(s_dashboard_chart, 436, 108);
+    lv_obj_t* chart = lv_chart_create(chart_card);
+    lv_obj_set_pos(chart, 10, 31);
+    lv_obj_set_size(chart, 436, 108);
     /* SCATTER connects explicit X/Y points, allowing sub-sample horizontal motion. */
-    lv_chart_set_type(s_dashboard_chart, LV_CHART_TYPE_SCATTER);
-    lv_chart_set_axis_range(s_dashboard_chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
-    lv_chart_set_axis_range(s_dashboard_chart, LV_CHART_AXIS_PRIMARY_X, 0, (DASHBOARD_CHART_POINT_COUNT - 1) * DASHBOARD_CHART_UPDATE_MS);
-    lv_chart_set_point_count(s_dashboard_chart, DASHBOARD_CHART_POINT_COUNT + 1);
-    lv_chart_set_div_line_count(s_dashboard_chart, 4, 8);
-    lv_chart_set_update_mode(s_dashboard_chart, LV_CHART_UPDATE_MODE_SHIFT);
-    lv_obj_set_style_bg_color(s_dashboard_chart, lv_color_hex(0x111C27), 0);
-    lv_obj_set_style_border_width(s_dashboard_chart, 0, 0);
-    lv_obj_set_style_line_color(s_dashboard_chart, lv_color_hex(0x2A3B4C), LV_PART_MAIN);
-    lv_obj_set_style_line_width(s_dashboard_chart, 1, LV_PART_MAIN);
-    lv_obj_set_style_line_width(s_dashboard_chart, 2, LV_PART_ITEMS);
-    lv_obj_set_style_size(s_dashboard_chart, 0, 0, LV_PART_INDICATOR);
-    s_dashboard_chart_series = lv_chart_add_series(s_dashboard_chart, lv_color_hex(0xB679FF), LV_CHART_AXIS_PRIMARY_Y);
+    lv_chart_set_type(chart, LV_CHART_TYPE_SCATTER);
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_Y, 0, 100);
+    lv_chart_set_axis_range(chart, LV_CHART_AXIS_PRIMARY_X, 0, (DASHBOARD_CHART_POINT_COUNT - 1) * DASHBOARD_CHART_UPDATE_MS);
+    lv_chart_set_point_count(chart, DASHBOARD_CHART_POINT_COUNT + 1);
+    lv_chart_set_div_line_count(chart, 4, 8);
+    lv_chart_set_update_mode(chart, LV_CHART_UPDATE_MODE_SHIFT);
+    lv_obj_set_style_bg_color(chart, lv_color_hex(0x111C27), 0);
+    lv_obj_set_style_border_width(chart, 0, 0);
+    lv_obj_set_style_line_color(chart, lv_color_hex(0x2A3B4C), LV_PART_MAIN);
+    lv_obj_set_style_line_width(chart, 1, LV_PART_MAIN);
+    lv_obj_set_style_line_width(chart, 2, LV_PART_ITEMS);
+    lv_obj_set_style_size(chart, 0, 0, LV_PART_INDICATOR);
+    lv_chart_series_t* series = lv_chart_add_series(chart, lv_color_hex(0xB679FF), LV_CHART_AXIS_PRIMARY_Y);
 
-    lv_chart_set_series_ext_x_array(s_dashboard_chart, s_dashboard_chart_series, s_dashboard_chart_x);
-    lv_chart_set_series_ext_y_array(s_dashboard_chart, s_dashboard_chart_series, s_dashboard_chart_y);
-    dashboard_chart_scroll(s_dashboard_chart, 0);
+    lv_chart_set_series_ext_x_array(chart, series, s_dashboard_chart_x);
+    lv_chart_set_series_ext_y_array(chart, series, s_dashboard_chart_y);
+    dashboard_chart_scroll(chart, 0);
 
-    lv_anim_t scroll;
-    lv_anim_init(&scroll);
-    lv_anim_set_var(&scroll, s_dashboard_chart);
-    lv_anim_set_exec_cb(&scroll, dashboard_chart_scroll);
-    lv_anim_set_values(&scroll, 0, DASHBOARD_CHART_POINT_COUNT * DASHBOARD_CHART_UPDATE_MS);
-    lv_anim_set_duration(&scroll, DASHBOARD_CHART_POINT_COUNT * DASHBOARD_CHART_UPDATE_MS);
-    lv_anim_set_repeat_count(&scroll, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&scroll, lv_anim_path_linear);
-    lv_anim_start(&scroll);
+    const uint32_t chart_cycle_ms = DASHBOARD_CHART_POINT_COUNT * DASHBOARD_CHART_UPDATE_MS;
+    diagnostic_animation_start(chart, dashboard_chart_scroll, 0, chart_cycle_ms, chart_cycle_ms, false);
 
-    dashboard_animation_start(arc, dashboard_arc_set_value, 15, 92, DASHBOARD_ARC_ANIMATION_MS);
-    dashboard_animation_start(bar, dashboard_bar_set_value, 20, 95, DASHBOARD_BAR_ANIMATION_MS);
-    dashboard_animation_start(slider, dashboard_slider_set_value, 5, 95, DASHBOARD_SLIDER_ANIMATION_MS);
+    diagnostic_animation_start(arc, dashboard_arc_set_value, 15, 92, DASHBOARD_ARC_ANIMATION_MS, true);
+    diagnostic_animation_start(bar, dashboard_bar_set_value, 20, 95, DASHBOARD_BAR_ANIMATION_MS, true);
+    diagnostic_animation_start(slider, dashboard_slider_set_value, 5, 95, DASHBOARD_SLIDER_ANIMATION_MS, true);
 }
 
 static void color_bars_create(lv_obj_t* parent) {
@@ -559,16 +494,7 @@ static void color_bars_create(lv_obj_t* parent) {
     diagnostic_rectangle_create(green_bar, 0, BOARD_LCD_VRES / 3, bar_width, SCREEN_DIAGNOSTIC_STRIPE_HEIGHT, lv_color_black());
     diagnostic_rectangle_create(green_bar, 0, (BOARD_LCD_VRES * 2) / 3, bar_width, SCREEN_DIAGNOSTIC_STRIPE_HEIGHT, lv_color_black());
 
-    lv_anim_t animation;
-    lv_anim_init(&animation);
-    lv_anim_set_var(&animation, green_bar);
-    lv_anim_set_exec_cb(&animation, color_bar_set_x);
-    lv_anim_set_values(&animation, 0, BOARD_LCD_HRES - bar_width);
-    lv_anim_set_duration(&animation, SCREEN_DIAGNOSTIC_ANIMATION_MS);
-    lv_anim_set_reverse_duration(&animation, SCREEN_DIAGNOSTIC_ANIMATION_MS);
-    lv_anim_set_repeat_count(&animation, LV_ANIM_REPEAT_INFINITE);
-    lv_anim_set_path_cb(&animation, lv_anim_path_linear);
-    lv_anim_start(&animation);
+    diagnostic_animation_start(green_bar, swipe_track_set_x, 0, BOARD_LCD_HRES - bar_width, SCREEN_DIAGNOSTIC_ANIMATION_MS, true);
 
     diagnostic_grid_create(parent);
 
@@ -603,26 +529,20 @@ static void hue_gradient_create(lv_obj_t* parent) {
         const lv_color_t saturated = lv_color_hsv_to_rgb(hue, 100, 100);
 
         for (uint32_t y = 0; y < height; y++) {
-            uint8_t red;
-            uint8_t green;
-            uint8_t blue;
+            lv_color_t color;
 
             if (y <= middle_y) {
                 const uint32_t remaining = middle_y - y;
                 const uint32_t position = middle_y - quadratic_scale(remaining, middle_y);
-                red = blend_channel(255, saturated.red, position, middle_y);
-                green = blend_channel(255, saturated.green, position, middle_y);
-                blue = blend_channel(255, saturated.blue, position, middle_y);
+                color = lv_color_mix(saturated, lv_color_white(), position * 255U / middle_y);
             } else {
                 const uint32_t distance = bottom_y - middle_y;
                 const uint32_t position = quadratic_scale(y - middle_y, distance);
-                red = blend_channel(saturated.red, 0, position, distance);
-                green = blend_channel(saturated.green, 0, position, distance);
-                blue = blend_channel(saturated.blue, 0, position, distance);
+                color = lv_color_mix(lv_color_black(), saturated, position * 255U / distance);
             }
 
             uint16_t* row = (uint16_t*)(s_gradient_buffer + y * stride);
-            row[x] = lv_color_to_u16(lv_color_make(red, green, blue));
+            row[x] = lv_color_to_u16(color);
         }
     }
 
@@ -666,9 +586,9 @@ static void timing_button_cb(lv_event_t* e) {
     ESP_LOGE(TAG, "failed to save timing mode: %s", esp_err_to_name(err));
 }
 
-static void timing_button_create(lv_obj_t* parent, const display_timing_mode_t* mode, const char* text, int32_t x, int32_t y, int32_t width, int32_t height) {
+static void timing_button_create(lv_obj_t* parent, const display_timing_mode_t* mode, const char* text, int32_t x, int32_t y, int32_t width) {
     lv_obj_t* button = lv_button_create(parent);
-    lv_obj_set_size(button, width, height);
+    lv_obj_set_size(button, width, TIMING_BUTTON_HEIGHT);
     lv_obj_set_pos(button, x, y);
     lv_obj_set_style_bg_color(button, lv_color_hex(0x202020), 0);
     lv_obj_set_style_bg_opa(button, LV_OPA_COVER, 0);
@@ -677,9 +597,7 @@ static void timing_button_create(lv_obj_t* parent, const display_timing_mode_t* 
     lv_obj_set_style_radius(button, 4, 0);
     lv_obj_add_event_cb(button, timing_button_cb, LV_EVENT_CLICKED, (void*)mode);
 
-    lv_obj_t* label = lv_label_create(button);
-    lv_label_set_text(label, text);
-    lv_obj_set_style_text_color(label, lv_color_hex(0xC0C0C0), 0);
+    lv_obj_t* label = diagnostic_label_create(button, text, lv_color_hex(0xC0C0C0));
     lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
     lv_obj_center(label);
 }
@@ -691,8 +609,7 @@ static void timing_buttons_create(lv_obj_t* parent) {
     const int32_t standard_y = BOARD_LCD_VRES - TIMING_BUTTON_HEIGHT - 14;
 
     for (size_t i = 0; i < standard_count; i++) {
-        timing_button_create(parent, &s_standard_timing_mode[i], s_standard_timing_label[i], standard_start_x + (int32_t)i * (TIMING_BUTTON_WIDTH + TIMING_BUTTON_GAP), standard_y, TIMING_BUTTON_WIDTH,
-                             TIMING_BUTTON_HEIGHT);
+        timing_button_create(parent, &s_standard_timing_mode[i], s_standard_timing_label[i], standard_start_x + (int32_t)i * (TIMING_BUTTON_WIDTH + TIMING_BUTTON_GAP), standard_y, TIMING_BUTTON_WIDTH);
     }
 
     const size_t diagnostic_count = sizeof(s_diagnostic_timing_mode) / sizeof(s_diagnostic_timing_mode[0]);
@@ -706,7 +623,7 @@ static void timing_buttons_create(lv_obj_t* parent) {
         const int32_t column = (int32_t)i % TIMING_GRID_COLUMNS;
         const int32_t row = (int32_t)i / TIMING_GRID_COLUMNS;
         timing_button_create(parent, &s_diagnostic_timing_mode[i], s_diagnostic_timing_label[i], grid_start_x + column * (TIMING_GRID_BUTTON_WIDTH + TIMING_GRID_COLUMN_GAP),
-                             grid_start_y + row * (TIMING_BUTTON_HEIGHT + TIMING_GRID_ROW_GAP), TIMING_GRID_BUTTON_WIDTH, TIMING_BUTTON_HEIGHT);
+                             grid_start_y + row * (TIMING_BUTTON_HEIGHT + TIMING_GRID_ROW_GAP), TIMING_GRID_BUTTON_WIDTH);
     }
 }
 
@@ -729,22 +646,17 @@ void ui_screen_diagnostics_init(lv_display_t* disp) {
     lv_obj_set_style_pad_all(content, 0, 0);
     lv_obj_set_style_pad_column(content, 0, 0);
 
-    lv_obj_t* color_bars_page = lv_tabview_add_tab(s_diagnostic_tabview, "RGB");
-    lv_obj_t* gradient_page = lv_tabview_add_tab(s_diagnostic_tabview, "Hue");
-    lv_obj_t* dashboard_page = lv_tabview_add_tab(s_diagnostic_tabview, "Dashboard");
-    lv_obj_t* swipe_page = lv_tabview_add_tab(s_diagnostic_tabview, "Swipe");
-    lv_obj_t* solid_swipe_page = lv_tabview_add_tab(s_diagnostic_tabview, "Solid");
-    screen_page_style(color_bars_page);
-    screen_page_style(gradient_page);
-    screen_page_style(swipe_page);
-    screen_page_style(solid_swipe_page);
-    screen_page_style(dashboard_page);
-    color_bars_create(color_bars_page);
-    hue_gradient_create(gradient_page);
-    timing_buttons_create(gradient_page);
-    swipe_test_create(swipe_page);
-    solid_swipe_test_create(solid_swipe_page);
-    dashboard_create(dashboard_page);
+    lv_obj_t* pages[sizeof(s_diagnostic_tab_name) / sizeof(s_diagnostic_tab_name[0])];
+    for (size_t i = 0; i < sizeof(pages) / sizeof(pages[0]); i++) {
+        pages[i] = lv_tabview_add_tab(s_diagnostic_tabview, s_diagnostic_tab_name[i]);
+        screen_page_style(pages[i]);
+    }
+    color_bars_create(pages[DIAGNOSTIC_TAB_RGB]);
+    hue_gradient_create(pages[DIAGNOSTIC_TAB_HUE]);
+    timing_buttons_create(pages[DIAGNOSTIC_TAB_HUE]);
+    swipe_test_create(pages[DIAGNOSTIC_TAB_SWIPE]);
+    solid_swipe_test_create(pages[DIAGNOSTIC_TAB_SOLID]);
+    dashboard_create(pages[DIAGNOSTIC_TAB_DASHBOARD]);
 #if CONFIG_UI_METRICS
     diagnostic_metrics_start(disp);
 #endif
