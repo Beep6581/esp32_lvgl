@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 typedef enum {
+    // These IDs are saved in NVS. Append new diagnostic modes before COUNT.
     DISPLAY_TIMING_WT = 0,
     DISPLAY_TIMING_BS,
     DISPLAY_TIMING_MIN_A22,
@@ -34,6 +35,7 @@ esp_err_t display_prepare(void);
 esp_err_t display_backlight_on(void);
 esp_err_t display_backlight_off(void);
 const display_rgb_timing_t* display_get_rgb_timing(void);
+const char* display_get_timing_name(display_timing_mode_t mode);
 esp_err_t display_set_timing_mode_and_restart(display_timing_mode_t mode);
 
 #ifdef __cplusplus

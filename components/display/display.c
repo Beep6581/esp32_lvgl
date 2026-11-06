@@ -35,6 +35,134 @@ static const char* TAG = "display";
 static const char* DISPLAY_NVS_NAMESPACE = "display";
 static const char* DISPLAY_NVS_TIMING_MODE_KEY = "timing_mode";
 
+typedef struct {
+    const char* name;
+    uint32_t pclk_hz;
+    uint32_t hsync_pulse_width;
+    uint32_t hsync_back_porch;
+    uint32_t hsync_front_porch;
+    uint32_t vsync_pulse_width;
+    uint32_t vsync_back_porch;
+    uint32_t vsync_front_porch;
+} display_timing_preset_t;
+
+/*
+GC9503V datasheet, 5.3.2 DPI interface timing, figure 12.
+Some values in GC9503V datasheet were clipped - those were taken from GC9503CV datasheet.
+
+HLW+HBP+HFP >= 4.5us
+
+Parameter                    Symbol  Min   Typ   Max   Units
+Frame Rate                   FR      54          66    fps
+Horizontal Low Pulse width   HLW     1           -     DOTCLK
+Horizontal Back Porch        HBP     2           126   DOTCLK
+Horizontal Address           HACT          480         DOTCLK
+Horizontal Front Porch       HFP     2           -     DOTCLK
+Vertical Low Pulse width     VLW     1           126   Line
+Vertical Back Porch          VBP     1           126   Line
+Vertical Address             VACT                864   Line
+Vertical Front Porch         VFP     1           255   Line
+Data Clock                   DCLK    16.6        35.7  MHz
+
+PCLK = pixel clock = DCLK = data clock = DOTCLK
+HSYNC = hsync_pulse_width = HLW = horizontal low pulse width
+
+How frame rates are calculated:
+period = 1/freq
+1 horizontal line = HLW + HBP + HACT + HFP DOTCLK periods
+1 frame = VLW + VBP + VACT + VFP lines
+line rate = PCLK / (HLW + HBP + HACT + HFP)
+frame rate = line rate / (VLW + VBP + VACT + VFP)
+frame rate = PCLK / Htot*Vtot
+
+The total horizontal blanking is the minimum integer width needed to satisfy HLW+HBP+HFP >= 4.5 us at each PCLK.
+
+For min, datasheet provides HBP=2 but it needs to take at least 4.5 us so:
+1/16.6 MHz = 60.24 ns
+4.5 us / 60.24 ns = ceil(74.4) clocks = 75 clocks
+We need to assign the remaining blanking somewhere, and the datasheet does not specify where, so many solutions are possible:
+HLW=71, HBP=2,  HFP=2
+HLW=1,  HBP=72, HFP=2
+HLW=1,  HBP=37, HFP=37
+...
+
+Looking at datasheets of other panel controllers, the back porch is the most common place to put the remaining blanking clocks.
+HFP-heavy distributions produced a blank white screen in hardware testing and are not offered.
+
+For the 480x480 LCD the resulting nominal frame rates are:
+    MIN HBP       16600000/((1+72+480+2)*(1+1+480+16)) = 60.06 Hz
+    MIN HBP 54Hz  16600000/((1+72+480+2)*(1+1+480+71)) = 54.09 Hz
+    MIN HSYNC     16600000/((71+2+480+2)*(1+1+480+1))  = 61.93 Hz
+    MID                                                        60.00 Hz
+    MAX                                                        56.43 Hz
+all within the documented 54-66 Hz range.
+*/
+
+static const display_timing_preset_t s_timing_presets[DISPLAY_TIMING_COUNT] = {
+    [DISPLAY_TIMING_WT] = {
+        .name = "WT", .pclk_hz = 20000000,
+        .hsync_pulse_width = 48, .hsync_back_porch = 40, .hsync_front_porch = 8,
+        .vsync_pulse_width = 100, .vsync_back_porch = 48, .vsync_front_porch = 8,
+    },
+    [DISPLAY_TIMING_BS] = {
+        .name = "BS", .pclk_hz = 10000000,
+        .hsync_pulse_width = 10, .hsync_back_porch = 40, .hsync_front_porch = 8,
+        .vsync_pulse_width = 10, .vsync_back_porch = 40, .vsync_front_porch = 8,
+    },
+    [DISPLAY_TIMING_MIN_A22] = {
+        .name = "MIN A22", .pclk_hz = 16600000,
+        .hsync_pulse_width = 10, .hsync_back_porch = 40, .hsync_front_porch = 30,
+        .vsync_pulse_width = 10, .vsync_back_porch = 40, .vsync_front_porch = 8,
+    },
+    [DISPLAY_TIMING_MIN_MD_HBP] = {
+        .name = "MIN MD HBP", .pclk_hz = 16600000,
+        .hsync_pulse_width = 1, .hsync_back_porch = 72, .hsync_front_porch = 2,
+        .vsync_pulse_width = 1, .vsync_back_porch = 1, .vsync_front_porch = 71,
+    },
+    [DISPLAY_TIMING_MIN_MD_1] = {
+        .name = "MIN MD 1", .pclk_hz = 16600000,
+        .hsync_pulse_width = 10, .hsync_back_porch = 32, .hsync_front_porch = 38,
+        .vsync_pulse_width = 5, .vsync_back_porch = 5, .vsync_front_porch = 4,
+    },
+    [DISPLAY_TIMING_MIN_MD_2] = {
+        .name = "MIN MD 2", .pclk_hz = 16600000,
+        .hsync_pulse_width = 10, .hsync_back_porch = 32, .hsync_front_porch = 38,
+        .vsync_pulse_width = 5, .vsync_back_porch = 5, .vsync_front_porch = 48,
+    },
+    [DISPLAY_TIMING_MID_BAL] = {
+        .name = "MID BAL", .pclk_hz = 26407680,
+        .hsync_pulse_width = 1, .hsync_back_porch = 58, .hsync_front_porch = 59,
+        .vsync_pulse_width = 64, .vsync_back_porch = 64, .vsync_front_porch = 128,
+    },
+    [DISPLAY_TIMING_MID_HSYNC] = {
+        .name = "MID HSYNC", .pclk_hz = 26407680,
+        .hsync_pulse_width = 114, .hsync_back_porch = 2, .hsync_front_porch = 2,
+        .vsync_pulse_width = 64, .vsync_back_porch = 64, .vsync_front_porch = 128,
+    },
+    [DISPLAY_TIMING_MAX_HBP] = {
+        .name = "MAX HBP", .pclk_hz = 35700000,
+        .hsync_pulse_width = 33, .hsync_back_porch = 126, .hsync_front_porch = 2,
+        .vsync_pulse_width = 126, .vsync_back_porch = 126, .vsync_front_porch = 255,
+    },
+    [DISPLAY_TIMING_MAX_BAL] = {
+        .name = "MAX BAL", .pclk_hz = 35700000,
+        .hsync_pulse_width = 1, .hsync_back_porch = 80, .hsync_front_porch = 80,
+        .vsync_pulse_width = 126, .vsync_back_porch = 126, .vsync_front_porch = 255,
+    },
+    [DISPLAY_TIMING_MAX_HSYNC] = {
+        .name = "MAX HSYNC", .pclk_hz = 35700000,
+        .hsync_pulse_width = 157, .hsync_back_porch = 2, .hsync_front_porch = 2,
+        .vsync_pulse_width = 126, .vsync_back_porch = 126, .vsync_front_porch = 255,
+    },
+};
+
+const char* display_get_timing_name(display_timing_mode_t mode) {
+    if ((unsigned)mode >= DISPLAY_TIMING_COUNT) {
+        return "Unknown";
+    }
+    return s_timing_presets[mode].name;
+}
+
 static display_rgb_timing_t s_rgb_timing;
 static bool s_nvs_ready;
 static esp_lcd_panel_io_handle_t s_panel_io;
@@ -268,194 +396,22 @@ static lv_display_t* display_init_common(esp_lcd_panel_handle_t* direct_panel) {
     const display_timing_mode_t timing_mode = display_get_saved_timing_mode();
 
     esp_lcd_rgb_timing_t timing = GC9503_480_480_PANEL_60HZ_RGB_TIMING();
-    const char* timing_name = "Unknown";
     timing.flags.de_idle_high = 0; // Must be 0 as GC9503V expects DE active-high (B0h DEP=0), else backlight on but black screen.
 
-    switch (timing_mode) {
-    case DISPLAY_TIMING_WT:
-        timing_name = "WT";
-        timing.pclk_hz = 20 * 1000 * 1000;
-        timing.hsync_pulse_width = 48;
-        timing.hsync_back_porch = 40;
-        timing.hsync_front_porch = 8;
-        timing.vsync_pulse_width = 100;
-        timing.vsync_back_porch = 48;
-        timing.vsync_front_porch = 8;
-        break;
-
-    case DISPLAY_TIMING_BS:
-        timing_name = "BS";
-        timing.pclk_hz = 10 * 1000 * 1000;
-        timing.hsync_pulse_width = 10;
-        timing.hsync_back_porch = 40;
-        timing.hsync_front_porch = 8;
-        timing.vsync_pulse_width = 10;
-        timing.vsync_back_porch = 40;
-        timing.vsync_front_porch = 8;
-        break;
-
-        /*
-        GC9503V datasheet, 5.3.2 DPI interface timing, figure 12.
-        Some values in GC9503V datasheet were clipped - those were taken from GC9503CV datasheet.
-
-        HLW+HBP+HFP >= 4.5us
-
-        Parameter                    Symbol  Min   Typ   Max   Units
-        Frame Rate                   FR      54          66    fps
-        Horizontal Low Pulse width   HLW     1           -     DOTCLK
-        Horizontal Back Porch        HBP     2           126   DOTCLK
-        Horizontal Address           HACT          480         DOTCLK
-        Horizontal Front Porch       HFP     2           -     DOTCLK
-        Vertical Low Pulse width     VLW     1           126   Line
-        Vertical Back Porch          VBP     1           126   Line
-        Vertical Address             VACT                864   Line
-        Vertical Front Porch         VFP     1           255   Line
-        Data Clock                   DCLK    16.6        35.7  MHz
-
-        PCLK = pixel clock = DCLK = data clock = DOTCLK
-        HSYNC = hsync_pulse_width = HLW = horizontal low pulse width
-
-        How frame rates are calculated:
-        period = 1/freq
-        1 horizontal line = HLW + HBP + HACT + HFP DOTCLK periods
-        1 frame = VLW + VBP + VACT + VFP lines
-        line rate = PCLK / (HLW + HBP + HACT + HFP)
-        frame rate = line rate / (VLW + VBP + VACT + VFP)
-        frame rate = PCLK / Htot*Vtot
-
-        The total horizontal blanking is the minimum integer width needed to satisfy HLW+HBP+HFP >= 4.5 us at each PCLK.
-
-        For min, datasheet provides HBP=2 but it needs to take at least 4.5 us so:
-        1/16.6 MHz = 60.24 ns
-        4.5 us / 60.24 ns = ceil(74.4) clocks = 75 clocks
-        We need to assign the remaining blanking somewhere, and the datasheet does not specify where, so many solutions are possible:
-        HLW=71, HBP=2,  HFP=2
-        HLW=1,  HBP=72, HFP=2
-        HLW=1,  HBP=37, HFP=37
-        ...
-
-        Looking at datasheets of other panel controllers, the back porch is the most common place to put the remaining blanking clocks.
-        HFP-heavy distributions produced a blank white screen in hardware testing and are not offered.
-
-        For the 480x480 LCD the resulting nominal frame rates are:
-            MIN HBP       16600000/((1+72+480+2)*(1+1+480+16)) = 60.06 Hz
-            MIN HBP 54Hz  16600000/((1+72+480+2)*(1+1+480+71)) = 54.09 Hz
-            MIN HSYNC     16600000/((71+2+480+2)*(1+1+480+1))  = 61.93 Hz
-            MID                                                        60.00 Hz
-            MAX                                                        56.43 Hz
-        all within the documented 54-66 Hz range.
-        */
-
-    case DISPLAY_TIMING_MIN_A22:
-        timing_name = "MIN A22";
-        timing.pclk_hz = 16600000;
-        timing.hsync_pulse_width = 10;
-        timing.hsync_back_porch = 40;
-        timing.hsync_front_porch = 30;
-        timing.vsync_pulse_width = 10;
-        timing.vsync_back_porch = 40;
-        timing.vsync_front_porch = 8;
-        break;
-
-    case DISPLAY_TIMING_MIN_MD_HBP:
-        timing_name = "MIN MD HBP";
-        timing.pclk_hz = 16600000;
-        timing.hsync_pulse_width = 1;
-        timing.hsync_back_porch = 72;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 1;
-        timing.vsync_back_porch = 1;
-        timing.vsync_front_porch = 71;
-        break;
-
-    // 60.006 Hz
-    case DISPLAY_TIMING_MIN_MD_1:
-        timing_name = "MIN MD 1";
-        timing.pclk_hz = 16600000;
-        timing.hsync_pulse_width = 10;
-        timing.hsync_back_porch = 32;
-        timing.hsync_front_porch = 38;
-        timing.vsync_pulse_width = 5;
-        timing.vsync_back_porch = 5;
-        timing.vsync_front_porch = 4;
-        break;
-
-    // 55.0985 Hz
-    case DISPLAY_TIMING_MIN_MD_2:
-        timing_name = "MIN MD 2";
-        timing.pclk_hz = 16600000;
-        timing.hsync_pulse_width = 10;
-        timing.hsync_back_porch = 32;
-        timing.hsync_front_porch = 38;
-        timing.vsync_pulse_width = 5;
-        timing.vsync_back_porch = 5;
-        timing.vsync_front_porch = 48;
-        break;
-
-    case DISPLAY_TIMING_MID_BAL:
-        timing_name = "MID BAL";
-        timing.pclk_hz = 26407680;
-        timing.hsync_pulse_width = 1;
-        timing.hsync_back_porch = 58;
-        timing.hsync_front_porch = 59;
-        timing.vsync_pulse_width = 64;
-        timing.vsync_back_porch = 64;
-        timing.vsync_front_porch = 128;
-        break;
-
-    case DISPLAY_TIMING_MID_HSYNC:
-        timing_name = "MID HSYNC";
-        timing.pclk_hz = 26407680;
-        timing.hsync_pulse_width = 114;
-        timing.hsync_back_porch = 2;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 64;
-        timing.vsync_back_porch = 64;
-        timing.vsync_front_porch = 128;
-        break;
-
-    case DISPLAY_TIMING_MAX_HBP:
-        timing_name = "MAX HBP";
-        timing.pclk_hz = 35700000;
-        timing.hsync_pulse_width = 33;
-        timing.hsync_back_porch = 126;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 126;
-        timing.vsync_back_porch = 126;
-        timing.vsync_front_porch = 255;
-        break;
-
-    case DISPLAY_TIMING_MAX_BAL:
-        timing_name = "MAX BAL";
-        timing.pclk_hz = 35700000;
-        timing.hsync_pulse_width = 1;
-        timing.hsync_back_porch = 80;
-        timing.hsync_front_porch = 80;
-        timing.vsync_pulse_width = 126;
-        timing.vsync_back_porch = 126;
-        timing.vsync_front_porch = 255;
-        break;
-
-    case DISPLAY_TIMING_MAX_HSYNC:
-        timing_name = "MAX HSYNC";
-        timing.pclk_hz = 35700000;
-        timing.hsync_pulse_width = 157;
-        timing.hsync_back_porch = 2;
-        timing.hsync_front_porch = 2;
-        timing.vsync_pulse_width = 126;
-        timing.vsync_back_porch = 126;
-        timing.vsync_front_porch = 255;
-        break;
-
-    default:
-        break;
-    }
+    const display_timing_preset_t* preset = &s_timing_presets[timing_mode];
+    timing.pclk_hz = preset->pclk_hz;
+    timing.hsync_pulse_width = preset->hsync_pulse_width;
+    timing.hsync_back_porch = preset->hsync_back_porch;
+    timing.hsync_front_porch = preset->hsync_front_porch;
+    timing.vsync_pulse_width = preset->vsync_pulse_width;
+    timing.vsync_back_porch = preset->vsync_back_porch;
+    timing.vsync_front_porch = preset->vsync_front_porch;
 
     ESP_LOGI(TAG, "RGB flags: HS=%u VS=%u DE=%u PCLK_NEG=%u PCLK_IDLE=%u", timing.flags.hsync_idle_low, timing.flags.vsync_idle_low, timing.flags.de_idle_high, timing.flags.pclk_active_neg,
              timing.flags.pclk_idle_high);
 
     s_rgb_timing.timing = timing;
-    s_rgb_timing.name = timing_name;
+    s_rgb_timing.name = preset->name;
 
     esp_lcd_rgb_panel_config_t rgb_config = {
         .clk_src = LCD_CLK_SRC_DEFAULT, // LCD_CLK_SRC_DEFAULT == LCD_CLK_SRC_PLL160M
