@@ -94,6 +94,28 @@ static uint8_t find_platform_at(const building_clock_world_t* world, int16_t x, 
     return selected;
 }
 
+static bool ladder_column_clear(const building_clock_world_t* world, int16_t x, int16_t top, int16_t bottom) {
+    if (top < DIGIT_ENVELOPE_BOTTOM && bottom >= BUILDING_CLOCK_DIGIT_ENVELOPE_Y) {
+        if (x + 4 >= BUILDING_CLOCK_COLON_ENVELOPE_X && x - 4 < BUILDING_CLOCK_COLON_ENVELOPE_X + BUILDING_CLOCK_COLON_ENVELOPE_WIDTH) {
+            return false;
+        }
+        for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
+            if (x + 4 >= s_digit_x[digit] && x - 4 < s_digit_x[digit] + BUILDING_CLOCK_DIGIT_ENVELOPE_WIDTH) {
+                return false;
+            }
+        }
+    }
+    for (uint8_t id = 0U; id < world->ladder_count; id++) {
+        const building_clock_ladder_t* other = &world->ladders[id];
+        int32_t dx = (int32_t)x - other->x;
+        dx = dx < 0 ? -dx : dx;
+        if (top <= other->bottom_y && bottom >= other->top_y && dx < BUILDING_CLOCK_LADDER_COLUMN_CLEARANCE) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static void add_ladder(candidate_builder_t* builder, uint8_t first_platform_id, uint8_t second_platform_id, int16_t x) {
     building_clock_world_t* world = builder->world;
     if (world->ladder_count >= BUILDING_CLOCK_MAX_LADDERS || first_platform_id >= world->platform_count || second_platform_id >= world->platform_count) {
@@ -106,8 +128,26 @@ static void add_ladder(candidate_builder_t* builder, uint8_t first_platform_id, 
     const uint8_t top_id = first_is_top ? first_platform_id : second_platform_id;
     const uint8_t bottom_id = first_is_top ? second_platform_id : first_platform_id;
 
+    const int16_t left = first->x_start > second->x_start ? first->x_start : second->x_start;
+    const int16_t right = first->x_end < second->x_end ? first->x_end : second->x_end;
+    int16_t chosen = -1;
+    int32_t best = INT32_MAX;
+    /* Grammar choice among compatible columns, before a candidate exists.
+     * Failure leaves required connectivity for read-only validation to reject. */
+    for (int16_t column = left; column <= right; column++) {
+        int32_t distance = (int32_t)column - x;
+        distance = distance < 0 ? -distance : distance;
+        if (distance < best && ladder_column_clear(world, column, world->platforms[top_id].surface_y, world->platforms[bottom_id].surface_y)) {
+            chosen = column;
+            best = distance;
+        }
+    }
+    if (chosen < 0) {
+        return;
+    }
+
     world->ladders[world->ladder_count++] = (building_clock_ladder_t){
-        .x = x,
+        .x = chosen,
         .top_y = world->platforms[top_id].surface_y,
         .bottom_y = world->platforms[bottom_id].surface_y,
         .top_platform_id = top_id,
@@ -115,13 +155,38 @@ static void add_ladder(candidate_builder_t* builder, uint8_t first_platform_id, 
     };
 }
 
+static bool has_side_access(const building_clock_world_t* world, uint8_t top, uint8_t bottom, bool left) {
+    if (top >= world->platform_count || bottom >= world->platform_count) {
+        return false;
+    }
+    bool reached[BUILDING_CLOCK_MAX_PLATFORM_SPANS] = {false};
+    reached[top] = true;
+    for (uint8_t pass = 0U; pass < world->platform_count; pass++) {
+        for (uint8_t id = 0U; id < world->ladder_count; id++) {
+            const building_clock_ladder_t* ladder = &world->ladders[id];
+            if (left ? ladder->x >= 45 : ladder->x < 435) {
+                continue;
+            }
+            if (reached[ladder->top_platform_id] || reached[ladder->bottom_platform_id]) {
+                reached[ladder->top_platform_id] = true;
+                reached[ladder->bottom_platform_id] = true;
+            }
+        }
+    }
+    return reached[bottom];
+}
+
 static void add_side_ladders(candidate_builder_t* builder) {
     const int16_t left_x = random_i16(builder, 28, 41);
     const int16_t right_x = random_i16(builder, 440, 453);
     const uint8_t left_lower = find_platform_at(builder->world, left_x, false);
     const uint8_t right_lower = find_platform_at(builder->world, right_x, false);
-    add_ladder(builder, builder->top_left_platform_id, left_lower, left_x);
-    add_ladder(builder, builder->top_right_platform_id, right_lower, right_x);
+    if (!has_side_access(builder->world, builder->top_left_platform_id, left_lower, true)) {
+        add_ladder(builder, builder->top_left_platform_id, left_lower, left_x);
+    }
+    if (!has_side_access(builder->world, builder->top_right_platform_id, right_lower, false)) {
+        add_ladder(builder, builder->top_right_platform_id, right_lower, right_x);
+    }
 }
 
 static void generate_base_platforms(candidate_builder_t* builder) {
@@ -200,7 +265,9 @@ static void add_roof_bridge(candidate_builder_t* builder) {
     const building_clock_platform_t* parent = &builder->world->platforms[parent_id];
     const int16_t x_start = random_i16(builder, 162, 191);
     const int16_t x_end = random_i16(builder, 289, 320);
-    int16_t y = parent->surface_y < 86 ? random_i16(builder, (int16_t)(parent->surface_y + 24), 157) : random_i16(builder, 24, (int16_t)(parent->surface_y - 18));
+    const building_clock_platform_t* other = &builder->world->platforms[connect_left ? builder->top_right_platform_id : builder->top_left_platform_id];
+    const int16_t lower_roof = parent->surface_y < other->surface_y ? parent->surface_y : other->surface_y;
+    int16_t y = (int16_t)(lower_roof - random_i16(builder, 18, 35));
     y = distinct_platform_y(builder->world, y, x_start, x_end);
     const uint8_t bridge_id = add_platform(builder, x_start, x_end, y);
     int16_t overlap_start = parent->x_start > x_start ? parent->x_start : x_start;
@@ -210,6 +277,9 @@ static void add_roof_bridge(candidate_builder_t* builder) {
     }
     const int16_t ladder_x = random_i16(builder, (int16_t)(overlap_start + 2), (int16_t)(overlap_end - 1));
     add_ladder(builder, parent_id, bridge_id, ladder_x);
+    overlap_start = other->x_start > x_start ? other->x_start : x_start;
+    overlap_end = other->x_end < x_end ? other->x_end : x_end;
+    add_ladder(builder, connect_left ? builder->top_right_platform_id : builder->top_left_platform_id, bridge_id, random_i16(builder, (int16_t)(overlap_start + 2), (int16_t)(overlap_end - 1)));
 }
 
 static void add_useful_upper_routes(candidate_builder_t* builder) {
@@ -221,16 +291,16 @@ static void add_useful_upper_routes(candidate_builder_t* builder) {
         }
         break;
     case BUILDING_CLOCK_TOPOLOGY_SPLIT_LOWER_RAISED_BRIDGE:
-        add_service_ledge(builder, true);
-        add_service_ledge(builder, false);
+        add_roof_bridge(builder);
+        add_service_ledge(builder, random_chance(builder, 1U, 2U));
         break;
     case BUILDING_CLOCK_TOPOLOGY_ASYMMETRIC_LOOP:
         add_roof_bridge(builder);
         add_service_ledge(builder, !builder->crane_left);
         break;
     case BUILDING_CLOCK_TOPOLOGY_TWIN_TOWERS:
-        add_service_ledge(builder, true);
-        add_service_ledge(builder, false);
+        add_roof_bridge(builder);
+        add_service_ledge(builder, random_chance(builder, 1U, 2U));
         break;
     case BUILDING_CLOCK_TOPOLOGY_CENTRAL_ROUTE_MACHINERY:
         add_roof_bridge(builder);
@@ -558,13 +628,24 @@ static void generate_locations(candidate_builder_t* builder) {
 
 static void generate_worker_spawns(candidate_builder_t* builder) {
     building_clock_world_t* world = builder->world;
-    world->worker_spawn_count = (uint8_t)random_u32(builder, 5U, BUILDING_CLOCK_MAX_WORKER_SPAWNS);
+    world->worker_spawn_count = (uint8_t)random_u32(builder, 6U, BUILDING_CLOCK_MAX_WORKER_SPAWNS);
     for (uint8_t index = 0; index < world->worker_spawn_count; index++) {
         const int16_t nominal_x = (int16_t)(54 + (372 * index) / (world->worker_spawn_count - 1U));
         const int16_t x = (int16_t)(nominal_x + random_i16(builder, -8, 9));
         const uint8_t platform_id = find_platform_at(world, x, false);
         const uint8_t fallback_id = index < world->worker_spawn_count / 2U ? builder->lower_left_platform_id : builder->lower_right_platform_id;
-        const building_clock_platform_t* platform = &world->platforms[platform_id != BUILDING_CLOCK_INVALID_ID ? platform_id : fallback_id];
+        uint8_t selected = platform_id != BUILDING_CLOCK_INVALID_ID ? platform_id : fallback_id;
+        if (index == 1U || index == 3U || index == 5U) {
+            selected = index == 1U ? builder->top_left_platform_id : builder->top_right_platform_id;
+            if (index == 5U) {
+                for (uint8_t id = 0U; id < world->platform_count; id++) {
+                    if (world->platforms[id].surface_y < world->platforms[selected].surface_y) {
+                        selected = id;
+                    }
+                }
+            }
+        }
+        const building_clock_platform_t* platform = &world->platforms[selected];
         const int16_t bounded_x = x < platform->x_start ? platform->x_start : (x > platform->x_end ? platform->x_end : x);
         world->worker_spawns[index] = (building_clock_worker_spawn_t){
             .position = {.x = bounded_x, .y = platform->surface_y},
@@ -639,14 +720,44 @@ static void generate_digit_work_areas(candidate_builder_t* builder) {
         const int16_t lower_y = lower->surface_y;
 
         const bool access_on_left = (digit & 1U) != 0U;
-        const int16_t access_x = access_on_left ? (int16_t)(area->envelope.x + 7) : (int16_t)(area->envelope.x + (int16_t)area->envelope.width - 7);
+        int16_t access_x = access_on_left ? (int16_t)(area->envelope.x + 12) : (int16_t)(area->envelope.x + (int16_t)area->envelope.width - 12);
+        int32_t nearest = INT32_MAX;
+        for (int16_t column = (int16_t)(area->envelope.x + 12); column <= area->envelope.x + area->envelope.width - 12; column++) {
+            if (column < upper->x_start || column > upper->x_end || column < lower->x_start || column > lower->x_end) {
+                continue;
+            }
+            bool clear = true;
+            for (uint8_t id = 0U; id < world->ladder_count; id++) {
+                const building_clock_ladder_t* ladder = &world->ladders[id];
+                int32_t dx = (int32_t)column - ladder->x;
+                dx = dx < 0 ? -dx : dx;
+                if (upper_y <= ladder->bottom_y && ladder->top_y <= lower_y && dx < 16) {
+                    clear = false;
+                }
+            }
+            for (uint8_t id = 0U; id < world->temp_attachment_set_count; id++) {
+                const building_clock_temp_attachment_set_t* other = &world->temp_attachment_sets[id];
+                int32_t dx = (int32_t)column - other->anchors[0].x;
+                dx = dx < 0 ? -dx : dx;
+                if (dx < 20) {
+                    clear = false;
+                }
+            }
+            const int16_t preferred = access_on_left ? (int16_t)(area->envelope.x + 12) : (int16_t)(area->envelope.x + (int16_t)area->envelope.width - 12);
+            int32_t distance = (int32_t)column - preferred;
+            distance = distance < 0 ? -distance : distance;
+            if (clear && distance < nearest) {
+                access_x = column;
+                nearest = distance;
+            }
+        }
         building_clock_temp_attachment_set_t* attachment = &world->temp_attachment_sets[world->temp_attachment_set_count++];
         attachment->kind = random_chance(builder, 1U, 2U) ? BUILDING_CLOCK_TEMP_STRUCTURE_LADDER : BUILDING_CLOCK_TEMP_STRUCTURE_SCAFFOLD;
         attachment->assigned_digit_mask = (uint8_t)(1U << digit);
         attachment->allowed_area = (building_clock_rect_t){
-            .x = (int16_t)(access_x - 6),
+            .x = (int16_t)(access_x - 8),
             .y = upper_y,
-            .width = 13,
+            .width = 17,
             .height = (uint16_t)(lower_y - upper_y + 1),
         };
         attachment->anchor_count = 4U;

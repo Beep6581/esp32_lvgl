@@ -382,8 +382,8 @@ static bool add_ladder_edges(navigation_builder_t* builder) {
             return false;
         }
         if (!add_edge(builder, top, bottom, BUILDING_CLOCK_NAV_EDGE_CLIMB, BUILDING_CLOCK_NAV_SOURCE_LADDER, ladder,
-                      point_distance(builder->world->navigation.nodes[top].position, builder->world->navigation.nodes[bottom].position), 1U, BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL,
-                      BUILDING_CLOCK_INVALID_ID)) {
+                      point_distance(builder->world->navigation.nodes[top].position, builder->world->navigation.nodes[bottom].position), BUILDING_CLOCK_MAX_WORKERS,
+                      BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL, BUILDING_CLOCK_INVALID_ID)) {
             return false;
         }
     }

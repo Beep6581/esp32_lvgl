@@ -15,3 +15,4 @@ _Static_assert(BUILDING_CLOCK_MAX_JOBS < BUILDING_CLOCK_INVALID_ID, "job identif
 _Static_assert(BUILDING_CLOCK_MAX_TEMP_STRUCTURES < BUILDING_CLOCK_INVALID_ID, "temporary-structure identifiers are 8 bits");
 _Static_assert(BUILDING_CLOCK_MAX_LOADS < BUILDING_CLOCK_INVALID_ID, "load identifiers are 8 bits");
 _Static_assert(BUILDING_CLOCK_MAX_DEBRIS_PIECES < BUILDING_CLOCK_INVALID_ID, "debris identifiers are 8 bits");
+_Static_assert(BUILDING_CLOCK_RECENT_SITE_EVENTS > 0 && BUILDING_CLOCK_RECENT_SITE_EVENTS <= UINT8_MAX, "site-event ring index is 8 bits");

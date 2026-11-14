@@ -4,6 +4,14 @@ This SDL2/libpng program renders the same generated worlds and headless
 simulation used by firmware. It is a semantic design/debug viewer, not the
 ESP32 renderer.
 
+The default view is uncluttered. Workers have hard hats, colored overalls and
+discrete walk/climb/tool animations; TAB restores seed, timing and lifecycle
+labels. Rope tenders occupy physical winch stations, spare crew walk to quiet
+spots on broad platforms, and off-duty crew can shunt empty site trolleys.
+Pallets, baskets, bottom-up access erection and bounded site-event feedback
+make construction readable without debug text. Cranes and lifts remain parked;
+the working machinery in this pass is the rope/winch system and empty trolleys.
+
 Build and run:
 
 ```sh
@@ -21,7 +29,7 @@ without opening an interactive window:
 ```sh
 SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_viewer \
     --seed 0x6a09e667f3bcc909 --scenario rollover \
-    --duration-ms 1800 --screenshot /tmp/building-clock.png
+    --duration-ms 1800 --screenshot build/building-clock.png
 ```
 
 Run generator-selection diagnostics with:
@@ -32,6 +40,7 @@ build/building_clock_viewer/building_clock_viewer --diagnose 20000
 
 Controls:
 
+- `Tab`: status and lifecycle labels (off initially)
 - `Space`: run/pause
 - `.` or right arrow: advance 50 ms
 - `R`: restart an identical replay
@@ -62,7 +71,10 @@ depot to staging or a reachable roof cache. Tender-controlled beam clamps can
 shift suspended builders along a real roof without repeated full retrievals.
 Couriers can bring two compatible small kits on one trip. A builder may carry
 the next dependent kit and continue on the same rope once its supports are
-secured. Rope tenders are dispatched concurrently with their builders.
+secured. Rope tenders can prepare support-ready deliveries before builders
+arrive. Dispatch uses actual route duration and nearby returning/unpacking crew
+rather than unnecessary inspector/tender trips across roofs. Permanent ladders
+allow same-direction following at 20-unit spacing; opposing traffic queues.
 Busy six-worker crews may admit relief through generated spawns, up to the
 existing nine-worker limit. Unassigned crew drink, smoke, rest, or watch; these poses are
 interruptible when work becomes available. Permanent and temporary ladders are
@@ -82,3 +94,41 @@ optional second argument prints a five-second timeline for the first fixture.
 Output includes activity-time percentages, navigation/tender/rope-lane waits,
 paired deliveries, continued rope sections, relief use and peak job/load slots.
 See `docs/building_clock_throughput.md` for measured limits and remaining issues.
+
+## Motion review and character checks
+
+Export every frame of a deterministic sequence (the output directory must
+already exist). Frame spacing must be a positive multiple of 50 ms. Exporting
+frames and pausing do not advance animation independently of simulation time.
+
+```sh
+mkdir -p build/builders_sequence
+SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_viewer \
+    --seed 0x6a09e667f3bcc909 --scenario single --duration-ms 80000 \
+    --frame-ms 100 --sequence build/builders_sequence
+ffmpeg -framerate 10 -i build/builders_sequence/%06d.png \
+    -vf scale=960:960:flags=neighbor -c:v libx264 -crf 16 -pix_fmt yuv420p \
+    build/builders_sequence.mp4
+ctest --test-dir build/building_clock_viewer --output-on-failure
+SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_viewer \
+    --animation-sheet build/builders_characters.png
+```
+
+The character check compares software-rendered frame hashes for walk, climb,
+carry, hammer, winch, shovel, inspection and unpacking poses. Its sheet is a
+synthetic pose review, not a simulated gameplay sequence. See
+`docs/building_clock_visual_overhaul.md` for captures, tradeoffs and remaining
+limitations. `--animation-check` runs the same checks without writing a sheet.
+
+Detailed read-only construction traces, using the same host test build:
+
+```sh
+build/building_clock_tests/building_clock_bottleneck_trace single build/builders-single
+build/building_clock_tests/building_clock_bottleneck_trace rollover build/builders-rollover
+```
+
+These write worker samples, section changes and job changes to three CSV files
+per prefix, and print milestone/wait summaries to stdout. A final optional root
+seed overrides `0x6a09e667f3bcc909`. Diagnostics verify byte-identical replay
+against an unsampled control. See `docs/building_clock_bottlenecks.md` for the
+investigation, timing definitions, code references and remaining uncertainties.

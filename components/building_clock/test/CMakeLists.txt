@@ -117,8 +117,8 @@ target_compile_definitions(
     building_clock_invalid_fallback_tests
     PRIVATE
         BUILDING_CLOCK_WORLD_MAX_CANDIDATE_ATTEMPTS=1U
-        BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED=0x599f283f04152350ULL
-        BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION=4U
+        BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED=76ULL
+        BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION=5U
         BUILDING_CLOCK_WORLD_FALLBACK_ATTEMPT=0U
 )
 
@@ -210,3 +210,16 @@ target_include_directories(building_clock_throughput_tests PRIVATE "../include")
 target_compile_features(building_clock_throughput_tests PRIVATE c_std_11)
 target_compile_options(building_clock_throughput_tests PRIVATE -Wall -Wextra -Werror)
 add_test(NAME building_clock_throughput_tests COMMAND building_clock_throughput_tests 8)
+
+add_executable(building_clock_bottleneck_trace
+    "trace_building_clock_bottlenecks.c"
+    ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
+    "../building_clock_runtime_navigation.c"
+    "../building_clock_simulation.c"
+)
+target_include_directories(building_clock_bottleneck_trace PRIVATE "../include")
+target_compile_features(building_clock_bottleneck_trace PRIVATE c_std_11)
+target_compile_options(building_clock_bottleneck_trace PRIVATE -Wall -Wextra -Werror)
+add_test(NAME building_clock_bottleneck_single COMMAND building_clock_bottleneck_trace single)
+add_test(NAME building_clock_bottleneck_rollover COMMAND building_clock_bottleneck_trace rollover)

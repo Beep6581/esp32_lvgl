@@ -33,3 +33,7 @@ target_include_directories(
 target_compile_features(building_clock_viewer PRIVATE c_std_11)
 target_compile_options(building_clock_viewer PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(building_clock_viewer PRIVATE PkgConfig::SDL2 PkgConfig::PNG)
+
+enable_testing()
+add_test(NAME building_clock_character_animation COMMAND building_clock_viewer --animation-check)
+set_tests_properties(building_clock_character_animation PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")

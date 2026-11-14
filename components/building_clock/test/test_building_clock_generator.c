@@ -339,7 +339,37 @@ static void test_generation_batch(void) {
     }
 }
 
+static void test_access_clearance(void) {
+    building_clock_world_t base;
+    building_clock_generate_candidate(&base, UINT64_C(2), BUILDING_CLOCK_GENERATOR_VERSION, 0U);
+    expect_true(building_clock_prevalidate_candidate(&base).reason == BUILDING_CLOCK_PREVALIDATION_OK, "clearance fixture is a valid grammar candidate");
+    building_clock_world_t world = base;
+    expect_true(world.ladder_count < BUILDING_CLOCK_MAX_LADDERS, "clearance fixture has room for a duplicate");
+    world.ladders[world.ladder_count++] = world.ladders[0];
+    expect_true(building_clock_prevalidate_candidate(&world).reason == BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, "overlapping permanent ladders are rejected");
+
+    world = base;
+    building_clock_temp_attachment_set_t* set = &world.temp_attachment_sets[0];
+    const building_clock_ladder_t ladder = world.ladders[0];
+    set->allowed_area = (building_clock_rect_t){(int16_t)(ladder.x - 8), ladder.top_y, 17U, (uint16_t)(ladder.bottom_y - ladder.top_y + 1)};
+    for (uint8_t i = 0U; i < set->anchor_count; i++) {
+        set->anchors[i] = (building_clock_point_t){ladder.x, (int16_t)(ladder.top_y + (ladder.bottom_y - ladder.top_y) * i / (set->anchor_count - 1U))};
+    }
+    expect_true(building_clock_prevalidate_candidate(&world).reason == BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, "temporary access cannot overlap a permanent ladder");
+    world = base;
+    world.temp_attachment_sets[1] = world.temp_attachment_sets[0];
+    world.temp_attachment_sets[1].assigned_digit_mask = 2U;
+    expect_true(building_clock_prevalidate_candidate(&world).reason == BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, "two predefined temporary accesses cannot overlap");
+    building_clock_temp_attachment_set_t* adjacent = &world.temp_attachment_sets[1];
+    adjacent->allowed_area.x = (int16_t)(adjacent->allowed_area.x + adjacent->allowed_area.width);
+    for (uint8_t anchor = 0U; anchor < adjacent->anchor_count; anchor++) {
+        adjacent->anchors[anchor].x = (int16_t)(adjacent->anchors[anchor].x + adjacent->allowed_area.width);
+    }
+    expect_true(building_clock_prevalidate_candidate(&world).reason == BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, "two predefined temporary accesses cannot touch");
+}
+
 int main(void) {
+    test_access_clearance();
     test_deterministic_candidate();
     test_attempt_derivation();
     test_revised_clock_geometry();

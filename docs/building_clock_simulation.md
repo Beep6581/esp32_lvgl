@@ -279,8 +279,11 @@ the stage and explicit reason for every rejected attempt so application wiring
 can log the diagnostics without coupling generation to ESP logging.
 
 If all four normal attempts fail, selection runs root seed
-`0xbb67ae8584caa73b`, generator version 4, attempt 0 through that same pipeline.
-Version 4 adds the richer connected service-ledge and roof-bridge grammar;
+`2`, generator version 5, attempt 0 through that same pipeline.
+Version 5 connects bridges to both roofs, distributes real boot spawns across
+upper/lower work areas, and gives permanent/predefined temporary ladder columns
+explicit clearance. All permanent platforms must belong to the usable graph.
+Version 4 added the richer connected service-ledge and roof-bridge grammar;
 version 3 introduced the short, wide digit geometry and connected upper-step
 grammar, and version 2 introduced debris-aware lower-support placement.
 This combination is a known-valid instance of the normal generator grammar,
@@ -339,8 +342,13 @@ Node occupancy is a separate semantic rule: ordinary platform, junction,
 ladder-end, staging, depot, debris, and spawn nodes allow the full bounded crew;
 safe-waiting, digit-work, machinery-control, and temporary-attachment nodes are
 capacity one; cart stops allow two workers; and lift stops allow three. A
-capacity-one ladder therefore does not make its platform endpoints capacity
-one.
+limited ladder therefore does not make its platform endpoints capacity one.
+Permanent ladders permit same-direction following with at least 20 design
+units between 17-unit worker bodies. Opposing traffic waits until the ladder
+is empty. Admission and progress enforce spacing separately from the bounded
+reservation owner mask; the graph's ladder capacity is the crew limit, not an
+invitation for workers to overlap. Short temporary-access segments retain
+capacity-one traversal and exclusive work landings.
 
 Acquiring an already-owned resource is idempotent. Before movement, all workers
 that are ready to depart release their source-node occupancy. They then request
@@ -355,9 +363,26 @@ unscripted-looking behavior without general collision avoidance.
 The scene snapshot assigns stable design-space presentation positions when
 multiple workers share exactly the same broad platform location. Capacity-one
 work points, ladders, machinery controls, and temporary attachment points are
-never spread this way; they remain serialized by runtime reservations. This
+never spread this way; narrow points remain exclusive and permanent ladders
+use actual spaced traversal positions. This
 keeps broad-area crews individually legible without changing logical occupancy
 or adding continuous collision physics.
+
+Broad platforms also support bounded local activities: quiet breaks, physical
+winch stations, and off-duty empty-trolley shunting along an existing flat cart
+route. These require an actual continuous platform, not an invented navigation
+connection. Workers retain broad-area anchor ownership and physically return
+before routing to new work. Active rigging can displace a resting colleague.
+Narrow nodes/ledges and ladder traversal keep their normal reservations.
+Local return travel contributes to evacuation lead time, and collapse still
+waits for actual safety. A preempted trolley retains its intermediate progress;
+this initial shunting task does not provide material delivery or worker rides.
+
+The semantic state includes a fixed sixteen-entry history of brick seating,
+debris landing/clearing and digit completion. These timestamped world events
+may drive presentation feedback without adding renderer-owned particles or
+changing simulation behavior. Overwriting old history is deterministic and
+does not affect jobs or physical state.
 
 Temporary structures add only predefined validated edges. Each temporary access
 set has permanent upper and lower endpoints plus intermediate work-level

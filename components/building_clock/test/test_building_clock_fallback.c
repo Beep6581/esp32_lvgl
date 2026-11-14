@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#define FALLBACK_TRIGGER_ROOT UINT64_C(0x599f283f04152350)
+#define FALLBACK_TRIGGER_ROOT UINT64_C(76)
 
 static unsigned int failures;
 

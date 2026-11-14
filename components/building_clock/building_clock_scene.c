@@ -12,10 +12,10 @@ static bool world_counts_are_valid(const building_clock_world_t* world) {
 }
 
 static bool state_counts_are_valid(const building_clock_simulation_state_t* state) {
-    if (state->worker_count > BUILDING_CLOCK_MAX_WORKERS || state->used_job_slot_count > BUILDING_CLOCK_MAX_JOBS || state->used_temp_structure_slot_count > BUILDING_CLOCK_MAX_TEMP_STRUCTURES ||
-        state->used_load_slot_count > BUILDING_CLOCK_MAX_LOADS || state->used_debris_slot_count > BUILDING_CLOCK_MAX_DEBRIS_PIECES ||
-        state->falling_section_count > BUILDING_CLOCK_MAX_FALLING_SECTIONS || state->cart_count > BUILDING_CLOCK_MAX_CARTS || state->crane_count > BUILDING_CLOCK_MAX_CRANES ||
-        state->lift_count > BUILDING_CLOCK_MAX_LIFTS || state->hazard_count > BUILDING_CLOCK_MAX_HAZARDS) {
+    if (state->next_site_event >= BUILDING_CLOCK_RECENT_SITE_EVENTS || state->worker_count > BUILDING_CLOCK_MAX_WORKERS || state->used_job_slot_count > BUILDING_CLOCK_MAX_JOBS ||
+        state->used_temp_structure_slot_count > BUILDING_CLOCK_MAX_TEMP_STRUCTURES || state->used_load_slot_count > BUILDING_CLOCK_MAX_LOADS ||
+        state->used_debris_slot_count > BUILDING_CLOCK_MAX_DEBRIS_PIECES || state->falling_section_count > BUILDING_CLOCK_MAX_FALLING_SECTIONS || state->cart_count > BUILDING_CLOCK_MAX_CARTS ||
+        state->crane_count > BUILDING_CLOCK_MAX_CRANES || state->lift_count > BUILDING_CLOCK_MAX_LIFTS || state->hazard_count > BUILDING_CLOCK_MAX_HAZARDS) {
         return false;
     }
     for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
@@ -27,7 +27,7 @@ static bool state_counts_are_valid(const building_clock_simulation_state_t* stat
 }
 
 static bool worker_can_use_presentation_spacing(const building_clock_world_t* world, const building_clock_worker_t* worker) {
-    if (worker->state == BUILDING_CLOCK_WORKER_CLIMB || worker->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
+    if (worker->state == BUILDING_CLOCK_WORKER_CLIMB || worker->rope.phase != BUILDING_CLOCK_ROPE_NONE || worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_NONE) {
         return false;
     }
     if (worker->reserved_edge_id < world->navigation.edge_count) {

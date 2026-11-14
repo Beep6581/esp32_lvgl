@@ -167,7 +167,8 @@ static bool valid_edge_geometry(const building_clock_world_t* world, const build
         const uint16_t platform_length = (uint16_t)(world->platforms[edge->source_id].x_end - world->platforms[edge->source_id].x_start + 1);
         return edge->capacity == (platform_length < 64U ? 1U : 2U) && ((edge->flags & BUILDING_CLOCK_NAV_EDGE_ALLOW_LARGE_LOAD) != 0U) == (platform_length >= 64U);
     case BUILDING_CLOCK_NAV_EDGE_CLIMB:
-        if (edge->source_kind != BUILDING_CLOCK_NAV_SOURCE_LADDER || edge->source_id >= world->ladder_count || edge->capacity != 1U || (edge->flags & BUILDING_CLOCK_NAV_EDGE_ALLOW_LARGE_LOAD) != 0U) {
+        if (edge->source_kind != BUILDING_CLOCK_NAV_SOURCE_LADDER || edge->source_id >= world->ladder_count || edge->capacity != BUILDING_CLOCK_MAX_WORKERS ||
+            (edge->flags & BUILDING_CLOCK_NAV_EDGE_ALLOW_LARGE_LOAD) != 0U) {
             return false;
         }
         return edge_points_match(from->position, to->position, (building_clock_point_t){.x = world->ladders[edge->source_id].x, .y = world->ladders[edge->source_id].top_y},
@@ -586,6 +587,11 @@ building_clock_complete_validation_result_t building_clock_validate_complete(con
     if (check.reason != BUILDING_CLOCK_COMPLETE_VALIDATION_OK) {
         return check;
     }
+    for (uint8_t node = 0U; node < world->navigation.node_count; node++) {
+        if (world->navigation.nodes[node].kind == BUILDING_CLOCK_NAV_NODE_PLATFORM_ENDPOINT && !reachable[node]) {
+            return complete_result(BUILDING_CLOCK_COMPLETE_VALIDATION_PLATFORM_UNREACHABLE, world->navigation.nodes[node].source_id);
+        }
+    }
     bool reachable_with_temporary[BUILDING_CLOCK_MAX_NAV_NODES];
     mark_reachable(world, world->worker_spawns[0].nav_node_id, true, reachable_with_temporary);
 
@@ -614,6 +620,8 @@ building_clock_complete_validation_result_t building_clock_validate_complete(con
 
 const char* building_clock_complete_validation_reason_name(building_clock_complete_validation_reason_t reason) {
     switch (reason) {
+    case BUILDING_CLOCK_COMPLETE_VALIDATION_PLATFORM_UNREACHABLE:
+        return "permanent platform unreachable";
     case BUILDING_CLOCK_COMPLETE_VALIDATION_OK:
         return "ok";
     case BUILDING_CLOCK_COMPLETE_VALIDATION_NULL_WORLD:

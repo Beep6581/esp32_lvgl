@@ -118,6 +118,15 @@ static bool run_to_stable(building_clock_simulation_t* simulation, const buildin
         const building_clock_worker_t* worker = &simulation->state.workers[id];
         fprintf(stderr, "Timeout: worker %u state %u job %u node %u destination %u rope %u belay %u\n", id, worker->state, worker->current_job_id, worker->current_node_id, worker->destination_node_id,
                 worker->rope.phase, worker->rope.belay_job_id);
+        if (worker->route_node_index < worker->route_edge_count) {
+            const uint8_t edge = worker->route_edge_ids[worker->route_node_index];
+            const uint8_t next = worker->route_node_ids[worker->route_node_index + 1U];
+            fprintf(stderr, "  route-purpose=%u edge=%u owners=%u next=%u kind=%u owners=%u\n", worker->route_purpose, edge, simulation->navigation.edge_owner_masks[edge], next,
+                    world->navigation.nodes[next].kind, simulation->navigation.node_owner_masks[next]);
+        }
+    }
+    for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
+        fprintf(stderr, " digit %u phase=%u\n", digit, simulation->state.digits[digit].lifecycle);
     }
     for (uint8_t id = 0U; id < BUILDING_CLOCK_MAX_JOBS; id++) {
         const building_clock_job_t* j = &simulation->state.jobs[id];
@@ -389,6 +398,16 @@ static void test_worker_interruption(void) {
         (void)building_clock_simulation_step(&simulation, &world, 50U);
     }
 
+    /* Supply now starts during preparation. Remove those real jobs before
+     * installing the three deliberately controlled interruption states. */
+    for (uint8_t id = 0U; id < BUILDING_CLOCK_MAX_JOBS; id++) {
+        const building_clock_job_status_t status = simulation.state.jobs[id].status;
+        if (status == BUILDING_CLOCK_JOB_PENDING || status == BUILDING_CLOCK_JOB_ACTIVE || status == BUILDING_CLOCK_JOB_RESERVED || status == BUILDING_CLOCK_JOB_BLOCKED) {
+            (void)building_clock_simulation_cancel_job(&simulation, &world, id);
+        }
+    }
+    const uint32_t interrupted_before = simulation.metrics.jobs_interrupted;
+
     uint8_t jobs[3];
     make_active_job(&simulation, &world, 1U, BUILDING_CLOCK_JOB_PATROL, &jobs[0]);
     make_active_job(&simulation, &world, 2U, BUILDING_CLOCK_JOB_INSPECT, &jobs[1]);
@@ -418,7 +437,7 @@ static void test_worker_interruption(void) {
 
     (void)building_clock_simulation_step(&simulation, &world, 50U);
     expect_true(simulation.state.digits[3].lifecycle == BUILDING_CLOCK_DIGIT_EVACUATING, "hazard activates after preparation");
-    expect_true(simulation.metrics.jobs_interrupted == 3U, "walking, action, and waiting jobs are interrupted by safety");
+    expect_true(simulation.metrics.jobs_interrupted - interrupted_before == 3U, "walking, action, and waiting jobs are interrupted by safety");
     for (uint8_t worker = 0U; worker < simulation.state.worker_count; worker++) {
         expect_true(simulation.state.workers[worker].route_purpose == BUILDING_CLOCK_WORKER_ROUTE_EVACUATION && simulation.state.workers[worker].evacuation_digit_id == 3U,
                     "idle and working occupants begin generated safe-retreat routes");
@@ -869,6 +888,11 @@ static void test_coordinated_fronts_and_relief(void) {
                 expect_true(reach >= -12 && reach <= 12, "horizontal rope travel keeps the builder near its moving pulley");
                 expect_true(worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS, "lateral travel has an assigned rope tender");
             }
+            if (worker->rope.phase == BUILDING_CLOCK_ROPE_WORK) {
+                const int32_t dx = (int32_t)worker->rope.work_position.x - worker->position.x;
+                const int32_t dy = (int32_t)worker->rope.work_position.y - worker->position.y;
+                expect_true(dx >= -12 && dx <= 12 && dy >= -12 && dy <= 12, "every placed brick remains within a suspended worker's physical arm reach");
+            }
         }
         parallel |= builders >= 2U;
         for (uint8_t load_id = 0U; load_id < BUILDING_CLOCK_MAX_LOADS; load_id++) {
@@ -891,6 +915,11 @@ static void test_coordinated_fronts_and_relief(void) {
     simulation.crew_limit = 6U;
     expect_true(run_to_stable(&simulation, &world, NULL), "narrow roof access never permanently blocks the belaying job");
     expect_true(simulation.state.worker_count == 6U, "explicit fixed crew disables relief admission");
+
+    select_test_world(&world, UINT64_C(0xe2e7cd4df0e6b95d));
+    prepare_transition(&simulation, &world, 14U, 37U, 14U, 38U, 9U);
+    expect_true(run_to_stable(&simulation, &world, NULL), "three suspended fronts yield rather than deadlocking their rope lanes");
+    expect_true(transition_resources_clean(&simulation), "rope-lane yielding releases jobs and kits after completion");
 
     prepare_transition(&simulation, &world, 23U, 59U, 0U, 0U, 6U);
     expect_true(run_to_stable(&simulation, &world, NULL), "demanding transition completes with relief");

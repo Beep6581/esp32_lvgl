@@ -43,6 +43,7 @@ extern "C" {
 #define BUILDING_CLOCK_MAX_FALLING_SECTIONS 20
 #define BUILDING_CLOCK_MAX_DEBRIS_PIECES 32
 #define BUILDING_CLOCK_MAX_LOADS 8
+#define BUILDING_CLOCK_RECENT_SITE_EVENTS 16
 #define BUILDING_CLOCK_MAX_CARTS 2
 #define BUILDING_CLOCK_MAX_HAZARDS BUILDING_CLOCK_DIGIT_COUNT
 #define BUILDING_CLOCK_MAX_WORKER_ROUTE_NODES BUILDING_CLOCK_MAX_NAV_NODES
@@ -142,6 +143,10 @@ typedef enum {
     BUILDING_CLOCK_NAV_EDGE_RIDE_LIFT,
     BUILDING_CLOCK_NAV_EDGE_TEMP_CONNECTION,
 } building_clock_nav_edge_kind_t;
+
+/* Worker bodies are 17 units tall; keep a small gap when following. */
+#define BUILDING_CLOCK_LADDER_SPACING 20U
+#define BUILDING_CLOCK_LADDER_COLUMN_CLEARANCE 12
 
 typedef enum {
     BUILDING_CLOCK_NAV_EDGE_BIDIRECTIONAL = 1U << 0,
@@ -473,6 +478,17 @@ typedef struct {
     uint32_t motion_remainder_ms;
 } building_clock_rope_t;
 
+typedef enum {
+    BUILDING_CLOCK_PLATFORM_NONE = 0,
+    BUILDING_CLOCK_PLATFORM_WALK_OUT,
+    BUILDING_CLOCK_PLATFORM_REST,
+    BUILDING_CLOCK_PLATFORM_RETURN,
+    BUILDING_CLOCK_PLATFORM_CART_APPROACH,
+    BUILDING_CLOCK_PLATFORM_CART_PUSH,
+    BUILDING_CLOCK_PLATFORM_WINCH_WALK,
+    BUILDING_CLOCK_PLATFORM_WINCH_WORK,
+} building_clock_platform_activity_phase_t;
+
 typedef struct {
     building_clock_worker_role_t preferred_role;
     uint16_t capabilities;
@@ -497,6 +513,11 @@ typedef struct {
     uint32_t state_elapsed_ms;
     uint32_t behavior_timer_ms;
     building_clock_rope_t rope;
+    /* A local winch station, break or empty-trolley task on the current broad
+     * platform. Return physically to the graph anchor before routing again. */
+    building_clock_point_t platform_activity_position;
+    uint8_t platform_activity_phase; /* building_clock_platform_activity_phase_t */
+    uint8_t platform_motion_remainder_ms;
 } building_clock_worker_t;
 
 typedef enum {
@@ -759,6 +780,23 @@ typedef struct {
     uint8_t weekday;
 } building_clock_date_t;
 
+typedef enum {
+    BUILDING_CLOCK_SITE_NO_EVENT = 0,
+    BUILDING_CLOCK_SITE_BRICK_SEATED,
+    BUILDING_CLOCK_SITE_RUBBLE_LANDED,
+    BUILDING_CLOCK_SITE_RUBBLE_CLEARED,
+    BUILDING_CLOCK_SITE_DIGIT_COMPLETED,
+} building_clock_site_event_kind_t;
+
+/* Bounded semantic milestones, not particles or drawing commands. Consumers
+ * may show dust, play a sound, or inspect history without changing simulation. */
+typedef struct {
+    uint64_t elapsed_ms;
+    building_clock_point_t position;
+    uint8_t kind;
+    uint8_t digit_id;
+} building_clock_site_event_t;
+
 /* Mutable runtime state. It owns no generated-world geometry. */
 typedef struct {
     uint64_t elapsed_ms;
@@ -770,6 +808,8 @@ typedef struct {
     building_clock_digit_state_t digits[BUILDING_CLOCK_DIGIT_COUNT];
     building_clock_colon_state_t colon;
     building_clock_date_t date;
+    uint8_t next_site_event;
+    building_clock_site_event_t recent_site_events[BUILDING_CLOCK_RECENT_SITE_EVENTS];
 
     /* Workers form a fixed dense roster; their array indices are stable IDs. */
     uint8_t worker_count;

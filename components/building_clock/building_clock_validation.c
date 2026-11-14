@@ -235,6 +235,14 @@ static building_clock_prevalidation_result_t validate_ladders(const building_clo
         if (vertical_span_hits_protected(world, ladder->x, ladder->top_y, ladder->bottom_y)) {
             return result(BUILDING_CLOCK_PREVALIDATION_LADDER_PROTECTED_REGION, index);
         }
+        for (uint8_t other = 0U; other < index; other++) {
+            const building_clock_ladder_t* b = &world->ladders[other];
+            int32_t dx = (int32_t)ladder->x - b->x;
+            dx = dx < 0 ? -dx : dx;
+            if (ladder->top_y <= b->bottom_y && b->top_y <= ladder->bottom_y && dx < BUILDING_CLOCK_LADDER_COLUMN_CLEARANCE) {
+                return result(BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, index);
+            }
+        }
     }
     return result(BUILDING_CLOCK_PREVALIDATION_OK, BUILDING_CLOCK_VALIDATION_NO_ITEM);
 }
@@ -431,6 +439,25 @@ static building_clock_prevalidation_result_t validate_attachments(const building
                 return result(BUILDING_CLOCK_PREVALIDATION_TEMP_ATTACHMENT_GEOMETRY, index);
             }
         }
+        const building_clock_point_t top = attachment->anchors[0];
+        const building_clock_point_t bottom = attachment->anchors[attachment->anchor_count - 1U];
+        for (uint8_t ladder = 0U; ladder < world->ladder_count; ladder++) {
+            const building_clock_ladder_t* b = &world->ladders[ladder];
+            int32_t dx = (int32_t)top.x - b->x;
+            dx = dx < 0 ? -dx : dx;
+            if (top.y <= b->bottom_y && b->top_y <= bottom.y && dx < 16) {
+                return result(BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, index);
+            }
+        }
+        for (uint8_t other = 0U; other < index; other++) {
+            const building_clock_temp_attachment_set_t* b = &world->temp_attachment_sets[other];
+            const building_clock_rect_t a_area = attachment->allowed_area;
+            const building_clock_rect_t b_area = b->allowed_area;
+            if (a_area.x <= (int32_t)b_area.x + b_area.width && b_area.x <= (int32_t)a_area.x + a_area.width && a_area.y <= (int32_t)b_area.y + b_area.height &&
+                b_area.y <= (int32_t)a_area.y + a_area.height) {
+                return result(BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE, index);
+            }
+        }
     }
     return result(BUILDING_CLOCK_PREVALIDATION_OK, BUILDING_CLOCK_VALIDATION_NO_ITEM);
 }
@@ -533,6 +560,8 @@ building_clock_prevalidation_result_t building_clock_prevalidate_candidate(const
 
 const char* building_clock_prevalidation_reason_name(building_clock_prevalidation_reason_t reason) {
     switch (reason) {
+    case BUILDING_CLOCK_PREVALIDATION_LADDER_CLEARANCE:
+        return "ladder or temporary access clearance";
     case BUILDING_CLOCK_PREVALIDATION_OK:
         return "ok";
     case BUILDING_CLOCK_PREVALIDATION_NULL_WORLD:

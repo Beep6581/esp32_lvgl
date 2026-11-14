@@ -147,12 +147,72 @@ static void test_invalid_counts_are_rejected(void) {
     expect_true(snapshot.world == NULL, "failed capture clears the output snapshot");
 }
 
+static void test_temporary_erection_and_site_events(void) {
+    building_clock_world_t world;
+    building_clock_simulation_t simulation;
+    make_scene(&world, &simulation);
+    const building_clock_temp_attachment_set_t* attachment = &world.temp_attachment_sets[0];
+    uint8_t node = BUILDING_CLOCK_INVALID_ID;
+    for (uint8_t id = 0U; id < world.navigation.node_count; id++) {
+        const building_clock_nav_node_t* candidate = &world.navigation.nodes[id];
+        if (candidate->source_kind == BUILDING_CLOCK_NAV_SOURCE_TEMP_ATTACHMENT && candidate->source_id == 0U && candidate->source_point_id + 1U == attachment->anchor_count)
+            node = id;
+    }
+    expect_true(node != BUILDING_CLOCK_INVALID_ID, "erection fixture has a generated lower attachment node");
+    if (node == BUILDING_CLOCK_INVALID_ID)
+        return;
+    expect_true(building_clock_simulation_init(&simulation, &world, 1U) == BUILDING_CLOCK_SIMULATION_OK, "single rigger fixture initializes");
+    building_clock_navigation_reset_reservations(&simulation.navigation);
+    simulation.state.workers[0].current_node_id = node;
+    simulation.state.workers[0].position = world.navigation.nodes[node].position;
+    (void)building_clock_navigation_reserve_node(&world, &simulation.navigation, node, 0U);
+    simulation.state.temp_structures[0] = (building_clock_temp_structure_t){.kind = attachment->kind, .status = BUILDING_CLOCK_TEMP_STRUCTURE_BUILDING, .attachment_set_id = 0U, .assigned_job_id = 0U};
+    simulation.state.used_temp_structure_slot_count = 1U;
+    simulation.state.jobs[0] = (building_clock_job_t){.kind = BUILDING_CLOCK_JOB_INSTALL_TEMP_LADDER,
+                                                      .status = BUILDING_CLOCK_JOB_PENDING,
+                                                      .subject = {.kind = BUILDING_CLOCK_JOB_SUBJECT_TEMP_STRUCTURE, .object_id = 0U},
+                                                      .source_node_id = BUILDING_CLOCK_INVALID_ID,
+                                                      .target_node_id = node,
+                                                      .reserved_worker_id = BUILDING_CLOCK_INVALID_ID,
+                                                      .action_duration_ms = 1200U};
+    simulation.state.used_job_slot_count = 1U;
+    simulation.state.jobs[0].status = BUILDING_CLOCK_JOB_ACTIVE;
+    simulation.state.jobs[0].reserved_worker_id = 0U;
+    simulation.state.workers[0].current_job_id = 0U;
+    simulation.state.workers[0].state = BUILDING_CLOCK_WORKER_HAMMER;
+    (void)building_clock_simulation_step(&simulation, &world, 400U);
+    building_clock_scene_snapshot_t snapshot;
+    expect_true(building_clock_scene_capture(&world, &simulation, &snapshot) == BUILDING_CLOCK_SCENE_OK, "partially erected access captures");
+    expect_true(snapshot.state.temp_structures[0].progress_per_mille > 0U && snapshot.state.temp_structures[0].progress_per_mille < 1000U, "access erection exposes actual partial progress");
+    (void)building_clock_simulation_step(&simulation, &world, 1000U);
+    expect_true(simulation.state.temp_structures[0].status == BUILDING_CLOCK_TEMP_STRUCTURE_ACTIVE && simulation.state.temp_structures[0].progress_per_mille == 1000U,
+                "erection completes before the temporary connection becomes active");
+
+    make_scene(&world, &simulation);
+    (void)building_clock_simulation_set_time(&simulation, &world, 14U, 38U);
+    bool landed = false, seated = false, cleared = false;
+    for (unsigned elapsed = 0U; elapsed < 100000U; elapsed += 50U) {
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        expect_true(building_clock_scene_capture(&world, &simulation, &snapshot) == BUILDING_CLOCK_SCENE_OK, "semantic event capture succeeds");
+        for (unsigned id = 0U; id < BUILDING_CLOCK_RECENT_SITE_EVENTS; id++) {
+            const building_clock_site_event_t* event = &snapshot.state.recent_site_events[id];
+            landed |= event->kind == BUILDING_CLOCK_SITE_RUBBLE_LANDED;
+            seated |= event->kind == BUILDING_CLOCK_SITE_BRICK_SEATED;
+            cleared |= event->kind == BUILDING_CLOCK_SITE_RUBBLE_CLEARED;
+            expect_true(event->kind == BUILDING_CLOCK_SITE_NO_EVENT || (event->elapsed_ms <= snapshot.state.elapsed_ms && event->digit_id < BUILDING_CLOCK_DIGIT_COUNT),
+                        "event history has valid deterministic timestamps and subjects");
+        }
+    }
+    expect_true(landed && seated && cleared, "shared simulation emits actual landing, clearing and brick-placement milestones");
+}
+
 int main(void) {
     test_capture_is_deterministic_and_read_only();
     test_broad_area_worker_spacing();
     test_mid_edge_worker_and_active_job();
     test_collapse_scene_contents();
     test_invalid_counts_are_rejected();
+    test_temporary_erection_and_site_events();
 
     if (failures != 0U) {
         fprintf(stderr, "%u Building Clock scene test(s) failed\n", failures);

@@ -189,8 +189,8 @@ static void test_disconnected_candidate_and_hazard(void) {
     expect_true(found, "construct a prevalidated disconnected candidate");
     if (found) {
         expect_true(building_clock_derive_navigation(&world).reason == BUILDING_CLOCK_NAV_DERIVATION_OK, "derive graph for disconnected candidate");
-        expect_true(building_clock_validate_complete(&world).reason == BUILDING_CLOCK_COMPLETE_VALIDATION_UPPER_CONSTRUCTION_ACCESS,
-                    "complete validation rejects disconnected upper construction access");
+        expect_true(building_clock_validate_complete(&world).reason == BUILDING_CLOCK_COMPLETE_VALIDATION_SPAWN_UNREACHABLE,
+                    "complete validation rejects disconnected roof crew before construction access checks");
     }
 
     expect_true(prepare_complete_world(&world, UINT64_C(0x0ddc0ffe10000000)), "find completely valid candidate for hazard test");

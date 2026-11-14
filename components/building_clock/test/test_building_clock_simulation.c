@@ -86,7 +86,8 @@ static bool worker_occupancy_is_consistent(const building_clock_world_t* world, 
         const uint16_t worker_bit = (uint16_t)(1U << worker_id);
         for (uint8_t node = 0U; node < world->navigation.node_count; node++) {
             const bool owns_node = (building_clock_navigation_node_owner_mask(world, &simulation->navigation, node) & worker_bit) != 0U;
-            const bool in_transit_or_waiting = worker->state == BUILDING_CLOCK_WORKER_WALK || worker->state == BUILDING_CLOCK_WORKER_CLIMB || worker->state == BUILDING_CLOCK_WORKER_WAIT;
+            const bool in_transit_or_waiting = worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE &&
+                                               (worker->state == BUILDING_CLOCK_WORKER_WALK || worker->state == BUILDING_CLOCK_WORKER_CLIMB || worker->state == BUILDING_CLOCK_WORKER_WAIT);
             const bool expected = node == worker->reserved_destination_node_id || (!in_transit_or_waiting && node == worker->current_node_id);
             if (owns_node != expected) {
                 return false;
@@ -94,6 +95,66 @@ static bool worker_occupancy_is_consistent(const building_clock_world_t* world, 
         }
     }
     return true;
+}
+
+static void test_break_spacing_and_cart_interruption(void) {
+    building_clock_world_t world;
+    initialize_world(&world, 2U);
+    world.platform_count = 1U;
+    world.platforms[0] = (building_clock_platform_t){.x_start = 10, .x_end = 400, .surface_y = 100};
+    world.navigation.nodes[0].position.x = 200;
+    world.navigation.nodes[1].position.x = 300;
+    for (unsigned i = 0U; i < 4U; i++)
+        add_spawn(&world, 0U);
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_WALK, 100U, 2U);
+    building_clock_simulation_t simulation;
+    expect_true(building_clock_simulation_init(&simulation, &world, 4U) == BUILDING_CLOCK_SIMULATION_OK, "break fixture initializes");
+    simulation.state.clock_initialized = true;
+    building_clock_simulation_t replay = simulation;
+    for (unsigned ms = 0U; ms < 4000U; ms += 50U) {
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        (void)building_clock_simulation_step(&replay, &world, 50U);
+        expect_true(memcmp(&simulation, &replay, sizeof(simulation)) == 0, "off-duty walks and poses replay identically");
+        expect_true(worker_occupancy_is_consistent(&world, &simulation), "local platform walking retains its broad-area occupancy without graph-edge leaks");
+    }
+    for (unsigned a = 0U; a < 4U; a++) {
+        for (unsigned b = a + 1U; b < 4U; b++) {
+            const int dx = simulation.state.workers[a].position.x - simulation.state.workers[b].position.x;
+            expect_true(dx <= -22 || dx >= 22, "idle colleagues occupy separate real platform positions");
+        }
+    }
+
+    world.worker_spawn_count = 1U;
+    world.navigation.nodes[0].position.x = 100;
+    world.cart_route_count = 1U;
+    world.cart_routes[0].stop_count = 2U;
+    world.cart_routes[0].stops[0].position = (building_clock_point_t){140, 100};
+    world.cart_routes[0].stops[1].position = (building_clock_point_t){260, 100};
+    expect_true(building_clock_simulation_init(&simulation, &world, 1U) == BUILDING_CLOCK_SIMULATION_OK, "cart fixture initializes");
+    simulation.state.clock_initialized = true;
+    replay = simulation;
+    bool saw_push = false, interrupted = false;
+    uint16_t parked_progress = 0U;
+    for (unsigned ms = 0U; ms < 8000U; ms += 50U) {
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        (void)building_clock_simulation_step(&replay, &world, 50U);
+        expect_true(memcmp(&simulation, &replay, sizeof(simulation)) == 0, "cart movement and preemption replay identically");
+        expect_true(worker_occupancy_is_consistent(&world, &simulation), "cart operator returns to graph reservations cleanly");
+        const building_clock_cart_t* cart = &simulation.state.carts[0];
+        if (!interrupted && cart->status == BUILDING_CLOCK_CART_MOVING && cart->route_progress_per_mille > 200U) {
+            saw_push = simulation.state.workers[0].state == BUILDING_CLOCK_WORKER_PUSH;
+            parked_progress = cart->route_progress_per_mille;
+            const building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_PATROL, 1U, 0U, 100U);
+            uint8_t job;
+            expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &job) == BUILDING_CLOCK_SIMULATION_OK, "construction can reclaim a cart operator");
+            expect_true(building_clock_simulation_add_job(&replay, &world, &spec, &job) == BUILDING_CLOCK_SIMULATION_OK, "replay receives identical new work");
+            interrupted = true;
+        } else if (interrupted) {
+            expect_true(cart->operator_worker_id == BUILDING_CLOCK_INVALID_ID && cart->route_progress_per_mille == parked_progress,
+                        "interrupted cart parks at its actual intermediate position without snapping to a stop");
+        }
+    }
+    expect_true(saw_push && interrupted && simulation.metrics.jobs_completed == 1U, "worker visibly pushes then returns to useful graph work");
 }
 
 static void test_walk_job_completion(void) {
@@ -192,6 +253,52 @@ static void test_deterministic_contention(void) {
                 "waiting worker progresses after winner releases edge");
     expect_true(simulation.metrics.wait_events > 0U && simulation.metrics.reservation_conflicts > 0U, "contention is recorded");
     expect_true(all_edge_reservations_clear(&world, &simulation) && worker_occupancy_is_consistent(&world, &simulation), "contention completion leaves consistent reservations");
+}
+
+static void test_spaced_ladder_following(void) {
+    building_clock_world_t world;
+    initialize_world(&world, 2U);
+    world.navigation.nodes[0].position = (building_clock_point_t){100, 300};
+    world.navigation.nodes[1].position = (building_clock_point_t){100, 100};
+    add_spawn(&world, 0U);
+    add_spawn(&world, 0U);
+    add_spawn(&world, 1U);
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_CLIMB, 200U, BUILDING_CLOCK_MAX_WORKERS);
+    building_clock_simulation_t simulation;
+    expect_true(building_clock_simulation_init(&simulation, &world, 3U) == BUILDING_CLOCK_SIMULATION_OK, "following fixture initializes");
+    simulation.state.workers[0].capabilities = BUILDING_CLOCK_WORKER_CAN_BUILD;
+    simulation.state.workers[1].capabilities = BUILDING_CLOCK_WORKER_CAN_BUILD;
+    simulation.state.workers[2].capabilities = BUILDING_CLOCK_WORKER_CAN_INSPECT;
+    building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_PATROL, 1U, BUILDING_CLOCK_WORKER_CAN_BUILD, 100U);
+    uint8_t first, second, opposite;
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &first) == BUILDING_CLOCK_SIMULATION_OK, "first follower job added");
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &second) == BUILDING_CLOCK_SIMULATION_OK, "second follower job added");
+    spec = job_spec(BUILDING_CLOCK_JOB_INSPECT, 0U, BUILDING_CLOCK_WORKER_CAN_INSPECT, 100U);
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &opposite) == BUILDING_CLOCK_SIMULATION_OK, "opposing job added");
+    building_clock_simulation_t replay = simulation;
+    bool shared = false, opposing_waited = false;
+    uint32_t same_direction_complete = 0U;
+    for (uint32_t ms = 50U; ms <= 10000U; ms += 50U) {
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        (void)building_clock_simulation_step(&replay, &world, 50U);
+        expect_true(memcmp(&simulation, &replay, sizeof(simulation)) == 0, "following and direction admission replay identically");
+        const building_clock_worker_t* a = &simulation.state.workers[0];
+        const building_clock_worker_t* b = &simulation.state.workers[1];
+        if (a->reserved_edge_id == 0U && b->reserved_edge_id == 0U) {
+            shared = true;
+            const int distance = a->position.y > b->position.y ? a->position.y - b->position.y : b->position.y - a->position.y;
+            expect_true(distance >= (int)BUILDING_CLOCK_LADDER_SPACING, "simultaneous climbers retain body clearance");
+            expect_true(simulation.state.workers[2].reserved_edge_id != 0U, "opposing traffic cannot enter an occupied ladder");
+        }
+        opposing_waited |= simulation.state.workers[2].state == BUILDING_CLOCK_WORKER_WAIT;
+        if (same_direction_complete == 0U && simulation.state.jobs[first].status == BUILDING_CLOCK_JOB_COMPLETE && simulation.state.jobs[second].status == BUILDING_CLOCK_JOB_COMPLETE) {
+            same_direction_complete = ms;
+        }
+    }
+    expect_true(shared && opposing_waited, "followers share the ladder while opposing traffic waits");
+    expect_true(same_direction_complete > 4000U && same_direction_complete < 5000U, "two four-second climbs finish with physical headway rather than serial eight-second travel");
+    expect_true(simulation.state.jobs[opposite].status == BUILDING_CLOCK_JOB_COMPLETE && all_edge_reservations_clear(&world, &simulation),
+                "opposing worker eventually traverses and releases the ladder");
 }
 
 static void test_cancellation_and_slot_reuse(void) {
@@ -439,9 +546,11 @@ static void test_long_run(void) {
 }
 
 int main(void) {
+    test_break_spacing_and_cart_interruption();
     test_walk_job_completion();
     test_ladder_multi_edge_and_actions();
     test_deterministic_contention();
+    test_spaced_ladder_following();
     test_cancellation_and_slot_reuse();
     test_deterministic_replay_and_step_bound();
     test_machinery_route_is_not_assigned();

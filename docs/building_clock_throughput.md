@@ -1,9 +1,172 @@
 # Builders throughput measurements
 
-Uncommitted refinement of `f6e7a16`. Latest verification: 2026-10-19.
-This improves throughput substantially but does not meet the requested 90% of
-single-digit rebuilds within 60 seconds. Viewer review is still needed before
-expanding the feature set. Historical checkpoint results follow the new results.
+## 2026-11-15: visual/gameplay tradeoff
+
+The subsequent [visual pass](building_clock_visual_overhaul.md) adds physical
+winch stations, off-duty platform separation, interrupted trolley shunting,
+animated tools/materials and semantic site feedback. Generator version 5 and
+all movement/action speeds remain unchanged. In the same 480-run batch,
+adaptive single-digit means become 54.83/52.31/53.89 seconds and <=60-second
+completion becomes 78/96 (81.3%), versus 83/96 (86.5%) below. Rollover/midnight
+means are 120.64/188.24 seconds. No timeouts or evacuation failures.
+
+This modest regression is retained explicitly in exchange for physical
+separation/setup and more legible activity; it is not claimed as optimization.
+Context storage is now 10,344 bytes (+336), worker 300 (+8), state 9,488 (+336).
+All prior capacity limits remain unchanged. The linked report contains the
+motion-review artifacts, verification and remaining visual weaknesses.
+
+## 2026-11-14: ladder following, local crews and connected roofs
+
+Worktree refinement of `d89c6e7`, including the host-only bottleneck probes.
+No movement speed, brick-placement duration, hammer duration, pacing deadline,
+display configuration or capacity was increased to obtain these results.
+The adaptive crew reaches **83/96 (86.5%)** single-digit completions within
+60 seconds, versus 14/96 (14.6%) before this pass. The requested 90% is not yet
+met; this is a substantial improvement, not a completed throughput target.
+
+### Comparable batch and distributions
+
+The same 32 root inputs, five transitions and three crew policies were measured
+before and after: 480 completed runs per revision, no timeouts or evacuation
+failures. Roots are `0x6a09e667f3bcc909 + i * 0x9e3779b97f4a7c15` modulo 2^64.
+Completion includes COMPLETE -> STABLE and required rope retrieval/cleanup,
+not merely the last visible brick. Values below are simulated seconds.
+
+| Adaptive six + relief | Before mean | After mean | Before p90 | After p90 | After maximum | <=60s before -> after |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 7 -> 8 | 67.44 | 53.24 | 76.15 | 60.40 | 68.10 | 3 -> 27 / 32 |
+| 1 -> 2 | 63.37 | 52.01 | 71.55 | 60.10 | 67.60 | 11 -> 28 / 32 |
+| 8 -> 9 | 71.29 | 51.86 | 79.55 | 60.85 | 66.40 | 0 -> 28 / 32 |
+| 14:59 -> 15:00 | 153.39 | 118.70 | 187.05 | 133.45 | 135.60 | 0 -> 0 / 32 |
+| 23:59 -> 00:00 | 229.82 | 184.33 | 272.25 | 209.25 | 247.25 | 0 -> 0 / 32 |
+
+This is a whole-system comparison, not a controlled scheduling-only A/B:
+the grammar is now version 5. The same root can produce a different accepted
+world. Final topology counts change from 4/9/6/9/4 to 5/8/7/3/9.
+All old generator versions were already inputs to one current grammar, not
+separately retained historical implementations; historical replay needs its
+matching code revision as well as seed/version/attempt.
+
+Fixed nine-worker results are 29/32, 32/32 and 30/32 single-digit completions
+within a minute: **91/96 (94.8%)**, means 48.63/44.93/51.49 seconds.
+This is diagnostic evidence for improving adaptive relief/local availability,
+not a reason to force every scene to nine workers. Current adaptive admission
+still requires almost everyone busy plus two pending jobs, and can miss a
+useful remote helper when some workers are unavailable or on the wrong roof.
+
+### Implemented changes and ownership
+
+- Permanent ladders admit same-direction followers with at least 20 design
+  units of separation for a 17-unit worker. Opposing traffic waits until empty.
+  Fixed masks remain the reservation representation; runtime admission and
+  progress enforce spacing. Synthetic two-climber four-second climbs finish
+  in 4-5 seconds together rather than eight. Short temporary-access segments
+  retain exclusive landings and capacity-one edges; they are not promoted to
+  unrestricted multi-occupant abstract vertical links.
+- Dispatch compares executable route duration, not Manhattan distance. A
+  nearby worker already finishing unpacking/clearing or retrieving a rope can
+  win over an inspector/tender making an avoidable cross-roof trip. Predictions
+  cover only short committed local releases; actual motion still takes place.
+- A support-ready delivery can dispatch its rope tender before the builder
+  arrives. Anticipatory rigs are bounded to crew/3 and remain below clearing
+  priority. Supply/rigging starts during PREPARING when its route is safe;
+  placement still waits for clearing and real section dependencies.
+- A suspended worker reaches masonry within the existing 12-unit arm reach
+  instead of moving its whole body to every adjacent brick. Bodies remain
+  under their rope anchor and the viewer draws the hand at the actual brick.
+  Material ownership, per-brick positioning and hammer time are preserved.
+- Stable-ID retrieval breaks mutually blocked suspended rope shifts. Idle
+  occupants of cancelled exclusive scaffold landings now yield, including
+  outside the hazard, so they cannot indefinitely block an evacuation route.
+- Upper bridges connect both main roofs through real ladders. Roof and highest
+  platform spawn locations give useful upper access without teleporting crew
+  there during work. Initial spawn locations are intentionally different from
+  version 4. Permanent platforms must all be reachable at complete validation.
+- Ladder columns are chosen from compatible real surfaces with permanent and
+  predefined temporary-access clearance. Redundant overlapping side ladders are
+  omitted when a real segmented side route exists. Failed candidates are still
+  rejected, never repaired by validation. The version-5 fallback is root 2,
+  attempt 0, through the unchanged complete pipeline.
+
+### Utilization and remaining critical path
+
+| Scenario | Mean active before -> after | Peak active after | Time with >=5 active before -> after |
+| --- | ---: | ---: | ---: |
+| 7 -> 8 | 3.39 -> 4.68 | 8 | 21.3% -> 60.3% |
+| 1 -> 2 | 2.52 -> 3.75 | 6 | 2.4% -> 32.0% |
+| 8 -> 9 | 3.04 -> 4.51 | 8 | 18.3% -> 57.4% |
+| Rollover | 5.37 -> 6.89 | 9 | 67.4% -> 82.1% |
+| Midnight | 5.68 -> 6.97 | 9 | 75.1% -> 83.8% |
+
+Active includes carrying, travel, clearing and tending, not only brick work.
+For 7 -> 8, navigation waits fall from 4.5% to 0.8% of worker-time and tender
+waits from 6.0% to 1.3%. Rope-lane waits rise from 1.7% to 2.4% as more fronts
+overlap. Total waiting falls from 12.2% to 4.5%. Crew-time is now build 2.4%,
+supply action 3.9%, carrying 9.8%, other travel 9.3%, rope travel 10.6%, tending
+23.6%, clearing 0.5%, waiting 4.5%, ambient 35.5%. Some late roof spectators
+remain; five productive workers is not consistently achieved for every digit.
+
+The original root now selects split/bridge (not the historical twin towers).
+Its single transition is 68.10 seconds, rollover 125.55. Single lifecycle:
+collapse 1.00, clearing 3.00, foundation 9.25, structure 26.50, recognizable
+56.80, finishing 65.25, complete 66.20, stable 68.10. Long depot-to-roof
+supplies, a two-builder/tender work front, dependent final courses and retrieval
+still determine outliers. The first brick is at 24.40 seconds: this long-route
+example is not a startup-latency success. The old version-4 root completed the
+single scenario in 63.75 seconds; changing geometry is not a per-seed speedup
+guarantee. Midnight reaches all eight load slots and spends
+21.0% of worker-time travelling, 13.2% carrying and 24.2% tending. Next work
+should focus on useful local supply/relief and final dependent work, not speed
+increases or declaring completion while rope crew is still committed.
+
+### Generated worlds, memory and verification
+
+4,096 requested roots produce 4,124 attempts: 12 preliminary clearance rejects,
+16 complete spawn-connectivity rejects, no derivation failures, no fallbacks
+or hard failures. Final family counts: 864/833/790/802/807. Navigation use is
+71-106 nodes, average 91.92 of 112; limits were not raised.
+The separate raw 4,096-candidate pipeline test observes 70-106 nodes and
+74-117 edges (averages 91.84/98.27); complete validation rejects 26 unreachable
+spawn candidates rather than adding invented connections.
+
+Host ABI sizes are unchanged: context 10,008 bytes, mutable state 9,152,
+worker 292, load 32. Limits remain nine workers, 48 jobs, eight loads,
+20 falling sections, 32 debris, 112 nodes and 192 edges. The throughput batch
+reaches 34 job slots and all eight loads. Extra dispatch route queries are
+bounded but their ESP32 CPU cost has not been measured on hardware.
+
+All 13 host suites pass, including deterministic control replay, spaced and
+opposing ladder traffic, clearance rejection, suspended-lane contention,
+cancellation and successive unfinished rollovers. Thirty completed consecutive
+minutes average 42.01 seconds, maximum 66.60; twelve scheduled minute changes
+include three unfinished rollovers and clean up without leaked resources.
+The 128-world evacuation-lead check observes a worst 8,386 ms requirement.
+Strict C11/conversion compilation, formatting and whitespace checks pass.
+All 13 suites also pass AddressSanitizer/UndefinedBehaviorSanitizer; leak
+detection is disabled for this environment. This caught and fixed an invalid
+platform-ID lookup in the new generator helper before handoff.
+
+The SDL viewer builds. Ordered 15-second captures through complete single,
+rollover and midnight sequences, plus repeated unfinished minutes and four
+other family examples, were inspected. Builders visibly remain on ropes while
+placing adjacent bricks; carriers and tenders work concurrently. Connected
+upper routes form more useful silhouettes. Roof clusters of idle crew remain
+visible, especially near completion; this is not a claim of finished game feel.
+These are software-rendered sequence captures, not an interactive playback or
+hardware rendering test. Captures and raw measurements live in the ignored
+`build/builders_refinement/` directory, not source control.
+
+Firmware builds with the installed ESP-IDF 6.1 toolchain and existing managed
+components. To respect this task's no-outside-repository-write boundary, the
+component manager was disabled and an ignored CMake adapter supplied the two
+existing manifest-only dependency edges for panel-IO additions and FT6336U.
+No installed dependency, source configuration, display setting or Git reference
+was changed. This verifies compilation/linking, not flashing or hardware behavior.
+
+## Historical checkpoints
+
+The following results describe the previous committed implementations.
 
 ## 2026-10-19: paired supplies and persistent rope work
 
