@@ -1,6 +1,35 @@
 # Building Clock Simulation Specification
 
-Status: approved design direction, renderer-independent specification.
+Status: approved design direction plus current implementation notes.
+Reviewed against `035220d` on `buildclock`, 2026-11-15.
+
+## Current implementation and ChatGPT handoff
+
+Read this document for architecture/design, [throughput](building_clock_throughput.md)
+for current measurements and diagnostic commands, and
+[visual overview](building_clock_visual_overhaul.md) for presentation and review.
+Requirements expressed as future goals are not claims of implemented behavior.
+
+- Implemented: version-5 generation/validation/selection, bounded navigation,
+  reservations and spaced permanent-ladder following, workers/jobs/material
+  kits, complete collapse/rebuild, safe unfinished rollover, semantic snapshots
+  and the SDL2 viewer. Builders manage their own ropes; tending is optional.
+- The 32-root single-digit target is met in the measured batch: 93/96 (96.9%)
+  fully stable within 60 seconds with either fixed six or six plus relief.
+  This is not a guarantee for arbitrary worlds or multi-digit changes.
+- Functional equipment: self-managed rope clamps/harnesses, optional idle
+  winching, installed temporary access, and off-duty empty-trolley shunting.
+  Cranes/lifts remain parked. Material-carrying carts and worker rides are not
+  implemented; corresponding layout/state types are preparation for later work.
+- Firmware compilation is verified, but Building Clock application-mode wiring,
+  the ESP32 renderer, live calendar updates and a minute-ahead scheduler remain
+  deferred. The viewer supplies explicit HH:MM targets and a fixed demo date.
+- The latest accepted presentation keeps short/wide masonry digits and the C64
+  workers, uses a dark purple crane, and colors weekday/month orange and
+  day/year steel blue. `ref/mockup4.png` remains the aesthetic reference.
+- Preserve deterministic replay, fixed storage, actual generated routes, safe
+  evacuation, and the existing display configuration. Next work requires its
+  own task; do not treat older diagnostic recommendations as an active request.
 
 This document defines the generated construction world, clock transition
 simulation, workers, jobs, materials, machinery, validation, and deterministic
@@ -95,7 +124,7 @@ permanently obscure an unchanged digit.
 The generated world is immutable after startup. Use explicit fixed-capacity
 arrays and counts rather than runtime allocation or generic containers.
 
-Initial capacity targets are:
+Current compile-time safety limits are:
 
 | Item | Maximum |
 | --- | ---: |
@@ -199,8 +228,12 @@ seed. The following values must be logged:
 - accepted generation attempt; and
 - derived behavior seed, if it is independently configurable.
 
-A seed is reproducible only with the same generator version. When generation
-rules change incompatibly, increment that version.
+A world is reproducible with matching source revision, root seed, generator
+version and attempt. Historical generator algorithms are not retained behind
+the version argument; checking out their matching code is necessary to replay
+older layouts. Behavioral replay also needs matching simulation code and the
+same initial state and ordered time/input sequence. When generation rules
+change incompatibly, increment the generator version.
 
 Candidate attempts are derived deterministically from the root seed and attempt
 number. Rejecting a candidate therefore remains reproducible.
@@ -355,9 +388,10 @@ that are ready to depart release their source-node occupancy. They then request
 the route edge and destination node in ascending stable worker-ID order. If the
 destination is unavailable, the edge reservation is rolled back and the worker
 waits. This avoids hold-and-wait cycles while keeping contention deterministic.
-Workers leaving exclusive work points move to the nearest ordinary crew-capacity
-node before becoming idle. Explicit per-owner release and full reservation
-reset support cancellation cleanup. These conflicts create useful
+Workers with ready compatible work at their current station stay for it before
+idle egress. Otherwise workers leaving exclusive work points move to the nearest
+ordinary crew-capacity node before becoming idle. Explicit per-owner release
+and full reservation reset support cancellation cleanup. These conflicts create useful
 unscripted-looking behavior without general collision avoidance.
 
 The scene snapshot assigns stable design-space presentation positions when
@@ -368,11 +402,12 @@ use actual spaced traversal positions. This
 keeps broad-area crews individually legible without changing logical occupancy
 or adding continuous collision physics.
 
-Broad platforms also support bounded local activities: quiet breaks, physical
-winch stations, and off-duty empty-trolley shunting along an existing flat cart
+Broad platforms also support bounded local activities: quiet breaks and
+off-duty empty-trolley shunting along an existing flat cart
 route. These require an actual continuous platform, not an invented navigation
 connection. Workers retain broad-area anchor ownership and physically return
-before routing to new work. Active rigging can displace a resting colleague.
+before routing to new work. Optional rope helpers do not create a separate
+excursion or displace crew: they assist only from an already nearby position.
 Narrow nodes/ledges and ladder traversal keep their normal reservations.
 Local return travel contributes to evacuation lead time, and collapse still
 waits for actual safety. A preempted trolley retains its intermediate progress;
@@ -515,8 +550,9 @@ Visible brick order follows narrow vertical strips from lower to upper courses.
 Placement progress records the installed prefix, so the same geometry is used
 by rope work, the viewer, and interrupted collapse. No independent brick physics
 is introduced. The throughput correction and its remaining limitations are
-recorded in `docs/building_clock_throughput.md`. The 60-second throughput goal is
-not yet met; minute input remains independent of completion.
+recorded in [the throughput report](building_clock_throughput.md). The measured
+single-digit <=60-second rate is now 96.9% across the representative 32-root
+batch; minute input remains independent of completion, including outliers.
 
 ## 10. Build pacing
 
@@ -532,7 +568,10 @@ Pacing is data, not scattered transition constants. A pacing profile defines:
 - major-completion target; and
 - finishing target.
 
-An initial normal profile is:
+The intended artistic minute choreography is below. The current simulation
+does not automatically predict and stage the next minute: callers explicitly
+present the next target and can query evacuation lead. This table is a design
+target, not the current measured timeline or a hard completion guarantee.
 
 | Milestone | Target |
 | --- | --- |
@@ -545,8 +584,9 @@ An initial normal profile is:
 | Major construction complete | near second 42-46 |
 | Finishing work complete | near second 52-56 |
 
-The scheduler creates jobs toward these milestones. It does not directly place
-sections merely because a timer expired.
+The scheduler should create jobs toward these milestones. The implemented
+reconstruction uses real job completion plus the minimum phase timings below;
+it does not directly place sections merely because a timer expired.
 
 If work is behind schedule, the simulation may:
 
@@ -610,8 +650,9 @@ Job categories include:
 - celebrate.
 
 Construction, evacuation, and hazard jobs override ambient jobs. Idle workers
-select compatible work using priority, route cost, and a small deterministic
-variation so that every worker does not make the same decision.
+select compatible work using priority, executable route duration and stable
+job-slot ID. Nearby available or soon-free local crew are preferred. There is
+no random perturbation of assignment scores in the current implementation.
 
 One job should usually create one clear visible action. Avoid long monolithic
 jobs which secretly script an entire transition.
@@ -639,14 +680,17 @@ Worker states are:
 - clear debris;
 - avoid danger;
 - finish job;
-- celebrate; and
-- smoke during optional idle time.
+- celebrate;
+- smoke;
+- drink;
+- rest; and
+- watch.
 
 State transitions are stepped and readable. Walking and action poses use short
 loops, abrupt direction changes, and brief pauses. Construction jobs override
 ambient personality events.
 
-Low-rate incidental events make workers appear less mechanical:
+Additional low-rate incidental events remain design ideas, not all implemented:
 
 - impatience while waiting for a ladder;
 - watching a nearby worker or collapse;
@@ -666,8 +710,8 @@ prefabricated load carried, then routes to the real digit work point. Placement
 and securing are consecutive visible actions owned by the same stable job,
 which avoids an artificial second commute without collapsing them into one
 instant state change. Idle workers choose compatible pending jobs by priority,
-then route cost, then stable job-slot ID. Routes retain both node and edge IDs
-so parallel edge semantics remain unambiguous. Cart and lift edges remain
+then executable route duration, then stable job-slot ID. Routes retain both
+node and edge IDs so parallel edge semantics remain unambiguous. Cart and lift edges remain
 topologically visible but are not immediately traversable until their later
 machinery state machines exist.
 
@@ -711,15 +755,20 @@ this state.
 Workers inside a hazard volume immediately suspend non-safety work and route to
 a safe node. Nearby workers may stop and watch after reaching safety.
 
-Initial dynamic limits are:
+Typical population goals and hard dynamic limits are:
 
-| Item | Normal maximum | Midnight maximum |
+| Item | Typical normal goal | Hard maximum (any scenario) |
 | --- | ---: | ---: |
 | Workers | 6 | 9 |
 | Falling structural sections | 8 | 20 |
 | Loose debris pieces | 16 | 32 |
 | Carried or suspended loads | 4 | 8 |
 | Carts | 1 | 2 |
+
+The model also bounds jobs at 48 and temporary structures at eight. Six is an
+initial crew size, not a single-digit cap; eligible six-worker crews may admit
+relief up to nine. Normal-population goals in this table are not extra runtime
+capacity checks.
 
 The exact limits can be reduced after profiling without changing simulation
 rules.
@@ -741,12 +790,14 @@ Typical flow is:
 5. Workers or machinery move that load to the digit.
 6. Placement and securing jobs complete the section.
 
-The current first reconstruction pass clears semantic debris into recoverable
-depot inventory and obtains bounded prefabricated masonry bundles from the
-off-screen depot supply at the digit's assigned staging area. A worker visibly
-carries each small bundle with its own position from staging to a section-
-appropriate permanent or temporary construction level. The load retains its
-destination section identity. During placement it remains with the worker while
+The current reconstruction clears semantic debris into recoverable depot
+inventory; a full visible carry-to-bin/recovery sequence is still deferred.
+Small section-labeled brick kits originate at the actual depot, whose stock
+can be replenished without strict conservation. Couriers carry them to staging
+or a reachable roof cache and unpack them. Builders pick up those physical kits
+and carry them to section-appropriate permanent, temporary or rope work
+positions. The load retains its destination section identity. During placement
+it remains with the worker while
 the destination section's visible brick group is progressively revealed and
 the carried bundle diminishes; only then is the load consumed and the section
 marked placed for the securing action. This keeps the visible cause and result
@@ -758,8 +809,10 @@ delivery may provide it. This is preferable to making workers visibly cheat.
 
 ## 15. Machinery
 
-Machinery is generated as part of the level and represented by simple state
-machines.
+Machinery layouts and state records are generated as part of the level.
+The crane and lift sequences described below are planned behavior: currently
+both remain parked and receive no autonomous delivery/ride jobs. The dark
+purple crane is a visual landmark, not a construction prerequisite.
 
 A crane can be idle, slewing, lowering, waiting for attachment, lifting,
 carrying, lowering at destination, or returning. Its jobs are limited to its
@@ -774,7 +827,18 @@ reserve it like a narrow navigation edge.
 Only machinery present in the generated level may receive jobs. Construction
 plans must always have a validated alternative for required work.
 
+Implemented now: builders operate their own ropes and travelling clamps;
+otherwise idle nearby workers may assist only during actual ascent/descent.
+Off-duty workers can physically push an empty trolley on its generated flat
+route, with preemption retaining the trolley's actual progress. This does not
+yet move material or carry workers, and starts only outside digit transitions.
+
 ## 16. Normal-minute behavior
+
+This section is the ambient-activity design target. Today the shared simulation
+has interruptible breaks and empty-trolley shunting; the viewer's stable demo
+adds two low-rate inspection/maintenance jobs at real locations. It is not a
+complete autonomous ambient scheduler and does not predict the next minute.
 
 At least three clear activities should normally be visible:
 
@@ -789,6 +853,12 @@ The simulation knows the next minute's digits, so it can prepare only relevant
 parts. Preparation should become more obvious when several digits will change.
 
 ## 17. Transition scenarios
+
+The scenario descriptions express intended final choreography. The current
+viewer exercises all three complete collapse/rebuild lifecycles, but supplies
+targets immediately rather than pre-staging during the preceding minute, and
+does not operate cranes/lifts or material carts. Current measured timings and
+unfinished-rollover results are in the throughput report.
 
 ### 17.1 14:37 to 14:38
 
@@ -826,12 +896,18 @@ The date is formatted exactly as:
 `DAY DD MON YYYY`
 
 Weekday and month use the warm masonry color role. Day number and year use the
-cool steel color role. The simulation snapshot exposes the separate date tokens
-and their semantic color roles rather than a pre-rendered string.
+cool steel color role. The snapshot exposes semantic calendar fields in
+`state.date`; formatting and these color choices belong to the presentation
+adapter, not the simulation. The SDL viewer implements the alternating colors
+and currently initializes `FRI 26 OCT 1984` as a fixed demo date. It does not
+advance the calendar at simulated midnight or read the host's live date.
 
 The colon remains a stable spatial anchor. Its state may pulse once per second
 using a restrained mechanical or lamp-like action. It does not participate in
 minute collapse jobs.
+
+The current viewer draws two steady masonry dots; a one-second pulse remains
+optional future presentation work.
 
 ## 19. Renderer-neutral scene snapshot
 
@@ -848,7 +924,7 @@ semantic objects:
 - carts, crane, lift, and suspended loads;
 - material quantities visible at depots and staging areas;
 - colon state; and
-- formatted date tokens with semantic color roles.
+- calendar fields for presentation-side date formatting/color roles.
 
 The accepted world remains immutable and is referenced by the snapshot. Mutable
 simulation state, navigation reservations, and diagnostic metrics are copied so
@@ -864,8 +940,9 @@ consumer and deliberately does not establish the firmware rendering design.
 
 ## 20. Update model and time discontinuities
 
-The simulation receives elapsed time and a current local calendar time. It owns
-no network or RTC setup.
+The current API receives elapsed time and explicit hour/minute targets. Calendar
+fields are separately supplied by the caller; no network, RTC or calendar-rollover
+ownership is implemented in the simulation.
 
 Updates are bounded so a long task delay cannot cause unbounded physics or job
 processing. Character pose changes should retain an intentionally stepped
@@ -891,6 +968,11 @@ jumps by more than one minute or moves backward, the simulation should:
 5. use a short commissioning sequence or establish the digits complete.
 
 It must not attempt to replay every missed minute.
+
+The short commissioning/resynchronization policy above is not yet implemented
+as a distinct time-discontinuity mode. Currently a large forward/backward HH:MM
+change uses the same safe cancel/retarget/collapse/rebuild path as another
+unfinished rollover; it does not replay each intervening minute.
 
 ## 21. Performance properties
 
@@ -953,6 +1035,12 @@ choreography.
 - Multi-digit changes scale visibly while remaining bounded.
 
 ## 23. Implementation sequence
+
+Steps 1-13 below are implemented and exercised on the host, with subsequent
+visual/throughput refinements. Steps 14-15 remain deferred; the SDL viewer does
+not constitute the ESP32 rendering implementation. Machinery, calendar and
+minute-ahead artistic scheduling gaps are called out above rather than implied
+complete by this sequence.
 
 1. Define the fixed-capacity semantic world and simulation data structures.
 2. Implement deterministic seed streams and boot/debug seed selection.

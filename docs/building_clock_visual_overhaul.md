@@ -1,8 +1,13 @@
-# Clock - Builders visual/gameplay pass
+# Clock - Builders visual/gameplay status
 
-2026-11-15, uncommitted on `buildclock`. This builds on the preceding uncommitted
-throughput changes. Hardware/display configuration, generator version 5, clock
-scale, traversal speeds and construction action durations are unchanged.
+Current implementation: `035220d` on `buildclock`; reviewed 2026-11-15.
+The character/site overhaul was committed in `4ccb755`; independent ropes,
+logistics and crane/date color corrections followed in `035220d`. This file
+describes the current viewer, not the superseded mandatory-tender model.
+See [the specification](building_clock_simulation.md) for architecture/design
+and [throughput](building_clock_throughput.md) for measurements and diagnostics.
+Hardware/display configuration, generator version 5, clock scale, traversal
+speeds and construction action durations are unchanged by these refinements.
 
 ## What is different
 
@@ -24,28 +29,36 @@ calls. Pausing freezes poses as well as the world.
   inspectors hold a clipboard. Waiting has a look/tap pose, distinct from
   sitting, drinking from a mug, smoking, watching and briefly celebrating a
   completed digit.
-- Tenders visibly operate a hand-cranked drum connected to the builder's real
-  moving beam clamp/sheave. Ropes terminate at the harness. Anticipatory tenders
-  have visible equipment even before their builder attaches a rope.
+- Builders independently control the roof clamp and harness ascender/descender;
+  ropes terminate at their harness. A nearby otherwise idle rigger may help at
+  a hand-cranked drum, but never owns a prerequisite job or delays a builder.
+  Cranking is enabled only by actual ascent/descent displacement in the latest
+  simulation quantum, not stationary work, preparation, waiting or shifting.
 
 The uncluttered game scene is now the default; TAB toggles diagnostic status
 and lifecycle text. Existing navigation, reservation, hazard, route and location
-overlays remain available. The date uses a coarse `FRI 26 OCT 1984` treatment.
+overlays remain available. The date uses the coarse `DAY DD MON YYYY` format:
+weekday/month are warm masonry orange, day/year cool steel blue. The fixed
+`FRI 26 OCT 1984` is a viewer demo input, not live date/calendar integration.
+The colon currently remains steady.
 
 ## Actual coordination and equipment behavior
 
 The shared simulation now supports small local activities on broad continuous
 platforms. This is not a second navigation graph: the platform must actually
-contain the movement. Quiet/winch positions are chosen deterministically with
+contain the movement. Quiet positions are chosen deterministically with
 22-unit clearance from colleagues and clearance from ladder entrances. They
 are limited to 100 units from the navigation anchor on platforms at least 120
 units long. No narrow ledge, ladder or abstract temporary connection is used
 as a free-space walking area.
 
-Spare workers walk away from a crowded cache before resting. Active tenders
-walk to separate winch stations; resting workers yield those spots to riggers.
-Workers physically return to their graph anchor before beginning another
-route. They retain broad-area occupancy during the excursion, and cancellation
+Spare workers walk away from a crowded cache before resting. Optional tending
+uses an already nearby idle worker on the real roof, creates no new trip or
+reservation, and immediately yields to useful work. Mandatory winch-station
+excursions and the old half-crew builder cap no longer exist.
+Workers on break/trolley excursions physically return to their graph anchor
+before beginning another route. They retain broad-area occupancy during the
+excursion, and cancellation
 does not snap them back. Local return travel is included in evacuation lead
 estimates; actual worker safety still gates collapse.
 
@@ -67,9 +80,12 @@ ambient scheduler.
 
 Depots are little stocked racks, staging areas have timber skids, and debris
 service bays are open bins rather than filled UI rectangles. The parked crane
-has a trussed tower/jib and cab. Its short idle jib is folded/parked; this is
-not a claim that crane delivery or lift behavior was implemented. Winches and
-empty-trolley shunting are the functional machinery in this pass.
+has a trussed tower/jib and cab, now dark purple with deeper purple shadows
+rather than yellow, so pale workers/hard hats remain readable against it.
+Ladders remain yellow/cream. Its short idle jib is folded/parked; this is
+scenery/layout preparation, not crane delivery or lift behavior. Functional
+equipment is limited to independent ropes, optional idle winching, temporary
+access and empty-trolley shunting.
 
 Temporary ladder/scaffold extent follows actual installation-job progress,
 growing from the lower support. Predefined navigation activates only after
@@ -87,9 +103,24 @@ Old events can be overwritten without affecting simulation correctness.
 
 ## Inspection and artifacts
 
-All files below are repository-local, ignored development artifacts under
-`build/builders_visual/`. They are intentionally not committed, and a build
-cleanup may remove them.
+Artifacts are repository-local ignored build output, not committed assets.
+A build cleanup may remove them. Current motion review is under
+`build/builders_independent_ropes/`:
+
+- `single.mp4`: complete 80-second single-digit sequence.
+- `rollover.mp4`: 140 seconds of `14:59 -> 15:00`.
+- `midnight.mp4`: 180 seconds of collapse/reconstruction.
+- `single/`, `rollover/`, `midnight/`, `unfinished/`: full PNG sequences;
+  100 ms per single frame, 200 ms for the others.
+- `*-storyboard.png` and `descent-placement-strip.png`: ordered sequence and
+  consecutive-frame review, including four other topology families.
+- `before-after-50s.png`: committed visual baseline versus independent ropes.
+- `date-colors-50s.png`: latest color state, including the dark purple crane
+  and alternating orange/blue date. Earlier motion movies/previews precede
+  these final color-only corrections; do not use their yellow crane or all-
+  orange date as the current intended palette.
+
+Historical `4ccb755` visual-pass artifacts are under `build/builders_visual/`:
 
 - `before/`: captures from the executable saved before this pass, same root,
   single/rollover/midnight at 1.9/10/30/50/70 seconds.
@@ -113,51 +144,48 @@ for interactive evaluation, not claimed as watched real-time playback.
 Observed improvements: hard hats/overalls remain recognizable against masonry;
 hands and feet change on ladders; baskets stay with carriers; ropes and winch
 drums make support activity legible. The upper work front contains distinct
-roles instead of only identical stationary pale figures. The trolley provides
+roles instead of only identical stationary pale figures. Independent ropes
+remove dedicated roof partners; helpers no longer crank without vertical
+motion. The darker crane improves worker contrast without recoloring ladders.
+The trolley provides
 a readable activity on the lower route. Construction is more intelligible with
 labels disabled, especially when watching a placement hand meet its joint.
 
 Remaining weaknesses: queues still bunch during cache handoffs; resting and
 working crew can pass through one another on broad platforms (there is no
-continuous collision system). Two rope-building fronts and separate tenders
-still dominate a single-digit build. The parked crane/lift are not yet active
+continuous collision system). Actual masonry work still peaks at two builders
+for the measured single-digit scenarios, although logistics can use more crew.
+The parked crane/lift are not yet active
 material machinery. Rubble clearing/recovery remains section-scale rather than
 a complete visible transport-to-bin lifecycle. These are next refinements,
 not features hidden behind decorative animation.
 
-## Throughput and resource tradeoff
+## Current throughput and resources
 
-Same 32 root inputs, three single-digit scenarios, rollover and midnight, and
-three crew policies: 480 completed runs, no timeouts or evacuation failures.
-The generator/accepted-world distribution is unchanged from the preceding pass.
-Below is adaptive six plus relief, in simulated seconds.
+The 32-root/five-scenario/three-policy benchmark completes all 480 runs without
+timeouts or evacuation failures. With six plus relief, single-digit means are
+51.10/47.14/50.01 seconds; rollover/midnight means are 92.58/134.02 seconds.
+Single-digit fully stable within 60 seconds is **93/96 (96.9%)**; fixed six
+achieves the same rate. The original character pass briefly regressed this
+metric to 81.3%; it is a historical comparison, not the current result.
+No worker/action speed was increased. Optional tending is excluded from useful
+contributor counts; old mandatory-tender-inclusive counts are not equivalent.
+Use the throughput report for distributions, definitions and remaining stalls.
 
-| Transition | Before mean | After mean | After p90 | After maximum |
-| --- | ---: | ---: | ---: | ---: |
-| 7 -> 8 | 53.24 | 54.83 | 61.00 | 73.30 |
-| 1 -> 2 | 52.01 | 52.31 | 60.65 | 66.65 |
-| 8 -> 9 | 51.86 | 53.89 | 63.35 | 72.80 |
-| Rollover | 118.70 | 120.64 | 132.90 | 145.90 |
-| Midnight | 184.33 | 188.24 | 213.90 | 261.65 |
+Host ABI sizes remain worker 300, mutable state 9,488, context 10,344 bytes;
+jobs are 64 and loads 32 bytes. The initial visual pass added 336 context bytes
+for worker activities and bounded event history; independent ropes and the
+latest palette fixes add no further storage. No simulation heap allocation or
+capacity increase. The SDL viewer does not implement the firmware renderer;
+no ESP32 rendering frame-rate result is claimed.
 
-Single-digit <=60-second counts change from 27/28/28 to 27/27/24:
-**83/96 (86.5%) -> 78/96 (81.3%)**. This is an explicit visual/physical setup
-tradeoff, not a throughput improvement. Means regress about 0.6-3.9%; workers
-were not accelerated to conceal actual return/setup travel. Average active
-contributors are approximately 4.67/3.77/4.51 for the single-digit scenarios,
-6.81 for rollover and 6.88 at midnight. Idle strolling is not counted as
-productive construction time by the host diagnostic.
+## Recorded verification and next review
 
-Host ABI sizes: worker 292 -> 300 bytes; mutable state 9,152 -> 9,488;
-context 10,008 -> 10,344. The 336-byte context increase is 72 bytes for nine
-workers plus the bounded milestone history/index. Jobs remain 64 bytes and
-loads 32 bytes. No simulation heap allocation; existing entity/navigation limits
-are unchanged. SDL drawing cost increased, but hardware rendering is not wired
-to this viewer and no ESP32 frame-rate result is claimed.
-
-## Verification and next review
-
-The thirteen host suites and the SDL character-animation test pass. New checks
+During implementation, the thirteen host suites and SDL character-animation
+test passed, as did all thirteen suites under ASan/UBSan with leak detection
+disabled for this environment. The final crane/date edits also passed the
+viewer build/animation check and screenshot inspection. These are recorded
+results, not tests rerun for a docs-only update. Checks
 cover real platform separation, graph-anchor ownership during local movement,
 cart push/preemption/position retention, deterministic replay, partial access
 erection, event subjects/timestamps and read-only capture. The renderer test
@@ -165,21 +193,24 @@ checks that movement/tool animations change software-rendered frame hashes;
 it does not replace human visual evaluation. Existing unfinished-rollover and
 long-run reconstruction tests remain in place.
 
-Thirty consecutive completed minute changes average 42.27 seconds (previously
-42.01), maximum 68.80 (previously 66.60). Twelve scheduled 60-second updates
-still include three unfinished rollovers and finish with no transition-resource
-leaks. All thirteen suites also pass ASan/UBSan with leak detection disabled
-for this environment. A new occupancy assertion caught and fixed an early
-anchor-release bug when reclaiming a trolley operator before handoff.
+Thirty consecutive completed minute changes average 39.49 seconds, maximum
+53.25. Twelve scheduled 60-second updates include one unfinished rollover and
+finish with no transition-resource leaks. Coverage includes solo rope work,
+optional-tender motion/preemption, local station continuity and cancellation.
 
 ESP-IDF builds use the installed 6.1 toolchain, existing managed components and
 the repository-local offline dependency adapter from the preceding pass.
 Component-manager writes outside the repository are disabled. No dependency,
 LCD, LVGL, cache, PSRAM or scheduling configuration was changed, and no flashing
-was performed. Strict C11/conversion, formatting, ASCII and whitespace checks
-are part of verification.
+was performed. Strict C11/conversion checks pass for host-compatible runtime
+and the new diagnostic tests; broader pre-existing extra-strict viewer/test
+warnings are documented in the throughput report. Formatting, ASCII and
+whitespace checks pass for changed sources.
 
 Next interactive review should judge the exported sequences at normal speed,
 especially cache handoffs and the distinction between placing and securing.
-Then prefer better local supply/work-front placement and useful material-cart
-jobs over additional decorative props or faster workers.
+Remaining possible refinements are local supply/work-front placement and useful
+material-cart work, not faster workers or decorative machinery presented as
+functional. These are observations for review, not an authorization to expand
+the feature set. Build/run commands and controls live in
+[the host README](../components/building_clock/host/README.md).

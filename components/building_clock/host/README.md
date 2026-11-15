@@ -133,5 +133,6 @@ build/building_clock_tests/building_clock_bottleneck_trace rollover build/builde
 These write worker samples, section changes and job changes to three CSV files
 per prefix, and print milestone/wait summaries to stdout. A final optional root
 seed overrides `0x6a09e667f3bcc909`. Diagnostics verify byte-identical replay
-against an unsampled control. See `docs/building_clock_bottlenecks.md` for the
-investigation, timing definitions, code references and remaining uncertainties.
+against an unsampled control. See
+[the current throughput report](../../../docs/building_clock_throughput.md)
+for timing definitions, diagnostic limits and remaining bottlenecks.
