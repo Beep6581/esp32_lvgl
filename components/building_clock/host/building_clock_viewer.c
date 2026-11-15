@@ -61,8 +61,8 @@ static const SDL_Color COLOR_BACKGROUND = {7, 8, 13, 255};
 static const SDL_Color COLOR_STEEL = {105, 122, 193, 255};
 static const SDL_Color COLOR_STEEL_DARK = {48, 57, 99, 255};
 static const SDL_Color COLOR_LADDER = {238, 206, 105, 255};
-static const SDL_Color COLOR_CRANE = {62, 15, 105, 255};
-static const SDL_Color COLOR_CRANE_DARK = {39, 16, 85, 255};
+static const SDL_Color COLOR_CRANE = {91, 103, 161, 255};
+static const SDL_Color COLOR_CRANE_DARK = {48, 53, 94, 255};
 static const SDL_Color COLOR_MASONRY = {205, 92, 54, 255};
 static const SDL_Color COLOR_MASONRY_LIGHT = {239, 126, 67, 255};
 static const SDL_Color COLOR_MASONRY_DARK = {104, 42, 34, 255};
@@ -234,6 +234,14 @@ static void draw_locations(SDL_Renderer* renderer, const building_clock_world_t*
     }
 }
 
+static void draw_recovery_sack(SDL_Renderer* renderer, int x, int y) {
+    fill_rect(renderer, x - 4, y - 5, 9, 6, COLOR_ROPE);
+    fill_rect(renderer, x - 3, y - 7, 7, 3, COLOR_MASONRY_DARK);
+    fill_rect(renderer, x - 2, y - 8, 2, 2, COLOR_MASONRY_LIGHT);
+    fill_rect(renderer, x + 1, y - 7, 3, 2, COLOR_MASONRY);
+    fill_rect(renderer, x - 3, y - 3, 1, 4, COLOR_LADDER);
+}
+
 static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
     const building_clock_world_t* world = scene->world;
     for (uint8_t crane = 0U; crane < world->crane_count; crane++) {
@@ -290,10 +298,66 @@ static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_sn
             fill_rect(renderer, position.x - 8, position.y - 7, 17, 4, COLOR_STEEL);
             fill_rect(renderer, position.x - 9, position.y - 10, 2, 5, COLOR_STEEL);
             fill_rect(renderer, position.x + 8, position.y - 10, 2, 5, COLOR_STEEL);
+            const bool transferring = cart->operator_worker_id < scene->state.worker_count &&
+                                      scene->state.workers[cart->operator_worker_id].platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER && cart->transfer_elapsed_ms > 0U;
+            const bool unloading = transferring && cart->pickup_bay_id == BUILDING_CLOCK_INVALID_ID && cart->rubble_sacks > 0U;
+            const uint8_t visible_sacks = (uint8_t)(cart->rubble_sacks - (unloading ? 1U : 0U));
+            for (uint8_t sack = 0U; sack < visible_sacks; sack++) {
+                draw_recovery_sack(renderer, position.x - 4 + (sack % 2U) * 8, position.y - 7 - (sack / 2U) * 6);
+            }
+            if (transferring) {
+                const int progress = (int)((uint32_t)cart->transfer_elapsed_ms * 1000U / BUILDING_CLOCK_CART_TRANSFER_MS);
+                int y = position.y - 9;
+                /* A small service hatch, with the operator standing beside it.
+                 * Cargo does not pass invisibly through the bed or girder. */
+                fill_rect(renderer, position.x - 4, position.y - 7, 8, 14, COLOR_BACKGROUND);
+                set_color(renderer, COLOR_STEEL);
+                (void)SDL_RenderDrawLine(renderer, position.x - 4, position.y - 5, position.x - 8, position.y + 1);
+                if (cart->pickup_bay_id < world->debris_bay_count) {
+                    const building_clock_rect_t bay = world->debris_bays[cart->pickup_bay_id].area;
+                    const int bottom = bay.y + (int)bay.height - 2;
+                    y = bottom + (y - bottom) * progress / 1000;
+                    fill_rect(renderer, position.x - 1, position.y - 15, 2, 10, COLOR_STEEL);
+                    fill_rect(renderer, position.x - 2, position.y - 17, 5, 4, COLOR_BOOTS);
+                    /* A hand line actually lifts the sack out of the below-
+                     * platform bay. It is equipment, not floating cargo. */
+                    set_color(renderer, COLOR_ROPE);
+                    (void)SDL_RenderDrawLine(renderer, position.x, position.y - 14, position.x, y - 6);
+                    (void)SDL_RenderDrawLine(renderer, position.x, position.y - 14, scene->state.workers[cart->operator_worker_id].position.x + 5, position.y - 8);
+                } else {
+                    y += 29 * progress * progress / 1000000;
+                }
+                draw_recovery_sack(renderer, position.x, y);
+            }
             for (int side = -1; side <= 1; side += 2) {
                 fill_rect(renderer, position.x + side * 5 - 2, position.y - 3, 5, 5, COLOR_STEEL_DARK);
                 fill_rect(renderer, position.x + side * 5 - 1 + ((position.x / 3) & 1), position.y - 2, 2, 2, COLOR_WORKER);
             }
+        }
+        /* A recovery chute at the depot-side endpoint: cargo only disappears
+         * here, during the simulation's explicit unloading action. */
+        if (cart_route->stop_count > 0U && world->depot_count > 0U) {
+            const int left = cart_route->stops[0].position.x, right = cart_route->stops[cart_route->stop_count - 1U].position.x;
+            const int x = world->depots[0].area.x < (left + right) / 2 ? left : right;
+            const int y = cart_route->stops[0].position.y;
+            fill_rect(renderer, x - 10, y + 8, 20, 3, COLOR_ROPE);
+            fill_rect(renderer, x - 9, y + 11, 3, 10, COLOR_ROPE);
+            fill_rect(renderer, x + 6, y + 11, 3, 10, COLOR_ROPE);
+        }
+    }
+    for (uint8_t bay = 0U; bay < world->debris_bay_count; bay++) {
+        const building_clock_rect_t area = world->debris_bays[bay].area;
+        unsigned stock = scene->state.recovery_sacks[bay];
+        for (uint8_t id = 0U; id < scene->state.cart_count; id++) {
+            const building_clock_cart_t* cart = &scene->state.carts[id];
+            if (stock > 0U && cart->pickup_bay_id == bay && cart->transfer_elapsed_ms > 0U && cart->operator_worker_id < scene->state.worker_count &&
+                scene->state.workers[cart->operator_worker_id].platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER) {
+                stock--;
+            }
+        }
+        const unsigned visible = stock < 6U ? stock : 6U;
+        for (unsigned sack = 0U; sack < visible; sack++) {
+            draw_recovery_sack(renderer, area.x + 5 + (int)(sack % 3U) * 8, area.y + area.height - 2 - (int)(sack / 3U) * 6);
         }
     }
 }
@@ -429,25 +493,28 @@ static void draw_falling_and_debris(SDL_Renderer* renderer, const building_clock
             outline_rect(renderer, (building_clock_rect_t){.x = (int16_t)(section->landing_position.x - 3), .y = (int16_t)(section->landing_position.y - 2), .width = 7, .height = 4}, COLOR_DEBUG);
         }
         const building_clock_rect_t envelope = scene->world->digit_work_areas[section->source_digit_id].envelope;
-        const uint8_t numeral = scene->state.digits[section->source_digit_id].outgoing.numeral;
-        building_clock_rect_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
-        const uint8_t count = building_clock_section_visible_bricks(envelope, numeral, section->section_kind, bricks);
-        const building_clock_point_t center = building_clock_rect_center(building_clock_section_bounds(envelope, section->section_kind));
-        static const int16_t cosine[8] = {256, 181, 0, -181, -256, -181, 0, 181};
-        const unsigned turn = (unsigned)((section->angle_degrees + 720) / 45) % 8U;
-        const int c = cosine[turn], s = cosine[(turn + 6U) % 8U];
-        const unsigned visible = ((unsigned)count * section->masonry_progress_per_mille + 999U) / 1000U;
-        for (unsigned brick = 0U; brick < count && brick < visible; brick++) {
-            const building_clock_point_t b = building_clock_rect_center(bricks[brick]);
-            const int dx = b.x - center.x, dy = b.y - center.y;
-            bricks[brick].x = (int16_t)(section->position.x + (dx * c - dy * s) / 256 - bricks[brick].width / 2);
-            bricks[brick].y = (int16_t)(section->position.y + (dx * s + dy * c) / 256 - bricks[brick].height / 2);
-            draw_masonry_brick(renderer, bricks[brick], COLOR_MASONRY);
+        building_clock_falling_brick_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+        const uint8_t count = building_clock_falling_bricks(envelope, scene->world->digit_work_areas[section->source_digit_id].collapse_catch_area, section, bricks);
+        for (uint8_t brick = 0U; brick < count; brick++) {
+            draw_masonry_brick(renderer, bricks[brick].bounds, COLOR_MASONRY);
         }
     }
     for (uint8_t index = 0U; index < BUILDING_CLOCK_MAX_DEBRIS_PIECES; index++) {
         const building_clock_debris_t* debris = &scene->state.debris[index];
-        if (debris->status == BUILDING_CLOCK_DEBRIS_UNUSED || debris->status == BUILDING_CLOCK_DEBRIS_CLEARED) {
+        if (debris->status == BUILDING_CLOCK_DEBRIS_UNUSED || debris->status == BUILDING_CLOCK_DEBRIS_CLEARED || debris->status == BUILDING_CLOCK_DEBRIS_CARRIED) {
+            continue;
+        }
+        if (debris->status == BUILDING_CLOCK_DEBRIS_RECOVERABLE) {
+            draw_recovery_sack(renderer, debris->position.x, debris->position.y);
+            continue;
+        }
+        if (debris->masonry_progress_per_mille > 0U && debris->source_digit_id < BUILDING_CLOCK_DIGIT_COUNT) {
+            const building_clock_digit_work_area_t* area = &scene->world->digit_work_areas[debris->source_digit_id];
+            building_clock_rect_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+            const uint8_t count = building_clock_debris_bricks(area->envelope, area->collapse_catch_area, debris, bricks);
+            for (uint8_t brick = 0U; brick < count; brick++) {
+                draw_masonry_brick(renderer, bricks[brick], COLOR_MASONRY);
+            }
             continue;
         }
         draw_masonry_brick(renderer, (building_clock_rect_t){(int16_t)(debris->position.x - 5), (int16_t)(debris->position.y - 3), 7U, 4U}, COLOR_MASONRY);
@@ -560,7 +627,7 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
                         (worker->reserved_edge_id < scene->world->navigation.edge_count && worker->state != BUILDING_CLOCK_WORKER_WAIT);
     const bool sitting = worker->state == BUILDING_CLOCK_WORKER_REST;
     const bool clearing = worker->state == BUILDING_CLOCK_WORKER_CLEAR_DEBRIS;
-    const bool carrying = worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS;
+    const bool carrying = worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS || worker->carried_debris_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES;
     const int crouch = sitting ? 5 : (clearing || (job != NULL && job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && worker->state == BUILDING_CLOCK_WORKER_FINISH_JOB)) && frame < 4U ? 3 : 0;
     const int head_y = y - 16 + crouch;
     const SDL_Color uniform = uniforms[worker_id % 3U];
@@ -679,7 +746,7 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         left_x = x + direction * 8;
         right_x = x + direction * 10;
         left_y = right_y = y - 7;
-    } else if (carrying || (job != NULL && job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL)) {
+    } else if (carrying || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER || (job != NULL && job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL)) {
         right_x = x + direction * 6;
         right_y = y - 6 + (int)(frame % 3U);
         left_x = x - direction * 4;
@@ -687,6 +754,14 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     } else if (moving) {
         left_x -= stride[frame];
         right_x += stride[frame];
+    }
+    if (worker->passing_side != 0 && !carrying) {
+        /* Turn a shoulder and acknowledge the colleague instead of two full
+         * frontal silhouettes passing indistinguishably through each other. */
+        left_x = x - direction * 2;
+        left_y = y - 7;
+        right_x = x + direction * 3;
+        right_y = head_y + 2;
     }
     draw_limb(renderer, x - 2, y - 9 + crouch, left_x, left_y, COLOR_WORKER);
     draw_limb(renderer, x + 2, y - 9 + crouch, right_x, right_y, COLOR_WORKER);
@@ -696,6 +771,17 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         fill_rect(renderer, x - 5, y - 5, 11, 2, COLOR_ROPE);
         fill_rect(renderer, x - 5, y - 9, 1, 4, COLOR_ROPE);
         fill_rect(renderer, x + 5, y - 9, 1, 4, COLOR_ROPE);
+    }
+    if (worker->carried_debris_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES) {
+        int sx = x + direction * 7, sy = y - 6;
+        if (job != NULL && job->kind == BUILDING_CLOCK_JOB_CLEAR_DEBRIS && worker->state == BUILDING_CLOCK_WORKER_FINISH_JOB) {
+            const building_clock_debris_t* debris = &scene->state.debris[worker->carried_debris_id];
+            const building_clock_rect_t bay = scene->world->debris_bays[debris->debris_bay_id].area;
+            const int progress = (int)(worker->state_elapsed_ms * 1000U / job->action_duration_ms);
+            sx += ((bay.x + (int)bay.width / 2) - sx) * progress / 1000;
+            sy += (bay.y + 8 - sy) * progress * progress / 1000000;
+        }
+        draw_recovery_sack(renderer, sx, sy);
     }
     if (show_id) {
         char label[4];
@@ -819,8 +905,12 @@ static void render_scene(SDL_Renderer* renderer, viewer_t* viewer) {
     draw_loads(renderer, &viewer->scene);
     draw_site_feedback(renderer, &viewer->scene);
     draw_debug_areas(renderer, &viewer->scene, &viewer->overlays);
-    for (uint8_t worker = 0U; worker < viewer->scene.state.worker_count; worker++) {
-        draw_worker(renderer, &viewer->scene, worker, viewer->overlays.navigation || viewer->overlays.worker_routes);
+    for (int lane = -1; lane <= 1; lane++) {
+        for (uint8_t worker = 0U; worker < viewer->scene.state.worker_count; worker++) {
+            if (viewer->scene.state.workers[worker].passing_side == lane) {
+                draw_worker(renderer, &viewer->scene, worker, viewer->overlays.navigation || viewer->overlays.worker_routes);
+            }
+        }
     }
     draw_date(renderer, &viewer->scene);
     if (viewer->overlays.status) {
@@ -1223,6 +1313,7 @@ static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canva
                 .reserved_edge_id = (state == BUILDING_CLOCK_WORKER_WALK || state == BUILDING_CLOCK_WORKER_CLIMB || state == BUILDING_CLOCK_WORKER_CARRY) ? 0U : BUILDING_CLOCK_INVALID_EDGE_ID,
                 .current_job_id = state == BUILDING_CLOCK_WORKER_FINISH_JOB ? 0U : BUILDING_CLOCK_INVALID_ID,
                 .tended_builder_id = state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY ? 1U : BUILDING_CLOCK_INVALID_ID,
+                .carried_debris_id = BUILDING_CLOCK_INVALID_ID,
                 .carried_load_id = state == BUILDING_CLOCK_WORKER_CARRY ? 0U : BUILDING_CLOCK_INVALID_ID};
             viewer->scene.state.workers[1].rope.moved_vertically = true;
             viewer->scene.state.jobs[0].kind = BUILDING_CLOCK_JOB_STAGE_MATERIAL;

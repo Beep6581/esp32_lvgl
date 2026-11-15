@@ -7,10 +7,12 @@ ESP32 renderer.
 The default view is uncluttered. Workers have hard hats, colored overalls and
 discrete walk/climb/tool animations; TAB restores seed, timing and lifecycle
 labels. Builders control their own ropes, spare crew walk to quiet
-spots on broad platforms, and off-duty crew can shunt empty site trolleys.
+spots on broad platforms, and crews bag, carry and recover actual rubble using
+loaded site trolleys. Stable-clock recovery jobs fetch equipment through the
+normal navigation graph and yield safely to useful construction.
 Pallets, baskets, bottom-up access erection and bounded site-event feedback
 make construction readable without debug text. Cranes and lifts remain parked;
-the working machinery in this pass is the rope/winch system and empty trolleys.
+the working machinery is the rope/winch system and loaded recovery trolleys.
 
 Build and run:
 
@@ -131,8 +133,13 @@ build/building_clock_tests/building_clock_bottleneck_trace rollover build/builde
 ```
 
 These write worker samples, section changes and job changes to three CSV files
-per prefix, and print milestone/wait summaries to stdout. A final optional root
+per prefix plus a site/cargo CSV, and print milestone/wait summaries to stdout. A final optional root
 seed overrides `0x6a09e667f3bcc909`. Diagnostics verify byte-identical replay
 against an unsampled control. See
 [the current throughput report](../../../docs/building_clock_throughput.md)
 for timing definitions, diagnostic limits and remaining bottlenecks.
+
+`building_clock_site_tests` checks whole-sequence sack accounting, loaded
+trolley deliveries, separate work spots, cancellation and safe recovery-worker
+recall during a generated-world ladder traversal. Recovered loose masonry is
+recorded in depot inventory; conversion into replacement kits is not implemented.

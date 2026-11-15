@@ -130,10 +130,17 @@ static void test_break_spacing_and_cart_interruption(void) {
     world.cart_routes[0].stop_count = 2U;
     world.cart_routes[0].stops[0].position = (building_clock_point_t){140, 100};
     world.cart_routes[0].stops[1].position = (building_clock_point_t){260, 100};
+    world.debris_bay_count = 1U;
+    world.debris_bays[0].area = (building_clock_rect_t){190, 118, 20, 18};
+    world.debris_bays[0].access_node_id = 0U;
+    world.depot_count = 1U;
+    world.depots[0].area = (building_clock_rect_t){10, 70, 24, 24};
     expect_true(building_clock_simulation_init(&simulation, &world, 1U) == BUILDING_CLOCK_SIMULATION_OK, "cart fixture initializes");
     simulation.state.clock_initialized = true;
+    simulation.state.recovery_sacks[0] = 3U;
     replay = simulation;
     bool saw_push = false, interrupted = false;
+    uint8_t interrupt_job = BUILDING_CLOCK_INVALID_ID;
     uint16_t parked_progress = 0U;
     for (unsigned ms = 0U; ms < 8000U; ms += 50U) {
         (void)building_clock_simulation_step(&simulation, &world, 50U);
@@ -147,14 +154,56 @@ static void test_break_spacing_and_cart_interruption(void) {
             const building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_PATROL, 1U, 0U, 100U);
             uint8_t job;
             expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &job) == BUILDING_CLOCK_SIMULATION_OK, "construction can reclaim a cart operator");
+            interrupt_job = job;
             expect_true(building_clock_simulation_add_job(&replay, &world, &spec, &job) == BUILDING_CLOCK_SIMULATION_OK, "replay receives identical new work");
             interrupted = true;
-        } else if (interrupted) {
+        } else if (interrupted && simulation.metrics.jobs_completed == 0U) {
             expect_true(cart->operator_worker_id == BUILDING_CLOCK_INVALID_ID && cart->route_progress_per_mille == parked_progress,
                         "interrupted cart parks at its actual intermediate position without snapping to a stop");
         }
     }
-    expect_true(saw_push && interrupted && simulation.metrics.jobs_completed == 1U, "worker visibly pushes then returns to useful graph work");
+    expect_true(saw_push && interrupted && interrupt_job < BUILDING_CLOCK_MAX_JOBS && simulation.state.jobs[interrupt_job].status == BUILDING_CLOCK_JOB_COMPLETE,
+                "worker visibly pushes then returns to useful graph work");
+}
+
+static void test_loaded_cart_delivery(void) {
+    for (uint8_t side = 0U; side < 2U; side++) {
+        building_clock_world_t world;
+        initialize_world(&world, 2U);
+        world.platform_count = 1U;
+        world.platforms[0] = (building_clock_platform_t){.x_start = 10, .x_end = 400, .surface_y = 100};
+        world.navigation.nodes[0].position.x = 100;
+        world.navigation.nodes[1].position.x = 300;
+        add_spawn(&world, 0U);
+        add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_WALK, 200U, 2U);
+        world.cart_route_count = 1U;
+        world.cart_routes[0].stop_count = 2U;
+        world.cart_routes[0].stops[0].position = (building_clock_point_t){140, 100};
+        world.cart_routes[0].stops[1].position = (building_clock_point_t){260, 100};
+        world.debris_bay_count = 1U;
+        world.debris_bays[0].area = (building_clock_rect_t){191, 118, 20, 18};
+        world.debris_bays[0].access_node_id = 0U;
+        world.depot_count = 1U;
+        world.depots[0].area = (building_clock_rect_t){side == 0U ? 10 : 370, 70, 24, 24};
+        building_clock_simulation_t simulation;
+        expect_true(building_clock_simulation_init(&simulation, &world, 1U) == BUILDING_CLOCK_SIMULATION_OK, "loaded cart fixture initializes");
+        simulation.state.clock_initialized = true;
+        simulation.state.recovery_sacks[0] = 6U;
+        building_clock_simulation_t replay = simulation;
+        bool saw_loaded_push = false, saw_unloading = false;
+        for (uint32_t ms = 0U; ms < 60000U; ms += 50U) {
+            (void)building_clock_simulation_step(&simulation, &world, 50U);
+            (void)building_clock_simulation_step(&replay, &world, 50U);
+            expect_true(memcmp(&simulation, &replay, sizeof(simulation)) == 0, "loaded recovery trolley replays identically");
+            const building_clock_cart_t* cart = &simulation.state.carts[0];
+            saw_loaded_push |= cart->rubble_sacks > 0U && cart->status == BUILDING_CLOCK_CART_MOVING;
+            saw_unloading |= cart->status == BUILDING_CLOCK_CART_UNLOADING;
+            expect_true(cart->rubble_sacks <= 4U && simulation.state.recovery_sacks[0] + cart->rubble_sacks + simulation.metrics.rubble_sacks_recovered == 6U,
+                        "two trolley loads conserve every sack through loading, hauling and unloading");
+        }
+        expect_true(saw_loaded_push && saw_unloading && simulation.metrics.rubble_sacks_recovered == 6U && simulation.metrics.trolley_loads_delivered == 2U,
+                    "trolley finishes interior-stop collection and depot-side delivery in either direction");
+    }
 }
 
 static void test_optional_rope_tending(void) {
@@ -641,6 +690,7 @@ static void test_long_run(void) {
 
 int main(void) {
     test_break_spacing_and_cart_interruption();
+    test_loaded_cart_delivery();
     test_optional_rope_tending();
     test_local_station_continuity();
     test_walk_job_completion();

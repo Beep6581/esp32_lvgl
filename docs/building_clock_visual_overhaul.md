@@ -1,6 +1,7 @@
 # Clock - Builders visual/gameplay status
 
-Current implementation: `035220d` on `buildclock`; reviewed 2026-11-15.
+Current implementation: uncommitted site-interaction pass after `80e70cb` on
+`buildclock`; reviewed 2026-11-15.
 The character/site overhaul was committed in `4ccb755`; independent ropes,
 logistics and crane/date color corrections followed in `035220d`. This file
 describes the current viewer, not the superseded mandatory-tender model.
@@ -10,6 +11,16 @@ Hardware/display configuration, generator version 5, clock scale, traversal
 speeds and construction action durations are unchanged by these refinements.
 
 ## What is different
+
+The latest pass connects visible rubble clearing to actual site logistics:
+workers bag and carry rubble, drop sacks into generated bays, hand-haul them
+onto trolleys and push loaded carts to recovery chutes. Stable crews descend
+to fetch the equipment instead of leaving useful ground work indefinitely.
+No recovery cargo or inventory is invented for animation. Unpacking and kit
+pickup use separate real platform positions, clear of ladder mouths; builders
+can rig from a compatible roof pickup instead of retracing the graph anchor.
+Opposing walkers briefly turn shoulders and use shallow passing depth lanes.
+This improves readability, not general collision avoidance.
 
 Workers are now little hard-hat characters rather than pale markers: three
 overall colors, a white-hatted foreman, shaded faces, noses, occasional
@@ -62,16 +73,16 @@ excursion, and cancellation
 does not snap them back. Local return travel is included in evacuation lead
 estimates; actual worker safety still gates collapse.
 
-Off-duty workers can shunt an EMPTY trolley along its generated flat cart
-route. They walk to its handle, push at the existing walk speed, and leave it
-at a service endpoint. If useful work interrupts the push, the cart remains
-at its actual intermediate progress with no owner; the worker walks back to
-the navigation anchor. This is a small functional equipment task, not an
-automatic delivery system. Trolleys do not create or transport construction
-loads in this pass. It only starts outside active digit transitions.
+Trolleys now transport actual recovery sacks along generated flat routes.
+Operators load up to four using a visible hand line, walk to the correct
+handle side, push at unchanged walk speed, and unload at the depot-side chute.
+Preemption preserves intermediate progress and cargo; individual 900 ms sack
+transfers finish atomically. Stable-clock dispatch fetches equipment through
+real routes, and a minute change recalls workers after their current traversal.
+Structural-kit deliveries and worker rides are still deferred.
 
 The stable viewer scenario now supplies two low-rate inspection/maintenance
-jobs at real site locations instead of an eighteen-job patrol queue. Shunting,
+jobs at real site locations instead of an eighteen-job patrol queue. Recovery,
 off-duty behavior and all actual job execution remain shared simulation code.
 Those two maintenance inputs are viewer demo wiring, not a new firmware
 ambient scheduler.
@@ -85,7 +96,7 @@ rather than yellow, so pale workers/hard hats remain readable against it.
 Ladders remain yellow/cream. Its short idle jib is folded/parked; this is
 scenery/layout preparation, not crane delivery or lift behavior. Functional
 equipment is limited to independent ropes, optional idle winching, temporary
-access and empty-trolley shunting.
+access and loaded rubble recovery.
 
 Temporary ladder/scaffold extent follows actual installation-job progress,
 growing from the lower support. Predefined navigation activates only after
@@ -93,15 +104,46 @@ installation completes. The old full-height visual appeared even while its
 job was pending. Scaffold assembly remains a compressed, section-scale action,
 not a simulation of erecting every individual pole.
 
-Falling masonry tumbles in coarse integer 45-degree steps around its existing
-gravity-driven semantic trajectory; the old unexplained yellow slash is gone.
-Settled rubble is drawn as small coarse piles. A fixed sixteen-entry semantic
+Falling masonry now separates brick by brick: an initial failure spreads to
+nearby bricks while the unreached masonry stays in place. Each brick falls
+under integer gravity and remains at its landing position until bagging. The
+old rigid-section 45-degree rotation is removed. The crane is lighter muted
+blue-purple, nearer the platform palette but still contrasting with hard hats.
+Section groups remain internal cleanup units, not giant falling objects.
+A fixed sixteen-entry semantic
 milestone ring records brick seating, landing, clearing and digit completion.
 The renderer derives brief dust/chip feedback from that history. These are
 read-only effects, not particle entities, renderer callbacks or extra physics.
 Old events can be overwritten without affecting simulation correctness.
 
 ## Inspection and artifacts
+
+The latest collapse review is in ignored `build/builders_brick_collapse/`:
+`brick-wave-strip.png` shows consecutive 50 ms samples, `single-contact.png`
+and `midnight-contact.png` show failure through settlement, and
+`single-collapse.mp4` exports the six-second sequence. Single, rollover and
+midnight sequences were inspected as ordered frames; no real-time playback
+is claimed. The `before/` sequence preserves the prior rigid-section behavior.
+
+Latest artifacts are in ignored `build/builders_site/`: `before-after-20s.png`,
+`recovery-and-build.png`, `families-30s.png`, `after-rebuild-recovery.png`,
+`bagging-carry-tip-strip.png` and `trolley-loading-strip.png`. The strips cover
+consecutive 200 ms samples, including the same sacks leaving the worker,
+landing in the bay and being lifted onto the trolley. Complete single,
+rollover, midnight, stable and unfinished-minute PNG sequences are under
+`final/`, alongside single-digit sequences for the other four topology seeds.
+MP4 exports are supplied for interactive playback. Review used ordered frames
+and consecutive-frame strips correlated with CSV traces, not real-time movie
+playback. Earlier artifact paths below describe the previous visual baseline.
+
+Observed across all five single-digit families, plus full rollover/midnight
+sequences on split/bridge, continuous-lower and asymmetric-loop worlds: workers
+now approach separate unpacking spots and pick up the kits left there. The
+bagging and loading strips make each material transfer traceable. Stable
+recovery draws some crew downstairs instead of leaving every worker on the
+roof. Empty stable controls keep genuinely empty trolleys parked. Broad passing
+has readable depth and a courtesy pose, but roof arrival queues and long rows
+of resting crew are still less lively than the intended final game.
 
 Artifacts are repository-local ignored build output, not committed assets.
 A build cleanup may remove them. Current motion review is under
@@ -115,7 +157,7 @@ A build cleanup may remove them. Current motion review is under
 - `*-storyboard.png` and `descent-placement-strip.png`: ordered sequence and
   consecutive-frame review, including four other topology families.
 - `before-after-50s.png`: committed visual baseline versus independent ropes.
-- `date-colors-50s.png`: latest color state, including the dark purple crane
+- `date-colors-50s.png`: previous color state, including the dark purple crane
   and alternating orange/blue date. Earlier motion movies/previews precede
   these final color-only corrections; do not use their yellow crane or all-
   orange date as the current intended palette.
@@ -151,16 +193,23 @@ The trolley provides
 a readable activity on the lower route. Construction is more intelligible with
 labels disabled, especially when watching a placement hand meet its joint.
 
-Remaining weaknesses: queues still bunch during cache handoffs; resting and
-working crew can pass through one another on broad platforms (there is no
-continuous collision system). Actual masonry work still peaks at two builders
-for the measured single-digit scenarios, although logistics can use more crew.
-The parked crane/lift are not yet active
-material machinery. Rubble clearing/recovery remains section-scale rather than
-a complete visible transport-to-bin lifecycle. These are next refinements,
-not features hidden behind decorative animation.
+Remaining weaknesses: brief queues still bunch at roof/ladder arrivals.
+Passing gestures do not solve all same-direction or stationary-worker overlap.
+The parked crane/lift are not active material machinery. Rubble recovery is
+section-scale and some bays lack trolley access; their stored sacks remain
+visible. Stable crews now have recovery jobs, but the full ambient scheduler
+and richer equipment interactions remain future work.
 
 ## Current throughput and resources
+
+The latest comparison is 89/96 (92.7%) single-digit transitions stable within
+60 s, versus 93/96 (96.9%). Visible handling adds some time; worker speeds
+were not increased. Mean single-digit times are 52.33/52.54/50.09 s, with
+rollover/midnight 99.38/145.18 s. Context grows by 64 bytes to 10,408, state
+by 48 to 9,536, workers by four bytes to 304. Entity limits are unchanged.
+See the throughput report for the full current table and recovery accounting.
+
+Previous independent-rope baseline (historical):
 
 The 32-root/five-scenario/three-policy benchmark completes all 480 runs without
 timeouts or evacuation failures. With six plus relief, single-digit means are

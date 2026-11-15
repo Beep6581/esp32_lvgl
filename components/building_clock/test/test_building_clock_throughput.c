@@ -13,8 +13,8 @@
 #endif
 
 /* Host-only sampling; no profiling overhead in the firmware simulation. */
-enum { BUILD, SUPPLY, CARRY, TRAVEL, ROPE_TRAVEL, TEND, CLEAR, WAIT, AMBIENT, ACTIVITY_COUNT };
-static const char* const activities[] = {"build", "supply", "carry", "travel", "rope-travel", "tend", "clear", "wait", "ambient"};
+enum { BUILD, SUPPLY, CARRY, TRAVEL, ROPE_TRAVEL, TEND, CLEAR, RECOVERY, WAIT, AMBIENT, ACTIVITY_COUNT };
+static const char* const activities[] = {"build", "supply", "carry", "travel", "rope-travel", "tend", "clear", "recovery", "wait", "ambient"};
 
 enum { WAIT_NAVIGATION, WAIT_ROPE_LANE, WAIT_TURN, WAIT_KIND_COUNT };
 
@@ -36,10 +36,13 @@ static unsigned activity(const building_clock_worker_t* worker, const building_c
         return ROPE_TRAVEL;
     }
     if (worker->reserved_edge_id != BUILDING_CLOCK_INVALID_EDGE_ID || worker->route_node_index < worker->route_edge_count) {
-        return worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS ? CARRY : TRAVEL;
+        return worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS || worker->carried_debris_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES ? CARRY : TRAVEL;
     }
     if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS) {
         const building_clock_job_t* job = &simulation->state.jobs[worker->current_job_id];
+        if (job->kind == BUILDING_CLOCK_JOB_PUSH_CART) {
+            return RECOVERY;
+        }
         if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL) {
             return SUPPLY;
         }
@@ -50,6 +53,10 @@ static unsigned activity(const building_clock_worker_t* worker, const building_c
     }
     if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY) {
         return TEND; /* Optional assistance is not productive construction. */
+    }
+    if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_APPROACH || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_PUSH ||
+        worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER) {
+        return RECOVERY;
     }
     return AMBIENT;
 }

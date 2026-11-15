@@ -199,6 +199,18 @@ target_compile_options(building_clock_scene_tests PRIVATE -Wall -Wextra -Werror)
 
 add_test(NAME building_clock_scene_tests COMMAND building_clock_scene_tests)
 
+add_executable(building_clock_site_tests
+    "test_building_clock_site.c"
+    ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
+    "../building_clock_runtime_navigation.c"
+    "../building_clock_simulation.c"
+)
+target_include_directories(building_clock_site_tests PRIVATE "../include")
+target_compile_features(building_clock_site_tests PRIVATE c_std_11)
+target_compile_options(building_clock_site_tests PRIVATE -Wall -Wextra -Werror)
+add_test(NAME building_clock_site_tests COMMAND building_clock_site_tests)
+
 add_executable(building_clock_throughput_tests
     "test_building_clock_throughput.c"
     ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}

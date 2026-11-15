@@ -16,6 +16,7 @@
 #define FALLING_VARIATION_MS 200U
 #define ROPE_MS_PER_PIXEL 20U
 #define ROPE_REACH 12
+#define CART_SACK_CAPACITY 4U
 
 static const building_clock_transition_pacing_t s_default_transition_pacing = {
     .preparation_ms = 500U,
@@ -56,6 +57,8 @@ static bool section_dependencies_secured(const building_clock_digit_structure_t*
 static bool cache_nodes_share_platform(const building_clock_world_t* world, uint8_t first, uint8_t second);
 static bool worker_can_do_job(const building_clock_worker_t* worker, const building_clock_job_t* job, uint64_t elapsed_ms);
 static uint8_t job_route_destination(const building_clock_job_t* job);
+static bool job_is_live(const building_clock_job_t* job);
+static void update_carried_load_positions(building_clock_simulation_t* simulation, uint8_t worker_id);
 
 static void park_worker_cart(building_clock_simulation_t* simulation, uint8_t worker_id) {
     for (uint8_t id = 0U; id < simulation->state.cart_count; id++) {
@@ -156,6 +159,7 @@ static void initialize_worker(building_clock_worker_t* worker, uint8_t worker_id
     worker->facing = BUILDING_CLOCK_FACING_RIGHT;
     worker->current_job_id = BUILDING_CLOCK_INVALID_ID;
     worker->carried_load_id = BUILDING_CLOCK_INVALID_ID;
+    worker->carried_debris_id = BUILDING_CLOCK_INVALID_ID;
     worker->tended_builder_id = BUILDING_CLOCK_INVALID_ID;
     worker->current_node_id = node_id;
     worker->reserved_edge_id = BUILDING_CLOCK_INVALID_EDGE_ID;
@@ -187,6 +191,8 @@ building_clock_simulation_status_t building_clock_simulation_init(building_clock
     for (uint8_t cart = 0U; cart < simulation->state.cart_count; cart++) {
         simulation->state.carts[cart].route_id = cart;
         simulation->state.carts[cart].operator_worker_id = BUILDING_CLOCK_INVALID_ID;
+        simulation->state.carts[cart].pickup_bay_id = BUILDING_CLOCK_INVALID_ID;
+        simulation->state.carts[cart].target_stop_id = world->cart_routes[cart].stop_count > 0U ? (uint8_t)(world->cart_routes[cart].stop_count - 1U) : 0U;
     }
     for (uint8_t depot = 0U; depot < world->depot_count; depot++) {
         simulation->state.depot_inventory[depot].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION] = 64U;
@@ -274,6 +280,7 @@ static void return_worker_to_current_node(building_clock_worker_t* worker, const
 
 static void clear_worker_job(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id) {
     building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+    worker->recovery_recalled = false;
     release_transit_reservations(simulation, world, worker_id);
     if (worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_NONE) {
         park_worker_cart(simulation, worker_id);
@@ -416,35 +423,66 @@ static building_clock_point_t cart_position(const building_clock_world_t* world,
     return (building_clock_point_t){(int16_t)(from.x + ((int32_t)to.x - from.x) * cart->route_progress_per_mille / 1000), from.y};
 }
 
-/* Off-duty shunting of an EMPTY site trolley. It never supplies a digit or
- * invents cargo. Construction can reclaim the operator; the trolley remains
- * at its actual intermediate position for a subsequent push. */
+static bool same_platform(const building_clock_world_t* world, building_clock_point_t from, building_clock_point_t to) {
+    for (uint8_t id = 0U; id < world->platform_count; id++) {
+        const building_clock_platform_t* p = &world->platforms[id];
+        if (from.y == p->surface_y && to.y == p->surface_y && from.x >= p->x_start && from.x <= p->x_end && to.x >= p->x_start && to.x <= p->x_end) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Recovery uses real service bays and a real flat trolley route. The depot-side
+ * endpoint is the route's recovery chute. No cargo is invented for animation. */
 static bool choose_cart_task(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id) {
     building_clock_worker_t* worker = &simulation->state.workers[worker_id];
-    if (building_clock_simulation_transition_active(simulation) || worker_id % 3U != 0U) {
-        return false;
-    }
     for (uint8_t id = 0U; id < simulation->state.cart_count; id++) {
         building_clock_cart_t* cart = &simulation->state.carts[id];
         const building_clock_cart_route_t* route = &world->cart_routes[id];
         if (route->stop_count < 2U || cart->operator_worker_id != BUILDING_CLOCK_INVALID_ID) {
             continue;
         }
-        if (cart->status == BUILDING_CLOCK_CART_PARKED) {
-            cart->target_stop_id = cart->current_stop_id == 0U ? (uint8_t)(route->stop_count - 1U) : 0U;
+        bool reserved_for_other = false;
+        for (uint8_t job_id = 0U; job_id < BUILDING_CLOCK_MAX_JOBS; job_id++) {
+            const building_clock_job_t* job = &simulation->state.jobs[job_id];
+            if (job_is_live(job) && job->kind == BUILDING_CLOCK_JOB_PUSH_CART && job->subject.object_id == id && worker->current_job_id != job_id) {
+                reserved_for_other = true;
+            }
+        }
+        if (reserved_for_other || (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && simulation->state.jobs[worker->current_job_id].subject.object_id != id)) {
+            continue;
         }
         const building_clock_point_t p = cart_position(world, id, cart);
-        int32_t dx = (int32_t)p.x - worker->position.x;
-        dx = dx < 0 ? -dx : dx;
-        bool same_surface = false;
-        for (uint8_t platform = 0U; platform < world->platform_count; platform++) {
-            const building_clock_platform_t* surface = &world->platforms[platform];
-            same_surface |= surface->surface_y == p.y && surface->surface_y == worker->position.y && worker->position.x >= surface->x_start && worker->position.x <= surface->x_end &&
-                            route->stops[0].position.x >= surface->x_start && route->stops[route->stop_count - 1U].position.x <= surface->x_end;
+        const int16_t left = route->stops[0].position.x;
+        const int16_t right = route->stops[route->stop_count - 1U].position.x;
+        const building_clock_point_t depot = world->depot_count > 0U ? building_clock_rect_center(world->depots[0].area) : route->stops[0].position;
+        const int16_t recovery_x = depot.x < (left + right) / 2 ? left : right;
+        cart->pickup_bay_id = BUILDING_CLOCK_INVALID_ID;
+        cart->destination_x = recovery_x;
+        if (cart->rubble_sacks == 0U) {
+            int32_t nearest = INT32_MAX;
+            for (uint8_t bay = 0U; bay < world->debris_bay_count; bay++) {
+                if (simulation->state.recovery_sacks[bay] == 0U || world->debris_bays[bay].access_node_id >= world->navigation.node_count) {
+                    continue;
+                }
+                building_clock_point_t service = world->navigation.nodes[world->debris_bays[bay].access_node_id].position;
+                service.x = building_clock_rect_center(world->debris_bays[bay].area).x;
+                const int32_t distance = service.x > p.x ? service.x - p.x : p.x - service.x;
+                if (service.x >= left && service.x <= right && same_platform(world, p, service) && distance < nearest) {
+                    nearest = distance;
+                    cart->pickup_bay_id = bay;
+                    cart->destination_x = service.x;
+                }
+            }
+            if (cart->pickup_bay_id == BUILDING_CLOCK_INVALID_ID) {
+                continue;
+            }
         }
-        if (same_surface && dx <= 90 && building_clock_navigation_node_capacity(world, worker->current_node_id) == BUILDING_CLOCK_MAX_WORKERS) {
+        if (same_platform(world, worker->position, p) && building_clock_navigation_node_capacity(world, worker->current_node_id) == BUILDING_CLOCK_MAX_WORKERS) {
             cart->operator_worker_id = worker_id;
             cart->status = BUILDING_CLOCK_CART_LOADING;
+            cart->transfer_elapsed_ms = 0U;
             worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_CART_APPROACH;
             worker->platform_motion_remainder_ms = 0U;
             worker->platform_activity_position = p;
@@ -464,17 +502,68 @@ static bool advance_platform_activity(building_clock_simulation_t* simulation, c
             break;
         }
     }
+    if (cart != NULL && worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER) {
+        worker->state = BUILDING_CLOCK_WORKER_FINISH_JOB;
+        cart->transfer_elapsed_ms = (uint16_t)(cart->transfer_elapsed_ms + elapsed_ms);
+        worker->action_phase = (uint8_t)(cart->transfer_elapsed_ms * 4U / BUILDING_CLOCK_CART_TRANSFER_MS);
+        if (cart->transfer_elapsed_ms < BUILDING_CLOCK_CART_TRANSFER_MS) {
+            return true;
+        }
+        cart->transfer_elapsed_ms = 0U;
+        if (cart->pickup_bay_id < world->debris_bay_count) {
+            uint16_t* stock = &simulation->state.recovery_sacks[cart->pickup_bay_id];
+            if (*stock > 0U && cart->rubble_sacks < CART_SACK_CAPACITY) {
+                (*stock)--;
+                cart->rubble_sacks++;
+            }
+            if (*stock > 0U && cart->rubble_sacks < CART_SACK_CAPACITY) {
+                return true;
+            }
+            cart->pickup_bay_id = BUILDING_CLOCK_INVALID_ID;
+            const building_clock_cart_route_t* route = &world->cart_routes[cart_id];
+            const building_clock_rect_t depot = world->depots[0].area;
+            cart->destination_x =
+                depot.x < (route->stops[0].position.x + route->stops[route->stop_count - 1U].position.x) / 2 ? route->stops[0].position.x : route->stops[route->stop_count - 1U].position.x;
+            worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_CART_APPROACH;
+            cart->status = BUILDING_CLOCK_CART_LOADING;
+        } else {
+            if (cart->rubble_sacks > 0U) {
+                cart->rubble_sacks--;
+                if (simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_LOOSE_MASONRY] < UINT16_MAX) {
+                    simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_LOOSE_MASONRY]++;
+                }
+                simulation->metrics.rubble_sacks_recovered++;
+            }
+            if (cart->rubble_sacks == 0U) {
+                simulation->metrics.trolley_loads_delivered++;
+                if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && simulation->state.jobs[worker->current_job_id].kind == BUILDING_CLOCK_JOB_PUSH_CART) {
+                    complete_current_job(simulation, world, worker_id);
+                } else {
+                    park_worker_cart(simulation, worker_id);
+                    worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_RETURN;
+                }
+                cart->status = BUILDING_CLOCK_CART_PARKED;
+            }
+        }
+        return true;
+    }
     if (worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_WALK_OUT && worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_RETURN &&
-        worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_CART_APPROACH && worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_CART_PUSH) {
+        worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_CART_APPROACH && worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_CART_PUSH &&
+        worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_WORK_APPROACH && worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_PICKUP_APPROACH) {
         return false;
     }
     building_clock_point_t destination =
         worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_RETURN ? world->navigation.nodes[worker->current_node_id].position : worker->platform_activity_position;
     int push_direction = 1;
     if (cart != NULL) {
-        const building_clock_cart_route_t* route = &world->cart_routes[cart_id];
-        push_direction = route->stops[cart->target_stop_id].position.x > route->stops[cart->current_stop_id].position.x ? 1 : -1;
-        destination = worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_APPROACH ? cart_position(world, cart_id, cart) : route->stops[cart->target_stop_id].position;
+        const building_clock_point_t p = cart_position(world, cart_id, cart);
+        /* Keep a push's handle side fixed. Recomputing it from rounded route
+         * progress can alternate sides forever near an interior bay stop. */
+        if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_APPROACH) {
+            cart->push_direction = cart->destination_x >= p.x ? 1 : -1;
+        }
+        push_direction = cart->push_direction;
+        destination = worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_APPROACH ? p : (building_clock_point_t){cart->destination_x, p.y};
         destination.x = (int16_t)(destination.x - push_direction * 12);
     }
     const uint32_t total = elapsed_ms + worker->platform_motion_remainder_ms;
@@ -500,11 +589,15 @@ static bool advance_platform_activity(building_clock_simulation_t* simulation, c
             return true;
         }
         if (cart != NULL) {
-            cart->current_stop_id = cart->target_stop_id;
-            cart->route_progress_per_mille = 0U;
-            cart->status = BUILDING_CLOCK_CART_PARKED;
-            cart->operator_worker_id = BUILDING_CLOCK_INVALID_ID;
-            worker->platform_activity_position = worker->position;
+            worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_CART_TRANSFER;
+            cart->status = cart->pickup_bay_id < world->debris_bay_count ? BUILDING_CLOCK_CART_LOADING : BUILDING_CLOCK_CART_UNLOADING;
+            cart->transfer_elapsed_ms = 0U;
+            return true;
+        }
+        if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WORK_APPROACH || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_PICKUP_APPROACH) {
+            worker->platform_activity_phase = worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WORK_APPROACH ? BUILDING_CLOCK_PLATFORM_WORK : BUILDING_CLOCK_PLATFORM_PICKUP;
+            worker->state = BUILDING_CLOCK_WORKER_CHOOSE_JOB;
+            return true;
         }
         worker->platform_activity_phase = worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_RETURN ? BUILDING_CLOCK_PLATFORM_NONE : BUILDING_CLOCK_PLATFORM_REST;
         worker->state = worker->current_job_id < BUILDING_CLOCK_MAX_JOBS ? BUILDING_CLOCK_WORKER_CHOOSE_JOB : BUILDING_CLOCK_WORKER_IDLE;
@@ -579,6 +672,22 @@ static void restage_carried_loads(building_clock_simulation_t* simulation, const
 
 static void release_job_subject(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id) {
     const building_clock_job_t* job = &simulation->state.jobs[job_id];
+    if (job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_DEBRIS && job->subject.object_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES) {
+        building_clock_debris_t* debris = &simulation->state.debris[job->subject.object_id];
+        if (job->reserved_worker_id < simulation->state.worker_count) {
+            building_clock_worker_t* worker = &simulation->state.workers[job->reserved_worker_id];
+            if (worker->carried_debris_id == job->subject.object_id) {
+                /* Cancellation puts the sack down here, not back at its old
+                 * foundation or magically into the remote recovery bay. */
+                debris->position = worker->position;
+                debris->position.y -= 3;
+                debris->status = BUILDING_CLOCK_DEBRIS_RECOVERABLE;
+                worker->carried_debris_id = BUILDING_CLOCK_INVALID_ID;
+            }
+        }
+        debris->reserved_worker_id = BUILDING_CLOCK_INVALID_ID;
+        return;
+    }
     if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_LOAD && job->subject.object_id < BUILDING_CLOCK_MAX_LOADS) {
         building_clock_load_t* load = &simulation->state.loads[job->subject.object_id];
         if (load->status != BUILDING_CLOCK_LOAD_UNUSED) {
@@ -934,8 +1043,8 @@ static void apply_job_completion(building_clock_simulation_t* simulation, const 
             load->status = BUILDING_CLOCK_LOAD_STAGED;
             load->carrier_worker_id = BUILDING_CLOCK_INVALID_ID;
             load->companion_load_id = BUILDING_CLOCK_INVALID_ID;
-            load->position = world->navigation.nodes[job->target_node_id].position;
-            load->position.x = (int16_t)(load->position.x + (load->section_id % 2U == 0U ? -8 : 8));
+            load->position = simulation->state.workers[job->reserved_worker_id].position;
+            load->position.x = (int16_t)(load->position.x + (index == 0U ? -3 : 4));
             load->position.y -= 7;
             simulation->state.digits[load->digit_id].incoming.sections[load->section_id].status = BUILDING_CLOCK_SECTION_STAGED;
             simulation->state.staging_inventory[load->location_id].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION]++;
@@ -955,9 +1064,10 @@ static void apply_job_completion(building_clock_simulation_t* simulation, const 
         building_clock_debris_t* debris = &simulation->state.debris[job->subject.object_id];
         if (debris->status != BUILDING_CLOCK_DEBRIS_UNUSED) {
             record_site_event(simulation, BUILDING_CLOCK_SITE_RUBBLE_CLEARED, debris->position, debris->source_digit_id);
-            if (simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_LOOSE_MASONRY] < UINT16_MAX) {
-                simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_LOOSE_MASONRY]++;
+            if (debris->debris_bay_id < world->debris_bay_count && simulation->state.recovery_sacks[debris->debris_bay_id] < UINT16_MAX) {
+                simulation->state.recovery_sacks[debris->debris_bay_id]++;
             }
+            simulation->state.workers[job->reserved_worker_id].carried_debris_id = BUILDING_CLOCK_INVALID_ID;
             memset(debris, 0, sizeof(*debris));
             if (simulation->state.used_debris_slot_count > 0U) {
                 simulation->state.used_debris_slot_count--;
@@ -1074,6 +1184,10 @@ static void pack_next_rope_kit(building_clock_simulation_t* simulation, const bu
         if (next->status != BUILDING_CLOCK_LOAD_STAGED || next->digit_id != first->digit_id || next->access_node_id != first->access_node_id) {
             continue;
         }
+        const int dx = next->position.x - worker->position.x;
+        if (dx < -12 || dx > 12 || next->position.y != first->position.y) {
+            continue;
+        }
         building_clock_section_state_t* section = &structure->sections[next->section_id];
         if (section->assigned_job_id != BUILDING_CLOCK_INVALID_ID || (section->dependency_mask & (uint16_t)(1U << first->section_id)) == 0U) {
             continue;
@@ -1097,10 +1211,76 @@ static void pack_next_rope_kit(building_clock_simulation_t* simulation, const bu
     }
 }
 
+/* A work location is a small area on a real platform, not a pile of workers
+ * at its graph anchor. Occupied work spots are considered in stable ID order. */
+static bool approach_work_spot(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id, int16_t preferred_x, bool pickup) {
+    building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+    if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WORK || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_PICKUP) {
+        return false;
+    }
+    static const int16_t offsets[] = {0, -16, 16, -32, 32, -48, 48, -64, 64};
+    bool has_surface = false;
+    for (uint8_t slot = 0U; slot < (pickup ? 1U : sizeof(offsets) / sizeof(offsets[0])); slot++) {
+        const building_clock_point_t point = {(int16_t)(preferred_x + offsets[slot]), worker->position.y};
+        if (!same_platform(world, worker->position, point) || point_in_active_hazard(simulation, point)) {
+            continue;
+        }
+        has_surface = true;
+        bool free = true;
+        for (uint8_t id = 0U; !pickup && id < world->ladder_count; id++) {
+            const building_clock_ladder_t* ladder = &world->ladders[id];
+            if ((ladder->top_y == point.y || ladder->bottom_y == point.y) && point.x - ladder->x < 13 && ladder->x - point.x < 13) {
+                free = false;
+            }
+        }
+        for (uint8_t hazard = 0U; hazard < simulation->state.hazard_count; hazard++) {
+            if (segment_may_cross_rect(worker->position, point, simulation->state.hazards[hazard].area)) {
+                free = false;
+            }
+        }
+        for (uint8_t id = 0U; !pickup && id < simulation->state.worker_count; id++) {
+            const building_clock_worker_t* colleague = &simulation->state.workers[id];
+            if (id != worker_id && (colleague->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WORK_APPROACH || colleague->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WORK)) {
+                const building_clock_point_t p = colleague->platform_activity_position;
+                if (point.y == p.y && point.x - p.x < 15 && p.x - point.x < 15) {
+                    free = false;
+                }
+            }
+        }
+        if (free) {
+            worker->platform_activity_position = point;
+            worker->platform_activity_phase = pickup ? BUILDING_CLOCK_PLATFORM_PICKUP_APPROACH : BUILDING_CLOCK_PLATFORM_WORK_APPROACH;
+            worker->platform_motion_remainder_ms = 0U;
+            worker->state = BUILDING_CLOCK_WORKER_WALK;
+            return true;
+        }
+    }
+    if (!pickup && has_surface) {
+        worker->state = BUILDING_CLOCK_WORKER_WAIT;
+        return true;
+    }
+    return false;
+}
+
 static bool begin_job_action(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id) {
     building_clock_worker_t* worker = &simulation->state.workers[worker_id];
     building_clock_job_t* job = &simulation->state.jobs[worker->current_job_id];
-    if (job->source_node_id != BUILDING_CLOCK_INVALID_ID && !job->source_action_complete) {
+    if (job->kind == BUILDING_CLOCK_JOB_PUSH_CART) {
+        if (!choose_cart_task(simulation, world, worker_id)) {
+            /* Another completed recovery may have consumed the final sacks. */
+            complete_current_job(simulation, world, worker_id);
+        }
+        return true;
+    }
+    if (job->kind == BUILDING_CLOCK_JOB_CLEAR_DEBRIS) {
+        const building_clock_debris_t* debris = &simulation->state.debris[job->subject.object_id];
+        if (!job->source_action_complete && approach_work_spot(simulation, world, worker_id, debris->position.x, false)) {
+            return true;
+        }
+    } else if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->source_action_complete && approach_work_spot(simulation, world, worker_id, worker->position.x, false)) {
+        return true;
+    }
+    if (job->kind != BUILDING_CLOCK_JOB_CLEAR_DEBRIS && job->source_node_id != BUILDING_CLOCK_INVALID_ID && !job->source_action_complete) {
         const bool delivery = job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_LOAD;
         if (!delivery && (job->kind != BUILDING_CLOCK_JOB_PLACE_SECTION || job->subject.kind != BUILDING_CLOCK_JOB_SUBJECT_DIGIT_SECTION)) {
             return false;
@@ -1118,6 +1298,9 @@ static bool begin_job_action(building_clock_simulation_t* simulation, const buil
             return false;
         }
         building_clock_load_t* load = &simulation->state.loads[load_id];
+        if (!delivery && approach_work_spot(simulation, world, worker_id, load->position.x, true)) {
+            return true;
+        }
         load->status = BUILDING_CLOCK_LOAD_CARRIED;
         load->placement_progress_per_mille = 0U;
         load->carrier_worker_id = worker_id;
@@ -1154,6 +1337,16 @@ static bool begin_job_action(building_clock_simulation_t* simulation, const buil
         worker->route_purpose = BUILDING_CLOCK_WORKER_ROUTE_JOB;
         worker->state = BUILDING_CLOCK_WORKER_CARRY;
         worker->state_elapsed_ms = 0U;
+        /* A roof cache is an area, not a mandatory return-to-anchor detour.
+         * After physical pickup, rig directly on this same real platform;
+         * ROPE_ALIGN still walks the builder to the installation column. */
+        if (!delivery && cache_nodes_share_platform(world, worker->current_node_id, job->target_node_id) && begin_rope_work(simulation, world, worker_id)) {
+            worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_NONE;
+            return true;
+        }
+        if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_PICKUP) {
+            worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_RETURN;
+        }
         return true;
     }
     worker->state_elapsed_ms = 0U;
@@ -1172,7 +1365,7 @@ static bool begin_job_action(building_clock_simulation_t* simulation, const buil
         worker->state = BUILDING_CLOCK_WORKER_HAMMER;
         break;
     case BUILDING_CLOCK_JOB_CLEAR_DEBRIS:
-        worker->state = BUILDING_CLOCK_WORKER_CLEAR_DEBRIS;
+        worker->state = job->source_action_complete ? BUILDING_CLOCK_WORKER_FINISH_JOB : BUILDING_CLOCK_WORKER_CLEAR_DEBRIS;
         break;
     case BUILDING_CLOCK_JOB_PATROL:
     case BUILDING_CLOCK_JOB_STAGE_MATERIAL:
@@ -1418,6 +1611,33 @@ static uint32_t advance_action(building_clock_simulation_t* simulation, const bu
         }
     }
     if (worker->state_elapsed_ms >= duration) {
+        if (job->kind == BUILDING_CLOCK_JOB_CLEAR_DEBRIS && !job->source_action_complete) {
+            building_clock_debris_t* debris = &simulation->state.debris[job->subject.object_id];
+            const building_clock_route_request_t request = {
+                .start_node_id = worker->current_node_id,
+                .destination_node_id = job->target_node_id,
+                .allow_temporary_connections = true,
+                .allow_machinery_edges = false,
+            };
+            building_clock_route_t route;
+            if (building_clock_find_route(world, &simulation->navigation, &request, &route) != BUILDING_CLOCK_ROUTE_OK || route_intersects_active_hazard(simulation, world, &route)) {
+                /* Keep the rubble on the ground and retry; never lose it. */
+                worker->state_elapsed_ms = 0U;
+                return consumed;
+            }
+            debris->status = BUILDING_CLOCK_DEBRIS_CARRIED;
+            debris->reserved_worker_id = worker_id;
+            worker->carried_debris_id = job->subject.object_id;
+            job->source_action_complete = true;
+            copy_route_to_worker(worker, &route);
+            worker->route_purpose = BUILDING_CLOCK_WORKER_ROUTE_JOB;
+            worker->state = BUILDING_CLOCK_WORKER_CARRY;
+            worker->state_elapsed_ms = 0U;
+            if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WORK) {
+                worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_RETURN;
+            }
+            return consumed;
+        }
         if (job->kind == BUILDING_CLOCK_JOB_PLACE_SECTION) {
             apply_job_completion(simulation, world, worker->current_job_id);
             job->kind = BUILDING_CLOCK_JOB_SECURE_SECTION;
@@ -1456,6 +1676,12 @@ static bool rope_lane_available(const building_clock_simulation_t* simulation, u
 }
 
 static void update_carried_load_positions(building_clock_simulation_t* simulation, uint8_t worker_id) {
+    const building_clock_worker_t* carrier = &simulation->state.workers[worker_id];
+    if (carrier->carried_debris_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES) {
+        building_clock_debris_t* debris = &simulation->state.debris[carrier->carried_debris_id];
+        debris->position = carrier->position;
+        debris->position.y -= 7;
+    }
     const building_clock_worker_t* worker = &simulation->state.workers[worker_id];
     if (worker->carried_load_id >= BUILDING_CLOCK_MAX_LOADS) {
         return;
@@ -1699,18 +1925,31 @@ static void advance_worker(building_clock_simulation_t* simulation, const buildi
     uint32_t remaining_ms = elapsed_ms;
 
     for (uint8_t transition = 0U; transition < MAX_WORKER_TRANSITIONS_PER_QUANTUM && remaining_ms > 0U; transition++) {
+        if (worker->recovery_recalled && worker->reserved_edge_id == BUILDING_CLOCK_INVALID_EDGE_ID) {
+            bool transferring = false;
+            for (uint8_t id = 0U; id < simulation->state.cart_count; id++) {
+                transferring |= simulation->state.carts[id].operator_worker_id == worker_id && worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER &&
+                                simulation->state.carts[id].transfer_elapsed_ms > 0U;
+            }
+            if (!transferring) {
+                cancel_job_internal(simulation, world, worker->current_job_id, true, false);
+                return;
+            }
+        }
         if (worker->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
             advance_rope(simulation, world, worker_id, remaining_ms);
             return;
         }
         if (advance_platform_activity(simulation, world, worker_id, remaining_ms)) {
+            update_carried_load_positions(simulation, worker_id);
             return;
         }
         if (worker->current_job_id == BUILDING_CLOCK_INVALID_ID && worker->route_purpose == BUILDING_CLOCK_WORKER_ROUTE_NONE) {
             worker->behavior_timer_ms += remaining_ms;
             if (simulation->state.clock_initialized && worker->behavior_timer_ms >= 1000U) {
-                if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE &&
-                    (choose_cart_task(simulation, world, worker_id) || choose_platform_activity_position(simulation, world, worker_id))) {
+                if (((worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_REST) &&
+                     choose_cart_task(simulation, world, worker_id)) ||
+                    (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE && choose_platform_activity_position(simulation, world, worker_id))) {
                     (void)advance_platform_activity(simulation, world, worker_id, remaining_ms);
                     return;
                 }
@@ -2038,6 +2277,20 @@ building_clock_simulation_status_t building_clock_simulation_set_time(building_c
     }
 
     uint8_t changed_count = 0U;
+    if (simulation->state.target_hour != hour || simulation->state.target_minute != minute) {
+        for (uint8_t job_id = 0U; job_id < BUILDING_CLOCK_MAX_JOBS; job_id++) {
+            building_clock_job_t* job = &simulation->state.jobs[job_id];
+            if (job->kind == BUILDING_CLOCK_JOB_PUSH_CART && job_is_live(job)) {
+                if (job->reserved_worker_id < simulation->state.worker_count) {
+                    /* Finish the current ladder/edge or sack transfer first;
+                     * recalling a roof worker must not teleport them. */
+                    simulation->state.workers[job->reserved_worker_id].recovery_recalled = true;
+                } else {
+                    cancel_job_internal(simulation, world, job_id, false, false);
+                }
+            }
+        }
+    }
     simulation->state.target_hour = hour;
     simulation->state.target_minute = minute;
     uint8_t changed_mask = 0U;
@@ -2277,16 +2530,14 @@ static bool launch_failed_section(building_clock_simulation_t* simulation, const
         .start_position = start_position,
         .landing_position = landing_position,
         .position = start_position,
-        .angular_velocity_degrees_per_second = (int16_t)(30 + building_clock_random_bounded(&simulation->transition_random, 91U)),
         .source_digit_id = digit_id,
         .source_section_id = section_id,
+        .source_numeral = structure->numeral,
+        .failure_brick_id = (uint8_t)building_clock_random_bounded(&simulation->transition_random, BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION),
         .masonry_progress_per_mille = section->progress_per_mille,
         .target_debris_bay_id = debris_bay_id,
         .duration_ms = simulation->pacing.falling_section_ms + building_clock_random_bounded(&simulation->transition_random, FALLING_VARIATION_MS + 1U),
     };
-    if ((building_clock_random_next(&simulation->transition_random) & 1U) != 0U) {
-        falling->angular_velocity_degrees_per_second = (int16_t)-falling->angular_velocity_degrees_per_second;
-    }
     section->status = BUILDING_CLOCK_SECTION_FALLING;
     if (simulation->state.falling_section_count > simulation->metrics.peak_falling_sections) {
         simulation->metrics.peak_falling_sections = simulation->state.falling_section_count;
@@ -2314,6 +2565,11 @@ static bool create_settled_debris(building_clock_simulation_t* simulation, const
         .source_section_id = falling->source_section_id,
         .debris_bay_id = falling->target_debris_bay_id,
         .reserved_worker_id = BUILDING_CLOCK_INVALID_ID,
+        .section_kind = falling->section_kind,
+        .source_numeral = falling->source_numeral,
+        .failure_brick_id = falling->failure_brick_id,
+        .masonry_progress_per_mille = falling->masonry_progress_per_mille,
+        .horizontal_drift = (int8_t)(falling->landing_position.x - falling->start_position.x),
     };
     simulation->state.used_debris_slot_count++;
     simulation->metrics.debris_created++;
@@ -2336,7 +2592,6 @@ static void advance_falling_sections(building_clock_simulation_t* simulation, co
         const int32_t vertical_progress = (horizontal_progress * horizontal_progress) / 1000;
         falling->position.x = (int16_t)(falling->start_position.x + ((int32_t)(falling->landing_position.x - falling->start_position.x) * horizontal_progress) / 1000);
         falling->position.y = (int16_t)(falling->start_position.y + ((int32_t)(falling->landing_position.y - falling->start_position.y) * vertical_progress) / 1000);
-        falling->angle_degrees = (int16_t)(((int32_t)falling->angular_velocity_degrees_per_second * (int32_t)falling->elapsed_ms) / 1000);
         if (falling->elapsed_ms < falling->duration_ms || !create_settled_debris(simulation, world, falling)) {
             falling_id++;
             continue;
@@ -2744,7 +2999,21 @@ static void schedule_debris_clearing(building_clock_simulation_t* simulation, co
             right_distance = right_distance < 0 ? -right_distance : right_distance;
             service_node = right_distance < lower_distance ? right_node : lower_node;
         }
-        if (add_transition_job(simulation, world, BUILDING_CLOCK_JOB_CLEAR_DEBRIS, subject, BUILDING_CLOCK_INVALID_ID, service_node, 50U, BUILDING_CLOCK_WORKER_CAN_CLEAR,
+        if (debris->status == BUILDING_CLOCK_DEBRIS_RECOVERABLE) {
+            int32_t nearest = INT32_MAX;
+            for (uint8_t node = 0U; node < world->navigation.node_count; node++) {
+                const building_clock_point_t p = world->navigation.nodes[node].position;
+                int dy = p.y - debris->position.y;
+                dy = dy < 0 ? -dy : dy;
+                int dx = p.x - debris->position.x;
+                dx = dx < 0 ? -dx : dx;
+                if (dy <= 4 && dx < nearest && same_platform(world, p, (building_clock_point_t){debris->position.x, p.y})) {
+                    service_node = node;
+                    nearest = dx;
+                }
+            }
+        }
+        if (add_transition_job(simulation, world, BUILDING_CLOCK_JOB_CLEAR_DEBRIS, subject, service_node, world->debris_bays[bay_id].access_node_id, 50U, BUILDING_CLOCK_WORKER_CAN_CLEAR,
                                simulation->pacing.debris_clear_action_ms, NULL) != BUILDING_CLOCK_SIMULATION_OK) {
             simulation->metrics.transition_capacity_delays++;
             return;
@@ -2754,7 +3023,8 @@ static void schedule_debris_clearing(building_clock_simulation_t* simulation, co
 
 static bool digit_has_debris(const building_clock_simulation_t* simulation, uint8_t digit_id) {
     for (uint8_t debris_id = 0U; debris_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES; debris_id++) {
-        if (simulation->state.debris[debris_id].status != BUILDING_CLOCK_DEBRIS_UNUSED && simulation->state.debris[debris_id].source_digit_id == digit_id) {
+        if (simulation->state.debris[debris_id].status != BUILDING_CLOCK_DEBRIS_UNUSED && simulation->state.debris[debris_id].status != BUILDING_CLOCK_DEBRIS_CARRIED &&
+            simulation->state.debris[debris_id].source_digit_id == digit_id) {
             return true;
         }
     }
@@ -2918,6 +3188,11 @@ static void advance_digit_lifecycles(building_clock_simulation_t* simulation, co
         if (digit->lifecycle >= BUILDING_CLOCK_DIGIT_CLEARING && digit->lifecycle <= BUILDING_CLOCK_DIGIT_COMPLETE) {
             digit->reconstruction_elapsed_ms += elapsed_ms;
         }
+        /* Bag recovery can outlive foundation clearance or an interrupted job.
+         * Never orphan a put-down sack just because its digit has advanced. */
+        if (digit->lifecycle == BUILDING_CLOCK_DIGIT_STABLE || digit->lifecycle >= BUILDING_CLOCK_DIGIT_CLEARING) {
+            schedule_debris_clearing(simulation, world, digit_id);
+        }
         /* Milestones share one clock. Work that runs late must not incur a new
          * artificial ten-second hold at every subsequent lifecycle label. */
         const uint32_t foundation_at = simulation->pacing.clearing_minimum_ms + simulation->pacing.foundation_minimum_ms;
@@ -2981,7 +3256,6 @@ static void advance_digit_lifecycles(building_clock_simulation_t* simulation, co
             break;
         case BUILDING_CLOCK_DIGIT_CLEARING:
             digit->lifecycle_elapsed_ms += elapsed_ms;
-            schedule_debris_clearing(simulation, world, digit_id);
             const bool access_ready = ensure_digit_temporary_access(simulation, world, digit_id);
             if (!digit_has_debris(simulation, digit_id) && access_ready && digit->lifecycle_elapsed_ms >= simulation->pacing.clearing_minimum_ms) {
                 digit->lifecycle = BUILDING_CLOCK_DIGIT_FOUNDATION;
@@ -3034,6 +3308,65 @@ static void advance_digit_lifecycles(building_clock_simulation_t* simulation, co
     if (!building_clock_simulation_transition_active(simulation)) {
         simulation->state.current_hour = simulation->state.target_hour;
         simulation->state.current_minute = simulation->state.target_minute;
+    }
+}
+
+static void schedule_site_recovery(building_clock_simulation_t* simulation, const building_clock_world_t* world) {
+    if (building_clock_simulation_transition_active(simulation)) {
+        simulation->next_recovery_dispatch_ms = simulation->state.elapsed_ms + 1500U;
+        return;
+    }
+    if (!simulation->state.clock_initialized || simulation->state.elapsed_ms < simulation->next_recovery_dispatch_ms || world->depot_count == 0U) {
+        return;
+    }
+    simulation->next_recovery_dispatch_ms = simulation->state.elapsed_ms + 1500U;
+    for (uint8_t id = 0U; id < simulation->state.cart_count; id++) {
+        const building_clock_cart_t* cart = &simulation->state.carts[id];
+        const building_clock_cart_route_t* route = &world->cart_routes[id];
+        if (cart->operator_worker_id != BUILDING_CLOCK_INVALID_ID || route->stop_count < 2U) {
+            continue;
+        }
+        bool reserved = false;
+        for (uint8_t job_id = 0U; job_id < BUILDING_CLOCK_MAX_JOBS; job_id++) {
+            const building_clock_job_t* job = &simulation->state.jobs[job_id];
+            reserved |= job_is_live(job) && job->kind == BUILDING_CLOCK_JOB_PUSH_CART && job->subject.object_id == id;
+        }
+        if (reserved) {
+            continue;
+        }
+        const building_clock_point_t position = cart_position(world, id, cart);
+        bool cargo_available = cart->rubble_sacks > 0U;
+        for (uint8_t bay = 0U; bay < world->debris_bay_count; bay++) {
+            const building_clock_debris_bay_t* b = &world->debris_bays[bay];
+            if (simulation->state.recovery_sacks[bay] > 0U && b->access_node_id < world->navigation.node_count) {
+                building_clock_point_t p = world->navigation.nodes[b->access_node_id].position;
+                p.x = building_clock_rect_center(b->area).x;
+                cargo_available |= p.x >= route->stops[0].position.x && p.x <= route->stops[route->stop_count - 1U].position.x && same_platform(world, position, p);
+            }
+        }
+        if (!cargo_available) {
+            continue;
+        }
+        uint8_t target = BUILDING_CLOCK_INVALID_ID;
+        int nearest = INT32_MAX;
+        for (uint8_t stop = 0U; stop < route->stop_count; stop++) {
+            const int dx = route->stops[stop].position.x - position.x;
+            const int distance = dx < 0 ? -dx : dx;
+            if (route->stops[stop].nav_node_id < world->navigation.node_count && distance < nearest) {
+                nearest = distance;
+                target = route->stops[stop].nav_node_id;
+            }
+        }
+        const building_clock_job_subject_t subject = {
+            .kind = BUILDING_CLOCK_JOB_SUBJECT_CART,
+            .object_id = id,
+            .digit_id = BUILDING_CLOCK_INVALID_ID,
+            .section_id = BUILDING_CLOCK_INVALID_ID,
+        };
+        /* At most one new background job per dispatch; real construction
+         * retains every worker while it needs them. */
+        (void)add_transition_job(simulation, world, BUILDING_CLOCK_JOB_PUSH_CART, subject, BUILDING_CLOCK_INVALID_ID, target, 1U, BUILDING_CLOCK_WORKER_CAN_CLEAR, 0U, NULL);
+        return;
     }
 }
 
@@ -3154,7 +3487,25 @@ static void enforce_active_hazards(building_clock_simulation_t* simulation, cons
 static void prepare_workers_for_quantum(building_clock_simulation_t* simulation, const building_clock_world_t* world) {
     for (uint8_t worker_id = 0U; worker_id < simulation->state.worker_count; worker_id++) {
         building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+        if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && simulation->state.jobs[worker->current_job_id].kind == BUILDING_CLOCK_JOB_PUSH_CART) {
+            for (uint8_t job_id = 0U; job_id < BUILDING_CLOCK_MAX_JOBS; job_id++) {
+                const building_clock_job_t* job = &simulation->state.jobs[job_id];
+                if (job->priority > 1U && worker_can_do_job(worker, job, simulation->state.elapsed_ms)) {
+                    worker->recovery_recalled = true;
+                }
+            }
+        }
         if (worker->current_job_id == BUILDING_CLOCK_INVALID_ID && worker->rope.phase == BUILDING_CLOCK_ROPE_NONE && worker->route_purpose == BUILDING_CLOCK_WORKER_ROUTE_NONE) {
+            bool transferring = false;
+            for (uint8_t id = 0U; id < simulation->state.cart_count; id++) {
+                transferring |= simulation->state.carts[id].operator_worker_id == worker_id && worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER &&
+                                simulation->state.carts[id].transfer_elapsed_ms > 0U;
+            }
+            /* Finish the sack already on the hand line before accepting a
+             * different job. Dispatch can preempt between sacks (<900 ms). */
+            if (transferring) {
+                continue;
+            }
             if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WALK_OUT || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_RETURN) {
                 continue;
             }
@@ -3274,6 +3625,27 @@ static void update_optional_rope_tenders(building_clock_simulation_t* simulation
     }
 }
 
+static void update_platform_passing(building_clock_simulation_t* simulation, const building_clock_world_t* world) {
+    for (uint8_t id = 0U; id < simulation->state.worker_count; id++) {
+        simulation->state.workers[id].passing_side = 0;
+    }
+    for (uint8_t id = 0U; id < simulation->state.worker_count; id++) {
+        building_clock_worker_t* a = &simulation->state.workers[id];
+        if (a->state != BUILDING_CLOCK_WORKER_WALK || a->rope.phase != BUILDING_CLOCK_ROPE_NONE || building_clock_navigation_node_capacity(world, a->current_node_id) <= 1U) {
+            continue;
+        }
+        for (uint8_t other = (uint8_t)(id + 1U); other < simulation->state.worker_count; other++) {
+            building_clock_worker_t* b = &simulation->state.workers[other];
+            const int dx = a->position.x - b->position.x;
+            if (b->state == BUILDING_CLOCK_WORKER_WALK && b->rope.phase == BUILDING_CLOCK_ROPE_NONE && a->facing != b->facing && dx > -20 && dx < 20 &&
+                building_clock_navigation_node_capacity(world, b->current_node_id) > 1U && same_platform(world, a->position, b->position)) {
+                a->passing_side = a->facing == BUILDING_CLOCK_FACING_RIGHT ? 1 : -1;
+                b->passing_side = (int8_t)-a->passing_side;
+            }
+        }
+    }
+}
+
 building_clock_simulation_step_result_t building_clock_simulation_step(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint32_t elapsed_ms) {
     building_clock_simulation_step_result_t result = {
         .status = BUILDING_CLOCK_SIMULATION_OK,
@@ -3315,12 +3687,14 @@ building_clock_simulation_step_result_t building_clock_simulation_step(building_
         advance_falling_sections(simulation, world, quantum_ms);
         advance_digit_lifecycles(simulation, world, quantum_ms);
         enforce_active_hazards(simulation, world);
+        schedule_site_recovery(simulation, world);
         prepare_workers_for_quantum(simulation, world);
         admit_relief_worker(simulation, world);
         for (uint8_t worker_id = 0U; worker_id < simulation->state.worker_count; worker_id++) {
             advance_worker(simulation, world, worker_id, quantum_ms);
         }
         update_optional_rope_tenders(simulation, world);
+        update_platform_passing(simulation, world);
         update_peak_active_workers(simulation);
         remaining_ms -= quantum_ms;
     }

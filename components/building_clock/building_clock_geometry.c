@@ -164,3 +164,96 @@ uint8_t building_clock_section_visible_bricks(building_clock_rect_t envelope, ui
     }
     return count;
 }
+
+uint8_t building_clock_falling_bricks(building_clock_rect_t envelope, building_clock_rect_t catch_area, const building_clock_falling_section_t* section,
+                                      building_clock_falling_brick_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION]) {
+    if (section == NULL || bricks == NULL || section->duration_ms == 0U || section->masonry_progress_per_mille > 1000U) {
+        return 0U;
+    }
+    building_clock_rect_t original[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+    const uint8_t total = building_clock_section_visible_bricks(envelope, section->source_numeral, section->section_kind, original);
+    const uint8_t count = (uint8_t)(((uint32_t)total * section->masonry_progress_per_mille + 999U) / 1000U);
+    if (count == 0U || catch_area.width < original[0].width || catch_area.height < original[0].height) {
+        return 0U;
+    }
+
+    const building_clock_point_t origin = building_clock_rect_center(original[section->failure_brick_id % count]);
+    uint32_t distances[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+    uint32_t maximum_distance = 0U;
+    int32_t maximum_drop = 0;
+    for (uint8_t brick = 0U; brick < count; brick++) {
+        const building_clock_point_t start = building_clock_rect_center(original[brick]);
+        const int32_t dx = (int32_t)start.x - origin.x;
+        const int32_t dy = (int32_t)start.y - origin.y;
+        /* Course/column distance gives neighboring bricks neighboring failure
+         * times, independent of the construction-order array indices. */
+        distances[brick] = (uint32_t)(dx < 0 ? -dx : dx) + (uint32_t)(dy < 0 ? -dy : dy);
+        if (distances[brick] > maximum_distance) {
+            maximum_distance = distances[brick];
+        }
+        int32_t x = start.x + (int32_t)section->landing_position.x - section->start_position.x;
+        const int32_t minimum_x = catch_area.x + (int32_t)(original[brick].width / 2U);
+        const int32_t maximum_x = catch_area.x + (int32_t)catch_area.width - (int32_t)original[brick].width + (int32_t)(original[brick].width / 2U);
+        if (x < minimum_x) {
+            x = minimum_x;
+        } else if (x > maximum_x) {
+            x = maximum_x;
+        }
+        const uint32_t pile_depth = catch_area.height - original[brick].height;
+        const uint32_t course_offset = (uint32_t)(brick % 3U) * 2U;
+        const int32_t y =
+            catch_area.y + (int32_t)catch_area.height - (int32_t)original[brick].height + (int32_t)(original[brick].height / 2U) - (int32_t)(course_offset < pile_depth ? course_offset : pile_depth);
+        bricks[brick] = (building_clock_falling_brick_t){
+            .bounds = original[brick],
+            .landing_position = {.x = (int16_t)x, .y = (int16_t)y},
+        };
+        if (y - start.y > maximum_drop) {
+            maximum_drop = y - start.y;
+        }
+    }
+
+    /* Spread consumes only the first third of the existing fall window. The
+     * remaining window gives all bricks in this group the same acceleration;
+     * lower bricks hit the ground earlier. Collapse pacing is unchanged. */
+    const uint32_t spread_ms = maximum_distance > 0U ? section->duration_ms / 3U : 0U;
+    const uint32_t fall_ms = section->duration_ms - spread_ms;
+    for (uint8_t brick = 0U; brick < count; brick++) {
+        building_clock_falling_brick_t* state = &bricks[brick];
+        const building_clock_point_t start = building_clock_rect_center(original[brick]);
+        state->detach_delay_ms = maximum_distance > 0U ? (uint32_t)(((uint64_t)distances[brick] * spread_ms) / maximum_distance) : 0U;
+        state->detached = section->elapsed_ms >= state->detach_delay_ms;
+        const uint32_t elapsed = state->detached ? section->elapsed_ms - state->detach_delay_ms : 0U;
+        const uint32_t progress = elapsed < fall_ms ? (uint32_t)(((uint64_t)elapsed * 1000U) / fall_ms) : 1000U;
+        const int32_t drop = (int32_t)(((uint64_t)(uint32_t)maximum_drop * progress * progress) / 1000000U);
+        const int32_t distance = (int32_t)state->landing_position.y - start.y;
+        state->settled = state->detached && drop >= distance;
+        state->progress_per_mille = distance > 0 ? (uint16_t)(drop < distance ? (drop * 1000) / distance : 1000) : 1000U;
+        state->bounds.x = (int16_t)(original[brick].x + ((int32_t)state->landing_position.x - start.x) * state->progress_per_mille / 1000);
+        state->bounds.y = (int16_t)(original[brick].y + (drop < distance ? drop : distance));
+    }
+    return count;
+}
+
+uint8_t building_clock_debris_bricks(building_clock_rect_t envelope, building_clock_rect_t catch_area, const building_clock_debris_t* debris,
+                                     building_clock_rect_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION]) {
+    if (debris == NULL || bricks == NULL) {
+        return 0U;
+    }
+    const building_clock_point_t start = building_clock_rect_center(building_clock_section_bounds(envelope, debris->section_kind));
+    const building_clock_falling_section_t pile = {
+        .section_kind = debris->section_kind,
+        .start_position = start,
+        .landing_position = {.x = (int16_t)(start.x + debris->horizontal_drift), .y = debris->position.y},
+        .source_numeral = debris->source_numeral,
+        .failure_brick_id = debris->failure_brick_id,
+        .masonry_progress_per_mille = debris->masonry_progress_per_mille,
+        .elapsed_ms = 1U,
+        .duration_ms = 1U,
+    };
+    building_clock_falling_brick_t landed[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+    const uint8_t count = building_clock_falling_bricks(envelope, catch_area, &pile, landed);
+    for (uint8_t brick = 0U; brick < count; brick++) {
+        bricks[brick] = landed[brick].bounds;
+    }
+    return count;
+}

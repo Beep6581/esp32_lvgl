@@ -206,6 +206,26 @@ static void test_temporary_erection_and_site_events(void) {
     expect_true(landed && seated && cleared, "shared simulation emits actual landing, clearing and brick-placement milestones");
 }
 
+static void test_recovery_and_passing_snapshot(void) {
+    building_clock_world_t world;
+    building_clock_simulation_t simulation;
+    make_scene(&world, &simulation);
+    simulation.state.workers[0].passing_side = 1;
+    simulation.state.workers[0].carried_debris_id = 0U;
+    simulation.state.debris[0] = (building_clock_debris_t){.status = BUILDING_CLOCK_DEBRIS_CARRIED, .reserved_worker_id = 0U};
+    simulation.state.used_debris_slot_count = 1U;
+    simulation.state.recovery_sacks[0] = 2U;
+    simulation.state.carts[0].rubble_sacks = 3U;
+    const building_clock_simulation_t original = simulation;
+    building_clock_scene_snapshot_t snapshot;
+    expect_true(building_clock_scene_capture(&world, &simulation, &snapshot) == BUILDING_CLOCK_SCENE_OK, "recovery scene capture succeeds");
+    expect_true(snapshot.state.workers[0].carried_debris_id == 0U && snapshot.state.debris[0].status == BUILDING_CLOCK_DEBRIS_CARRIED && snapshot.state.recovery_sacks[0] == 2U &&
+                    snapshot.state.carts[0].rubble_sacks == 3U,
+                "snapshot preserves real carried, stored and trolley cargo");
+    expect_true(snapshot.worker_presentation_positions[0].y == simulation.state.workers[0].position.y + 3, "passing depth is separate from graph-surface coordinates");
+    expect_true(memcmp(&simulation, &original, sizeof(simulation)) == 0, "recovery and passing extraction never mutates simulation");
+}
+
 int main(void) {
     test_capture_is_deterministic_and_read_only();
     test_broad_area_worker_spacing();
@@ -213,6 +233,7 @@ int main(void) {
     test_collapse_scene_contents();
     test_invalid_counts_are_rejected();
     test_temporary_erection_and_site_events();
+    test_recovery_and_passing_snapshot();
 
     if (failures != 0U) {
         fprintf(stderr, "%u Building Clock scene test(s) failed\n", failures);

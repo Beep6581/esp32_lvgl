@@ -486,6 +486,11 @@ typedef enum {
     BUILDING_CLOCK_PLATFORM_RETURN,
     BUILDING_CLOCK_PLATFORM_CART_APPROACH,
     BUILDING_CLOCK_PLATFORM_CART_PUSH,
+    BUILDING_CLOCK_PLATFORM_CART_TRANSFER,
+    BUILDING_CLOCK_PLATFORM_WORK_APPROACH,
+    BUILDING_CLOCK_PLATFORM_WORK,
+    BUILDING_CLOCK_PLATFORM_PICKUP_APPROACH,
+    BUILDING_CLOCK_PLATFORM_PICKUP,
 } building_clock_platform_activity_phase_t;
 
 typedef struct {
@@ -496,6 +501,11 @@ typedef struct {
     building_clock_facing_t facing;
     uint8_t current_job_id;
     uint8_t carried_load_id;
+    uint8_t carried_debris_id;
+    /* Broad-platform depth lane during a brief face-to-face passing manoeuvre.
+     * Zero normally; ladders and suspended ropes never have passing lanes. */
+    int8_t passing_side;
+    bool recovery_recalled;
     /* Optional local assistance, never a job or traversal prerequisite. */
     uint8_t tended_builder_id;
     uint8_t current_node_id;
@@ -514,7 +524,7 @@ typedef struct {
     uint32_t state_elapsed_ms;
     uint32_t behavior_timer_ms;
     building_clock_rope_t rope;
-    /* A local break or empty-trolley task on the current broad
+    /* A local break, material handoff or trolley task on the current broad
      * platform. Return physically to the graph anchor before routing again. */
     building_clock_point_t platform_activity_position;
     uint8_t platform_activity_phase; /* building_clock_platform_activity_phase_t */
@@ -674,6 +684,12 @@ typedef struct {
     uint8_t source_section_id;
     uint8_t debris_bay_id;
     uint8_t reserved_worker_id;
+    /* Retain the landed brick pile until a worker bags this section's rubble. */
+    building_clock_section_kind_t section_kind;
+    uint8_t source_numeral;
+    uint8_t failure_brick_id;
+    uint16_t masonry_progress_per_mille;
+    int8_t horizontal_drift;
 } building_clock_debris_t;
 
 typedef struct {
@@ -681,11 +697,11 @@ typedef struct {
     building_clock_point_t start_position;
     building_clock_point_t landing_position;
     building_clock_point_t position;
-    int16_t angle_degrees;
-    int16_t angular_velocity_degrees_per_second;
     uint16_t progress_per_mille;
     uint8_t source_digit_id;
     uint8_t source_section_id;
+    uint8_t source_numeral;
+    uint8_t failure_brick_id;
     /* Amount of masonry present when an unfinished section failed. */
     uint16_t masonry_progress_per_mille;
     uint8_t target_debris_bay_id;
@@ -709,6 +725,12 @@ typedef struct {
     uint16_t route_progress_per_mille;
     uint16_t load_mask;
     uint8_t operator_worker_id;
+    /* Recovery sacks, separate from structural-section load slots. */
+    uint8_t rubble_sacks;
+    uint8_t pickup_bay_id;
+    int8_t push_direction;
+    int16_t destination_x;
+    uint16_t transfer_elapsed_ms;
 } building_clock_cart_t;
 
 typedef enum {
@@ -826,6 +848,8 @@ typedef struct {
 
     building_clock_material_inventory_t depot_inventory[BUILDING_CLOCK_MAX_MATERIAL_DEPOTS];
     building_clock_material_inventory_t staging_inventory[BUILDING_CLOCK_MAX_STAGING_AREAS];
+    /* Bagged rubble at real service bays, awaiting trolley recovery. */
+    uint16_t recovery_sacks[BUILDING_CLOCK_MAX_DEBRIS_BAYS];
     uint8_t used_load_slot_count;
     building_clock_load_t loads[BUILDING_CLOCK_MAX_LOADS];
     uint8_t used_debris_slot_count;

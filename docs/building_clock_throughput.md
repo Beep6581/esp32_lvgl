@@ -1,12 +1,97 @@
 # Builders throughput measurements
 
-Current implementation: `035220d` on `buildclock`; reviewed 2026-11-15.
+Current implementation: uncommitted site-interaction pass after `80e70cb` on
+`buildclock`; reviewed 2026-11-15.
 This file owns measured performance, diagnostic reproduction and remaining
 bottlenecks. The [specification](building_clock_simulation.md) owns architecture
 and planned behavior; the [visual overview](building_clock_visual_overhaul.md)
 owns presentation status. Older numbers below are explicitly historical.
 
-## Current benchmark: independent ropes and local logistics
+## Current check: individual-brick collapse
+
+The same 480-run benchmark was rerun after replacing rigid section rotation
+with spatially spreading individual-brick falls. Adaptive six plus relief:
+
+| Scenario | Mean seconds | p90 | Maximum | <=60 seconds |
+| --- | ---: | ---: | ---: | ---: |
+| 7 -> 8 | 52.60 | 58.95 | 63.50 | 29/32 |
+| 1 -> 2 | 52.47 | 60.30 | 63.35 | 28/32 |
+| 8 -> 9 | 50.11 | 57.30 | 61.60 | 31/32 |
+| Rollover | 98.93 | 108.60 | 114.45 | 0/32 |
+| Midnight | 145.71 | 162.45 | 172.70 | 0/32 |
+
+Single-digit completion is **88/96 (91.7%)**, versus 89/96 (92.7%) immediately
+before this refinement. All 480 runs complete without timeout or evacuation
+failure. Worker speeds, action times and fall-duration limits are unchanged.
+Choosing a failure-origin brick replaces the old rotation random draws, so
+per-seed collapse durations and later contention can differ from the prior
+build. Replay within the new build remains deterministic.
+
+Context is 10,792 bytes and mutable state 9,920: 384 additional bytes retain
+the masonry recipe in bounded rubble records, so settlement keeps the same
+bricks until bagging. Workers remain 304 bytes. No per-brick runtime slots or
+heap allocations were added. Results: `build/builders_brick_collapse/benchmark.txt`.
+
+## Previous benchmark: physical handling and site recovery
+
+The same 32 roots, five scenarios and three crew policies were rerun before
+editing and after the changes (480 runs each). Generator version 5, capacities,
+worker speeds, existing construction action durations and pacing are unchanged.
+Times below include inspection and retrieval through fully STABLE.
+
+| Adaptive six plus relief | Before mean | Site-pass mean | Site-pass p90 | Site-pass max | <=60 s before/site pass |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 7 -> 8 | 51.10 | 52.33 | 58.25 | 62.50 | 30/32 / 30/32 |
+| 1 -> 2 | 47.14 | 52.54 | 60.25 | 63.40 | 32/32 / 28/32 |
+| 8 -> 9 | 50.01 | 50.09 | 57.25 | 61.60 | 31/32 / 31/32 |
+| Rollover | 92.58 | 99.38 | 111.40 | 114.35 | 0/32 / 0/32 |
+| Midnight | 134.02 | 145.18 | 157.85 | 167.15 | 0/32 / 0/32 |
+
+Single-digit completion is **89/96 (92.7%)**, versus 93/96 (96.9%). The 90%
+aggregate target is retained. All 480 runs complete without timeouts or
+evacuation failures. This is a visual/physical-coherence tradeoff, not a claim
+of throughput improvement: clearing now includes actual bagging and carrying,
+unpacking uses separate platform work spots, and builders walk to real kits.
+A second kit must be within reach, not just share a graph node. Builders rig
+directly from a compatible roof pickup spot instead of retracing to its anchor.
+The `1 -> 2` scenario alone is below 90% (28/32, 87.5%); the aggregate must
+not be mistaken for a per-transition guarantee.
+
+At the reference root the single-digit transition is 58.25 s (before 57.35).
+Foundation clearance is 14.85 s. The first carried sack appears at 12.20 s,
+the first trolley loading completes at 19.40 s, unloading begins at 23.00 s,
+and recovered inventory first increases at 23.90 s. No material is credited
+to the depot while it is still in a worker's hands, a service bay or a trolley.
+
+Useful contributors average 3.30/2.48/3.82 in single-digit scenarios and
+5.65/5.86 in rollover/midnight. These now include actual recovery work;
+the sampler reports it separately, and still excludes optional winch tending.
+This is not an increase in simultaneous masonry builders.
+
+The new site tests run 24 generated single/rollover/midnight sequences for
+240 simulated seconds each, plus cancellation and solo-builder recall cases.
+They account for all 312 rubble records: 289 recovered through 105 trolley
+deliveries, 21 stored in service bays, two aboard carts at the sampling endpoint.
+All sampled steps conserve material and reproduce the unsampled replay.
+Stored sacks without compatible flat trolley access are deliberately retained.
+Stable-clock jobs fetch carts via normal navigation; useful work recalls a
+worker after their current edge/ladder or single sack transfer, without snapping.
+
+Artifacts: `build/builders_site/before/benchmark.txt`, `benchmark-final.txt`,
+`final-single-{workers,sections,jobs,site}.csv`, and equivalent rollover traces.
+The new site CSV records cargo, operator, transfer progress and bay inventories.
+Frame strips and complete exported sequences are described in the visual report.
+Context is 10,408 bytes (was 10,344), state 9,536 (was 9,488), worker 304
+(was 300). No heap allocation or entity-capacity increase was added.
+
+Verification: 14 host tests pass normally and under AddressSanitizer/UBSan;
+the SDL character test passes. Full ESP-IDF build, strict runtime/new-test
+compilation, clang-format, ASCII-source and `git diff --check` pass. Display
+configuration is unchanged; no flash/hardware behavior is claimed. Recovery
+credits loose masonry; converting it back into new prefab kits is still future
+work, not a closed recycling loop hidden in the current logistics.
+
+## Previous benchmark: independent ropes and local logistics
 
 Implemented in `035220d`, refining `4ccb755`. The committed baseline
 was rebuilt and rerun before editing. Same 32 deterministic roots, generator
@@ -139,7 +224,8 @@ Detailed former traces and reports remain recoverable from Git history.
 | October 19 paired supplies | 4 | 14/96 (14.6%) | Paired kits and connected rope work |
 | November 14 refinement, included in `4ccb755` | 5 | 83/96 (86.5%) | Spaced ladders, route-time dispatch and connected roofs |
 | Visual overhaul `4ccb755` | 5 | 78/96 (81.3%) | Character/site improvements with physical winch setup |
-| Independent ropes `035220d` | 5 | 93/96 (96.9%) | Current benchmark and behavior above |
+| Independent ropes `035220d` | 5 | 93/96 (96.9%) | Previous benchmark and behavior above |
+| Site recovery (worktree) | 5 | 89/96 (92.7%) | Current physical-handling tradeoff above |
 
 The version-4 to version-5 comparison changed world grammar as well as
 scheduling, so it was not a controlled scheduling-only A/B. The same root may
@@ -201,7 +287,7 @@ Remaining questions for future tasks, not fixes authorized by this handoff:
 - Real transport, opposing ladder traffic, rope-lane contention and dependent
   final sections still determine outliers. Early first-brick time can regress
   even while full completion improves; see the reference timeline above.
-- Single-digit useful contributions average below three across the full
+- Single-digit useful contributions remain limited across the full
   lifecycle. There are still spectators and temporary cache handoff clusters,
   despite the much lower roof occupancy in the measured reference seed.
 - Broad-area crews can pass through one another; there is no continuous crowd
@@ -209,8 +295,9 @@ Remaining questions for future tasks, not fixes authorized by this handoff:
 - All permanent platforms must be reachable, but reachability is not proof of
   useful visits. Version-4 zero-visit platform IDs are not current-world
   evidence; new purpose/visit measurements would be needed before redesign.
-- Cranes/lifts are parked; trolley activity is empty shunting, not material
-  logistics. Rubble recovery lacks a full visible carry-to-bin lifecycle.
+- Cranes/lifts remain parked. Trolleys now recover rubble; they do not yet
+  deliver structural kits or carry workers. Bays without a compatible route
+  retain stored cargo. Broad-platform passing is not general collision physics.
 - This batch meets the single-digit target, not the multi-digit one-minute
   artistic goal. Keep safe unfinished rollover rather than forcing completion.
 - ESP32 runtime cost and final renderer performance remain unmeasured on

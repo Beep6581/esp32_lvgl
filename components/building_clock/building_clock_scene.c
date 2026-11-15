@@ -43,6 +43,7 @@ static void set_worker_presentation_positions(building_clock_scene_snapshot_t* s
         const building_clock_worker_t* worker = &snapshot->state.workers[worker_id];
         building_clock_point_t* position = &snapshot->worker_presentation_positions[worker_id];
         *position = worker->position;
+        position->y = (int16_t)(position->y + worker->passing_side * 3);
         if (!worker_can_use_presentation_spacing(world, worker)) {
             continue;
         }

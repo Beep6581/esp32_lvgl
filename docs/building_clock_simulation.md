@@ -1,7 +1,8 @@
 # Building Clock Simulation Specification
 
 Status: approved design direction plus current implementation notes.
-Reviewed against `035220d` on `buildclock`, 2026-11-15.
+Reviewed against the uncommitted site-interaction pass after `80e70cb` on
+`buildclock`, 2026-11-15.
 
 ## Current implementation and ChatGPT handoff
 
@@ -14,18 +15,21 @@ Requirements expressed as future goals are not claims of implemented behavior.
   reservations and spaced permanent-ladder following, workers/jobs/material
   kits, complete collapse/rebuild, safe unfinished rollover, semantic snapshots
   and the SDL2 viewer. Builders manage their own ropes; tending is optional.
-- The 32-root single-digit target is met in the measured batch: 93/96 (96.9%)
-  fully stable within 60 seconds with either fixed six or six plus relief.
+- The 32-root single-digit target is met in the measured batch: 88/96 (91.7%)
+  fully stable within 60 seconds with six plus relief. Before individual-brick
+  collapse it was 89/96; before site recovery, 93/96 (96.9%).
   This is not a guarantee for arbitrary worlds or multi-digit changes.
 - Functional equipment: self-managed rope clamps/harnesses, optional idle
-  winching, installed temporary access, and off-duty empty-trolley shunting.
-  Cranes/lifts remain parked. Material-carrying carts and worker rides are not
-  implemented; corresponding layout/state types are preparation for later work.
+  winching, installed temporary access and worker-operated rubble trolleys.
+  Clearing bags rubble, carries it to real bays, then loaded trolleys deliver
+  sacks to recovery chutes. Stable crews fetch equipment through real routes.
+  Cranes/lifts remain parked; structural-kit cart delivery and worker rides
+  remain deferred.
 - Firmware compilation is verified, but Building Clock application-mode wiring,
   the ESP32 renderer, live calendar updates and a minute-ahead scheduler remain
   deferred. The viewer supplies explicit HH:MM targets and a fixed demo date.
 - The latest accepted presentation keeps short/wide masonry digits and the C64
-  workers, uses a dark purple crane, and colors weekday/month orange and
+  workers, uses a muted blue-purple crane, and colors weekday/month orange and
   day/year steel blue. `ref/mockup4.png` remains the aesthetic reference.
 - Preserve deterministic replay, fixed storage, actual generated routes, safe
   evacuation, and the existing display configuration. Next work requires its
@@ -402,16 +406,18 @@ use actual spaced traversal positions. This
 keeps broad-area crews individually legible without changing logical occupancy
 or adding continuous collision physics.
 
-Broad platforms also support bounded local activities: quiet breaks and
-off-duty empty-trolley shunting along an existing flat cart
-route. These require an actual continuous platform, not an invented navigation
+Broad platforms also support bounded local activities: quiet breaks, separate
+unpacking/pickup spots and loaded recovery trolleys along existing flat cart
+routes. These require an actual continuous platform, not an invented navigation
 connection. Workers retain broad-area anchor ownership and physically return
 before routing to new work. Optional rope helpers do not create a separate
 excursion or displace crew: they assist only from an already nearby position.
 Narrow nodes/ledges and ladder traversal keep their normal reservations.
 Local return travel contributes to evacuation lead time, and collapse still
-waits for actual safety. A preempted trolley retains its intermediate progress;
-this initial shunting task does not provide material delivery or worker rides.
+waits for actual safety. A preempted trolley retains its intermediate progress
+and cargo. Recovery workers finish the current edge/ladder or individual sack
+transfer before yielding. Brief broad-platform passing uses directional depth
+lanes and a shoulder-turn pose; it is not continuous collision avoidance.
 
 The semantic state includes a fixed sixteen-entry history of brick seating,
 debris landing/clearing and digit completion. These timestamped world events
@@ -729,28 +735,31 @@ lift is immediately available. Transition cancellation clears section and
 temporary-structure job-owner references before a stable job slot can be
 recycled.
 
-Collapse operates at structural-section scale:
+Collapse keeps bounded structural-section groups for scheduling and cleanup,
+but the visible masonry falls as individual bricks:
 
 - supports fail first;
-- upper sections begin falling;
-- a bounded number of loose fragments separates from them;
-- sections bounce or rotate only enough to communicate weight;
+- one brick in each failed section detaches first;
+- failure spreads outward to neighboring bricks;
+- bricks fall individually under coarse integer gravity, without rigid section rotation;
 - pieces settle into a local catch area below the failed masonry; and
 - settled debris becomes clearing jobs.
 
 The initial collapse implementation fails foundation and lower supports first,
 then middle, upper, and top sections. Each active falling-section record stores
-its source digit/section, start position, preselected landing position, current
-coarse position, normalized progress, rotation, elapsed time, duration, and
-associated service debris bay. The landing position is chosen once when the
-fall begins from a small deterministic pile grid in the digit's local catch
-area. Horizontal drift is limited to six design pixels while vertical progress
-uses a bounded integer acceleration curve. Settling converts the section to one
-semantic debris record at that same local position and marks the outgoing
-structural section as debris. The debris-bay association identifies where a
-worker will later transfer recovered rubble; falling pieces do not steer toward
-that remote bay. No renderer physics or individual-brick simulation is part of
-this state.
+its source digit/section/numeral, installed masonry prefix, failure-origin brick,
+start and pile reference positions, elapsed time, duration and service debris bay.
+The renderer-neutral `building_clock_falling_bricks()` helper derives up to 24
+individual brick trajectories without allocating per-brick runtime entities or
+consuming random values. Spatial distance from the initial failure determines
+detach delay in the first third of the existing fall window. Each brick then
+accelerates downward and settles within the digit's catch geometry. Drift remains
+limited and neighboring bricks remain seated until failure reaches them.
+Settling retains one semantic debris record per section, including the masonry
+recipe. `building_clock_debris_bricks()` reproduces exactly those final brick
+positions until a worker bags the pile. The debris-bay association identifies
+later worker transport, not a remote destination for falling masonry. Collapse
+timing limits and entity capacities are unchanged; whole-section rotation is gone.
 
 Workers inside a hazard volume immediately suspend non-safety work and route to
 a safe node. Nearby workers may stop and watch after reaching safety.
@@ -790,8 +799,13 @@ Typical flow is:
 5. Workers or machinery move that load to the digit.
 6. Placement and securing jobs complete the section.
 
-The current reconstruction clears semantic debris into recoverable depot
-inventory; a full visible carry-to-bin/recovery sequence is still deferred.
+Current clearing walks to a platform work spot, bags rubble and carries the
+same debris record to its generated service bay. Bagged cargo no longer blocks
+foundation clearance, but its job and ownership persist until delivery. A
+cancelled carrier puts the sack down for reassignment. Bay stocks and trolley
+cargo remain explicit bounded state; depot recovery inventory increases only
+at the trolley route's depot-side recovery chute. Bays without compatible
+trolley access retain their stock rather than silently crediting inventory.
 Small section-labeled brick kits originate at the actual depot, whose stock
 can be replenished without strict conservation. Couriers carry them to staging
 or a reachable roof cache and unpack them. Builders pick up those physical kits
@@ -829,14 +843,18 @@ plans must always have a validated alternative for required work.
 
 Implemented now: builders operate their own ropes and travelling clamps;
 otherwise idle nearby workers may assist only during actual ascent/descent.
-Off-duty workers can physically push an empty trolley on its generated flat
-route, with preemption retaining the trolley's actual progress. This does not
-yet move material or carry workers, and starts only outside digit transitions.
+Workers collect up to four actual rubble sacks, hand-haul them out of service
+bays, push the loaded trolley at unchanged walk speed and unload one sack at
+a time (900 ms per transfer). Empty trips occur only to collect known cargo.
+Idle local workers can do this during construction. Stable-clock low-priority
+cart jobs fetch a trolley through the existing graph, avoiding a permanently
+idle roof crew above unfinished ground logistics. New time or useful work
+recalls the operator safely. Structural kits and worker rides remain deferred.
 
 ## 16. Normal-minute behavior
 
 This section is the ambient-activity design target. Today the shared simulation
-has interruptible breaks and empty-trolley shunting; the viewer's stable demo
+has interruptible breaks and useful autonomous rubble recovery; the viewer's stable demo
 adds two low-rate inspection/maintenance jobs at real locations. It is not a
 complete autonomous ambient scheduler and does not predict the next minute.
 

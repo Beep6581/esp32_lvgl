@@ -244,10 +244,12 @@ int main(int argc, char** argv) {
     simulation.state.date = (building_clock_date_t){.year = 1984U, .month = 10U, .day = 26U, .weekday = 5U};
     require(building_clock_simulation_set_time(&simulation, &world, rollover ? 15U : 14U, rollover ? 0U : 38U) == BUILDING_CLOCK_SIMULATION_OK, "target time");
     building_clock_simulation_t replay = simulation;
-    FILE* workers =
-        open_csv(prefix, "workers", "ms,worker,x,y,node,state,job,kind,digit,section,load,companion,rope,brick,reason,resource,owners,pending,reachable,dispatch_blocked,unreachable,unsafe");
+    FILE* workers = open_csv(
+        prefix, "workers",
+        "ms,worker,x,y,node,state,job,kind,digit,section,load,companion,rope,brick,reason,resource,owners,pending,reachable,dispatch_blocked,unreachable,unsafe,debris,platform_phase,passing");
     FILE* changes = open_csv(prefix, "sections", "ms,digit,section,kind,lifecycle,status,ready,assigned,load,load_status,progress,dependencies");
     FILE* job_events = open_csv(prefix, "jobs", "ms,job,status,kind,worker,source,target,digit,section,object,source_complete");
+    FILE* site = open_csv(prefix, "site", "ms,cart,operator,phase,progress,cargo,pickup_bay,transfer_ms,bay0,bay1,bay2,bay3,recovered");
     uint32_t time_ms[BUILDING_CLOCK_MAX_WORKERS][REASON_COUNT] = {{0}};
     uint32_t carried_wait[BUILDING_CLOCK_MAX_WORKERS][REASON_COUNT] = {{0}};
     section_times_t times[BUILDING_CLOCK_DIGIT_COUNT][BUILDING_CLOCK_MAX_DIGIT_SECTIONS] = {{{0}}};
@@ -317,10 +319,18 @@ int main(int argc, char** argv) {
             const building_clock_job_t* job = worker->current_job_id < BUILDING_CLOCK_MAX_JOBS ? &simulation.state.jobs[worker->current_job_id] : NULL;
             const unsigned companion = worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS ? simulation.state.loads[worker->carried_load_id].companion_load_id : BUILDING_CLOCK_INVALID_ID;
             if (workers != NULL)
-                fprintf(workers, "%u,%u,%d,%d,%u,%s,%u,%s,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u\n", ms, w, worker->position.x, worker->position.y, worker->current_node_id, states[worker->state],
-                        worker->current_job_id, job != NULL ? jobs[job->kind] : "none", job != NULL ? job->subject.digit_id : 255U, job != NULL ? job->subject.section_id : 255U,
+                fprintf(workers, "%u,%u,%d,%d,%u,%s,%u,%s,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d\n", ms, w, worker->position.x, worker->position.y, worker->current_node_id,
+                        states[worker->state], worker->current_job_id, job != NULL ? jobs[job->kind] : "none", job != NULL ? job->subject.digit_id : 255U, job != NULL ? job->subject.section_id : 255U,
                         worker->carried_load_id, companion, worker->rope.phase, worker->rope.brick_index, reasons[probe.reason], probe.resource, probe.owners, probe.pending, probe.reachable,
-                        probe.dispatch_blocked, probe.unreachable, probe.unsafe);
+                        probe.dispatch_blocked, probe.unreachable, probe.unsafe, worker->carried_debris_id, worker->platform_activity_phase, worker->passing_side);
+        }
+        if (site != NULL) {
+            for (uint8_t id = 0U; id < simulation.state.cart_count; id++) {
+                const building_clock_cart_t* cart = &simulation.state.carts[id];
+                fprintf(site, "%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u\n", ms, id, cart->operator_worker_id, cart->status, cart->route_progress_per_mille, cart->rubble_sacks, cart->pickup_bay_id,
+                        cart->transfer_elapsed_ms, simulation.state.recovery_sacks[0], simulation.state.recovery_sacks[1], simulation.state.recovery_sacks[2], simulation.state.recovery_sacks[3],
+                        simulation.metrics.rubble_sacks_recovered);
+            }
         }
         if (job_events != NULL)
             for (uint8_t j = 0U; j < BUILDING_CLOCK_MAX_JOBS; j++) {
@@ -354,6 +364,8 @@ int main(int argc, char** argv) {
         require(fclose(changes) == 0, "close section output");
     if (job_events != NULL)
         require(fclose(job_events) == 0, "close job output");
+    if (site != NULL)
+        require(fclose(site) == 0, "close site output");
     puts("Read-only probes and deterministic control replay passed");
     return EXIT_SUCCESS;
 }

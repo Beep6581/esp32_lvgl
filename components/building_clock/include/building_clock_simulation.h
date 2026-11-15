@@ -13,6 +13,7 @@ extern "C" {
 
 #define BUILDING_CLOCK_SIMULATION_MAX_STEP_MS 1000U
 #define BUILDING_CLOCK_SIMULATION_QUANTUM_MS 50U
+#define BUILDING_CLOCK_CART_TRANSFER_MS 900U
 
 typedef struct {
     uint32_t preparation_ms;
@@ -79,6 +80,8 @@ typedef struct {
     uint32_t evacuation_failures;
     uint32_t transition_capacity_delays;
     uint32_t debris_cleared;
+    uint32_t rubble_sacks_recovered;
+    uint32_t trolley_loads_delivered;
     uint32_t sections_staged;
     uint32_t sections_placed;
     uint32_t sections_secured;
@@ -104,6 +107,7 @@ typedef struct {
     /* Runtime admission ceiling. Set to initial worker_count for fixed-crew tests. */
     uint8_t crew_limit;
     uint64_t next_crew_entry_ms;
+    uint64_t next_recovery_dispatch_ms;
 } building_clock_simulation_t;
 
 typedef struct {
