@@ -1,5 +1,123 @@
 # Builders throughput measurements
 
+## 2026-11-15: independent ropes and local logistics
+
+Uncommitted refinement of `4ccb755` on `buildclock`. The committed baseline
+was rebuilt and rerun before editing. Same 32 deterministic roots, generator
+version 5, five scenarios and three crew policies: 480 runs per comparison.
+No generation, navigation capacities, movement speeds, action durations,
+pacing minima, hardware/display configuration or task settings changed.
+
+### Behavior and scheduling
+
+- Every builder operates their own harness ascender/descender and travelling
+  roof clamp. Mandatory belay jobs, anticipatory tender dispatch and the
+  half-crew builder cap are removed. Rope lane separation, crossing avoidance,
+  physical retrieval, material pickup and structural dependencies remain.
+- Optional winching is a local idle activity, not a job. An already nearby
+  idle rigger may assist from the same actual platform, 14-64 units from the
+  anchor, only when no compatible pending work exists. There is no extra trip,
+  reservation or influence on the builder. Useful work preempts immediately.
+- A semantic flag records actual ascent/descent displacement in the latest
+  quantum. Only that movement enables a helper's cranking and rope connection.
+  Stationary work, preparation, waiting, blocked lanes and horizontal shifts
+  never crank. The viewer also shows a small harness control on the builder.
+- A broad roof cache permits four concurrent courier jobs, bounded by actual
+  node capacity, instead of two. Narrow work sites are not widened. This gets
+  independent pier kits and later sections supplied without dedicating crew
+  to winches. The existing paired-kit and suspended-front continuation remain.
+- A worker with ready work at their current station stays for that work before
+  idle egress. Clearing dispatch also considers nearby clearers about to
+  finish. The trace exposed workers leaving after each rubble item and roof
+  replacements descending against ascending couriers; this was avoidable
+  scheduling, not slow climbing.
+
+Removing mandatory tending alone was insufficient: adaptive 7 -> 8 averaged
+55.92 s with 23/32 within a minute, versus 54.83 s and 27/32 before. The local
+work and supply changes below are therefore part of this refinement, not a
+claim that deleting tender jobs alone improves every scenario.
+
+### Measured results
+
+Times are simulated seconds to fully `STABLE`, including inspection, hold and
+rope retrieval, not just appearance of the last brick. Adaptive six plus relief:
+
+| Transition | Before mean | After mean | After p90 | After max | <=60 s before / after |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 7 -> 8 | 54.83 | 51.10 | 57.20 | 62.20 | 27/32 / 30/32 |
+| 1 -> 2 | 52.31 | 47.14 | 53.40 | 57.75 | 27/32 / 32/32 |
+| 8 -> 9 | 53.89 | 50.01 | 58.30 | 60.55 | 24/32 / 31/32 |
+| Rollover | 120.64 | 92.58 | 102.05 | 105.35 | 0/32 / 0/32 |
+| Midnight | 188.24 | 134.02 | 150.35 | 159.25 | 0/32 / 0/32 |
+
+Single-digit completion within 60 seconds improves **78/96 (81.3%) -> 93/96
+(96.9%)**. Fixed six also achieves 93/96 with identical single-digit timing;
+this improvement does not require adding workers. Fixed nine achieves 96/96,
+but is not selected as the default. All 480 after-runs complete with zero
+timeouts or evacuation failures. Accepted-family counts remain 5/8/7/3/9.
+The 32-root adaptive benchmark now asserts the aggregate 90% target.
+
+Useful contributors average 2.86/2.11/2.89 in single-digit scenarios (peaks
+6/4/6), and 5.33/5.63 for rollover/midnight (peaks 9). The old sampler counted
+mandatory tending as productive, so its larger 4.67/3.77/4.51 single-digit
+figures are not like-for-like useful-throughput comparisons. Optional tending
+is now explicitly excluded and takes 4.4/3.6/3.8% of worker-time. Actual
+simultaneous masonry work still peaks at two builders for single digits and
+four across multi-digit projects. Independent ropes free logistics workers;
+they do not eliminate masonry dependencies or occupied rope lanes.
+
+At the reference root `0x6a09e667f3bcc909`, 7 -> 8 improves 69.55 -> 57.35 s.
+In the right roof region (y=73, x>=350), sampled mean occupancy falls 3.74 ->
+1.70 workers, peak 6 -> 4, and time with at least three workers falls 51.20 ->
+15.65 s. This is one seed's crowding diagnostic, not a claim about all worlds.
+Early construction is not universally earlier: its first brick moves from
+23.75 to 26.65 s because initial clearance and courier traffic compete. The
+second pier's supply advances 39.45 -> 21.35 s, making the overall project
+substantially faster. Remaining bottlenecks are real transport, opposing
+ladder traffic, shared rope strips, dependencies and retrieval, not tender
+availability. The three remaining >60 s single-digit runs are retained.
+
+### Visual review and verification
+
+Ignored repository-local artifacts: `build/builders_independent_ropes/`.
+`baseline.txt` and `final32.txt` contain comparable benchmark output;
+`four-single-*.csv` contains the final reference-worker/section/job trace.
+`before-after-50s.png`, full single/rollover/midnight/unfinished PNG sequences,
+three MP4 exports, storyboards and `descent-placement-strip.png` support review.
+Four additional single-digit sequences cover the other topology families:
+`02ce5c58e42372d7`, `7bac433ee14d632b`, `af4a0846691a0e44`, `f9fd2ded6d5b25c6`.
+Inspection used ordered complete-sequence storyboards and consecutive frames,
+not claimed real-time video playback. Builders carry baskets, descend/climb
+on actual ropes, place within arm reach and return without roof partners.
+Helpers no longer continuously crank while a builder hammers or shifts.
+Brief cache clustering remains visible; no continuous crowd collision system
+or new machinery system was added. The C64 character design is unchanged.
+
+All thirteen host suites and the SDL animation check pass. All thirteen suites
+also pass ASan/UBSan (`detect_leaks=0` for this environment). Focused tests cover
+solo full reconstruction, unassisted continuation/rollover, optional tending
+with no effect on motion, useful-work preemption, actual-displacement gating,
+blocked lanes and local station continuity/egress. Thirty consecutive minute
+changes average 39.49 s, maximum 53.25 s; twelve scheduled updates still exercise
+unfinished rollover without transition-resource leaks.
+
+The ESP-IDF build passes with the installed 6.1 environment and existing
+repository-local offline dependency adapter. No flashing was performed.
+The build reordered sdkconfig sections without changing values; that generated
+ordering-only edit was removed. Strict C11/conversion checks pass for the
+host-compatible runtime and the new simulation/throughput/trace tests.
+A wider extra-strict all-files check still finds pre-existing signed-conversion
+warnings in viewer coordinate expressions and older generator/transition test
+helpers; normal `-Wall -Wextra -Werror` builds pass. The ESP entropy adapter
+requires ESP headers and is checked by the firmware build, not standalone host C.
+Formatting, ASCII and whitespace checks pass for changed source files.
+
+No heap allocation or capacity increase. Host sizes are unchanged: worker 300,
+state 9,488, context 10,344 bytes. Removing belay jobs reduces peak adaptive
+job usage from 13 to 7 for 7 -> 8, 26 to 24 for rollover and 34 to 31 at midnight;
+load peaks remain bounded at seven for 7 -> 8 and eight globally. The optional
+activity scans existing fixed worker/job arrays and uses one 16-bit local mask.
+
 ## 2026-11-15: visual/gameplay tradeoff
 
 The subsequent [visual pass](building_clock_visual_overhaul.md) adds physical

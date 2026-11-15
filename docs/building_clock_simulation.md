@@ -454,7 +454,7 @@ Rope access is a bounded worker-owned excursion from an existing graph node on
 a real overhead platform. The platform must span the work, and the descent
 columns must not cross another permanent platform. Routing reaches that node;
 the worker then positions the anchor along the same continuous surface,
-descends and places masonry within a small horizontal reach. A tender-controlled
+descends and places masonry within a small horizontal reach. A builder-controlled
 travelling beam clamp can reposition the suspended builder along the same roof;
 it cannot leave that platform or sweep through another occupied rope lane.
 Blocked crossings require roof retrieval. Returning to the graph node precedes normal
@@ -462,12 +462,15 @@ routing. Rope state is semantic and included in the scene snapshot. Cancellation
 retrieves the worker without teleporting them to the roof. Ropes do not mutate
 the immutable graph or enable arbitrary shortcuts between platforms.
 
-For crews of two or more, a separate belaying job brings a worker to the roof
-before descent. It is dispatched when the builder accepts the job, so both
-workers can travel concurrently. The tender remains assigned while that builder
-collects supplies or travels; descent still requires the tender in position.
-Dispatch bounds the number of builders so tenders can be
-assigned. A solo worker uses a self-managed rope. Temporary ladder/scaffold
+Every builder uses a self-managed harness ascender/descender, including in
+multi-worker crews. No belay job, assigned tender or half-crew builder limit
+is required. Actual work-position capacities and rope lanes still constrain
+parallel construction. An otherwise idle rigger may assist at a nearby roof
+winch without reserving a job or moving to a new station. Assistance has no
+effect on rope speed or availability, yields to useful work immediately, and
+cranks only after actual ascent/descent displacement in the current quantum.
+Preparation, stationary work, blocked movement and horizontal repositioning
+do not trigger winching. Temporary ladder/scaffold
 installation is omitted only when permanent routes can also deliver workers
 from staging to every required overhead position.
 
@@ -476,7 +479,11 @@ section has usable overhead access, couriers deliver to a real roof cache and
 builders pick up there. Each load records its actual pickup node separately
 from its associated staging area. One project may use the existing eight load
 slots; simultaneous projects have at most three each within that shared limit.
-Delivery dispatch counts other deliveries, not builders and rope tenders.
+Delivery dispatch counts other deliveries, not builders, and permits up to
+four concurrent deliveries at a broad cache (never exceeding node capacity).
+Local workers continue ready jobs at the same station before idle egress;
+clearing dispatch also considers nearby clearers about to finish, avoiding
+unnecessary roof-to-ground trips.
 Nearby available workers are preferred, but only when they can reach the job.
 
 A courier may deliver two compatible small kits together, with one four-second
@@ -486,7 +493,7 @@ same actual roof surface and are deposited at the same pickup node. A builder
 may pack one additional staged kit for an adjacent dependent section on that
 same rope-accessible platform. The second kit stays physically with the worker.
 Once the first section is secured, a new placement job can continue from the
-current suspended position, retaining the tender and rope. Dependencies are
+current suspended position, retaining its self-managed rope. Dependencies are
 checked again at that handoff; no new material is delivered remotely. Cancelling
 or recycling shared delivery/placement jobs clears every owning section reference.
 

@@ -61,6 +61,8 @@ static const SDL_Color COLOR_BACKGROUND = {7, 8, 13, 255};
 static const SDL_Color COLOR_STEEL = {105, 122, 193, 255};
 static const SDL_Color COLOR_STEEL_DARK = {48, 57, 99, 255};
 static const SDL_Color COLOR_LADDER = {238, 206, 105, 255};
+static const SDL_Color COLOR_CRANE = {62, 15, 105, 255};
+static const SDL_Color COLOR_CRANE_DARK = {39, 16, 85, 255};
 static const SDL_Color COLOR_MASONRY = {205, 92, 54, 255};
 static const SDL_Color COLOR_MASONRY_LIGHT = {239, 126, 67, 255};
 static const SDL_Color COLOR_MASONRY_DARK = {104, 42, 34, 255};
@@ -234,7 +236,6 @@ static void draw_locations(SDL_Renderer* renderer, const building_clock_world_t*
 
 static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
     const building_clock_world_t* world = scene->world;
-    set_color(renderer, COLOR_LADDER);
     for (uint8_t crane = 0U; crane < world->crane_count; crane++) {
         const building_clock_crane_layout_t* layout = &world->cranes[crane];
         const building_clock_crane_t* state = &scene->state.cranes[crane];
@@ -242,28 +243,29 @@ static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_sn
         const int direction = bx < BUILDING_CLOCK_WORLD_WIDTH / 2 ? 1 : -1;
         const int boom_end = state->status == BUILDING_CLOCK_CRANE_IDLE ? bx + direction * 120 : (direction > 0 ? layout->working_area.x + layout->working_area.width : layout->working_area.x);
         const int left = bx < boom_end ? bx : boom_end;
-        fill_rect(renderer, bx - 4, by, 9, layout->base_position.y - by, COLOR_BOOTS);
-        fill_rect(renderer, bx - 4, by, 2, layout->base_position.y - by, COLOR_LADDER);
-        fill_rect(renderer, bx + 3, by, 2, layout->base_position.y - by, COLOR_LADDER);
-        set_color(renderer, COLOR_LADDER);
+        fill_rect(renderer, bx - 4, by, 9, layout->base_position.y - by, COLOR_CRANE_DARK);
+        fill_rect(renderer, bx - 4, by, 2, layout->base_position.y - by, COLOR_CRANE);
+        fill_rect(renderer, bx + 3, by, 2, layout->base_position.y - by, COLOR_CRANE);
+        set_color(renderer, COLOR_CRANE);
         for (int y = by; y + 12 < layout->base_position.y; y += 12) {
             (void)SDL_RenderDrawLine(renderer, bx - 2, y, bx + 2, y + 6);
             (void)SDL_RenderDrawLine(renderer, bx + 2, y + 6, bx - 2, y + 12);
         }
-        fill_rect(renderer, left, by - 2, abs(boom_end - bx) + 1, 2, COLOR_LADDER);
-        fill_rect(renderer, left, by + 5, abs(boom_end - bx) + 1, 2, COLOR_LADDER);
-        set_color(renderer, COLOR_LADDER);
+        fill_rect(renderer, left, by - 2, abs(boom_end - bx) + 1, 2, COLOR_CRANE);
+        fill_rect(renderer, left, by + 5, abs(boom_end - bx) + 1, 2, COLOR_CRANE);
+        set_color(renderer, COLOR_CRANE);
         for (int x = left; x + 12 < left + abs(boom_end - bx); x += 12) {
             (void)SDL_RenderDrawLine(renderer, x, by + 4, x + 6, by);
             (void)SDL_RenderDrawLine(renderer, x + 6, by, x + 12, by + 4);
         }
-        fill_rect(renderer, bx - 7, by - 9, 15, 13, COLOR_LADDER);
-        fill_rect(renderer, bx - 4, by - 6, 9, 6, COLOR_STEEL_DARK);
+        fill_rect(renderer, bx - 7, by - 9, 15, 13, COLOR_CRANE);
+        fill_rect(renderer, bx - 4, by - 6, 9, 6, COLOR_CRANE_DARK);
         const building_clock_point_t hook = state->hook_position.x == 0 && state->hook_position.y == 0 ? layout->home_hook_position : state->hook_position;
-        set_color(renderer, COLOR_WORKER);
+        set_color(renderer, COLOR_CRANE);
         (void)SDL_RenderDrawLine(renderer, hook.x, layout->home_hook_position.y - 12, hook.x, hook.y);
-        fill_rect(renderer, hook.x - 2, hook.y, 5, 4, COLOR_LADDER);
+        fill_rect(renderer, hook.x - 2, hook.y, 5, 4, COLOR_CRANE);
     }
+    set_color(renderer, COLOR_LADDER);
     for (uint8_t lift = 0U; lift < world->lift_count; lift++) {
         const building_clock_lift_layout_t* layout = &world->lifts[lift];
         if (layout->stop_count == 0U) {
@@ -520,8 +522,8 @@ static void draw_rope_equipment(SDL_Renderer* renderer, const building_clock_sce
     }
     const int x = worker->position.x, y = worker->position.y;
     const int ax = worker->rope.anchor.x, ay = worker->rope.anchor.y;
-    /* Beam trolley, sheave and hand-cranked drum are real parts of this
-     * worker's tender-controlled rope excursion, not ambient animation. */
+    /* The builder controls a harness ascender/descender and travelling clamp.
+     * Any nearby winch helper is optional and follows actual rope movement. */
     fill_rect(renderer, ax - 5, ay - 5, 11, 3, COLOR_STEEL);
     fill_rect(renderer, ax - 5, ay - 2, 2, 6, COLOR_STEEL_DARK);
     fill_rect(renderer, ax + 4, ay - 2, 2, 6, COLOR_STEEL_DARK);
@@ -530,9 +532,10 @@ static void draw_rope_equipment(SDL_Renderer* renderer, const building_clock_sce
     set_color(renderer, COLOR_ROPE);
     (void)SDL_RenderDrawLine(renderer, ax, ay + 4, x, y - 5);
     fill_rect(renderer, x - 5, y - 5, 11, 2, COLOR_ROPE);
-    if (worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS) {
-        const uint8_t tender = scene->state.jobs[worker->rope.belay_job_id].reserved_worker_id;
-        if (tender < scene->state.worker_count && scene->state.workers[tender].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY && scene->worker_presentation_positions[tender].y == ay) {
+    fill_rect(renderer, x - 1, y - 8, 3, 5, COLOR_STEEL);
+    for (uint8_t tender = 0U; tender < scene->state.worker_count; tender++) {
+        if (scene->state.workers[tender].tended_builder_id == id && worker->rope.moved_vertically && scene->state.workers[tender].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY &&
+            scene->worker_presentation_positions[tender].y == ay) {
             const building_clock_point_t p = scene->worker_presentation_positions[tender];
             set_color(renderer, COLOR_ROPE);
             (void)SDL_RenderDrawLine(renderer, p.x + 7, p.y - 5, ax, ay + 2);
@@ -622,7 +625,8 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
                 fill_rect(renderer, target_x + direction * 5, target_y, 1, 1, COLOR_WORKER_ACTION);
             }
         }
-    } else if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY) {
+    } else if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY && worker->tended_builder_id < scene->state.worker_count &&
+               scene->state.workers[worker->tended_builder_id].rope.moved_vertically) {
         fill_rect(renderer, x + 3, y - 7, 9, 6, COLOR_BOOTS);
         fill_rect(renderer, x + 4, y - 6, 7, 2, COLOR_ROPE);
         draw_limb(renderer, x + 7, y - 4, x + 7 + (frame < 4U ? 3 : -3), y - 4 + (frame % 4U < 2U ? -3 : 3), COLOR_LADDER);
@@ -773,7 +777,13 @@ static void draw_date(SDL_Renderer* renderer, const building_clock_scene_snapsho
     fill_rect(renderer, 0, scene->world->date_band.y, BUILDING_CLOCK_WORLD_WIDTH, scene->world->date_band.height, (SDL_Color){9, 11, 17, 255});
     (void)snprintf(text, sizeof(text), "%s %02u %s %04u", weekdays[scene->state.date.weekday % 7U], scene->state.date.day,
                    months[scene->state.date.month > 0U && scene->state.date.month <= 12U ? scene->state.date.month - 1U : 0U], scene->state.date.year);
-    draw_text(renderer, 115, scene->world->date_band.y + 23, 3, COLOR_MASONRY_LIGHT, text);
+    int x = 115;
+    for (const char* character = text; *character != '\0'; character++) {
+        const char glyph[] = {*character, '\0'};
+        const SDL_Color color = *character >= '0' && *character <= '9' ? COLOR_STEEL : COLOR_MASONRY_LIGHT;
+        draw_text(renderer, x, scene->world->date_band.y + 23, 3, color, glyph);
+        x += 6 * 3;
+    }
 }
 
 static void draw_site_feedback(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
@@ -1212,7 +1222,9 @@ static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canva
                 .facing = BUILDING_CLOCK_FACING_RIGHT,
                 .reserved_edge_id = (state == BUILDING_CLOCK_WORKER_WALK || state == BUILDING_CLOCK_WORKER_CLIMB || state == BUILDING_CLOCK_WORKER_CARRY) ? 0U : BUILDING_CLOCK_INVALID_EDGE_ID,
                 .current_job_id = state == BUILDING_CLOCK_WORKER_FINISH_JOB ? 0U : BUILDING_CLOCK_INVALID_ID,
+                .tended_builder_id = state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY ? 1U : BUILDING_CLOCK_INVALID_ID,
                 .carried_load_id = state == BUILDING_CLOCK_WORKER_CARRY ? 0U : BUILDING_CLOCK_INVALID_ID};
+            viewer->scene.state.workers[1].rope.moved_vertically = true;
             viewer->scene.state.jobs[0].kind = BUILDING_CLOCK_JOB_STAGE_MATERIAL;
             viewer->scene.state.elapsed_ms = frame * 110U;
             viewer->scene.worker_presentation_positions[0] = (building_clock_point_t){240, 240};
@@ -1248,6 +1260,7 @@ static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canva
                 worker->reserved_edge_id = state == BUILDING_CLOCK_WORKER_CLIMB || state == BUILDING_CLOCK_WORKER_WALK ? 0U : BUILDING_CLOCK_INVALID_EDGE_ID;
                 worker->position.x = (int16_t)(frame * 3U);
                 worker->current_job_id = state == BUILDING_CLOCK_WORKER_FINISH_JOB ? 0U : BUILDING_CLOCK_INVALID_ID;
+                worker->tended_builder_id = state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY ? 1U : BUILDING_CLOCK_INVALID_ID;
                 worker->carried_load_id = state == BUILDING_CLOCK_WORKER_CARRY ? 0U : BUILDING_CLOCK_INVALID_ID;
                 viewer->scene.state.elapsed_ms = frame * 110U;
                 viewer->scene.worker_presentation_positions[0] = (building_clock_point_t){(int16_t)(135 + frame * 42U), (int16_t)(21 + state * 23U)};

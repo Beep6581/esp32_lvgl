@@ -116,8 +116,8 @@ static bool run_to_stable(building_clock_simulation_t* simulation, const buildin
     }
     for (uint8_t id = 0U; id < simulation->state.worker_count; id++) {
         const building_clock_worker_t* worker = &simulation->state.workers[id];
-        fprintf(stderr, "Timeout: worker %u state %u job %u node %u destination %u rope %u belay %u\n", id, worker->state, worker->current_job_id, worker->current_node_id, worker->destination_node_id,
-                worker->rope.phase, worker->rope.belay_job_id);
+        fprintf(stderr, "Timeout: worker %u state %u job %u node %u destination %u rope %u\n", id, worker->state, worker->current_job_id, worker->current_node_id, worker->destination_node_id,
+                worker->rope.phase);
         if (worker->route_node_index < worker->route_edge_count) {
             const uint8_t edge = worker->route_edge_ids[worker->route_node_index];
             const uint8_t next = worker->route_node_ids[worker->route_node_index + 1U];
@@ -781,7 +781,7 @@ static void test_rope_work_and_unfinished_rollover(void) {
     prepare_transition(&first, &world, 14U, 37U, 14U, 38U, 6U);
     replay = first;
     bool saw_rope = false;
-    bool saw_belay = false;
+    bool saw_independent_rope = false;
     bool saw_ambient = false;
     bool interrupted = false;
     uint16_t contributing_workers = 0U;
@@ -795,7 +795,6 @@ static void test_rope_work_and_unfinished_rollover(void) {
             const building_clock_worker_t* worker = &first.state.workers[id];
             saw_ambient |= worker->state == BUILDING_CLOCK_WORKER_SMOKE || worker->state == BUILDING_CLOCK_WORKER_DRINK || worker->state == BUILDING_CLOCK_WORKER_REST ||
                            worker->state == BUILDING_CLOCK_WORKER_WATCH;
-            saw_belay |= worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY;
             if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && worker->state != BUILDING_CLOCK_WORKER_WAIT) {
                 contributors++;
                 contributing_workers |= (uint16_t)(1U << id);
@@ -804,6 +803,11 @@ static void test_rope_work_and_unfinished_rollover(void) {
                 continue;
             }
             saw_rope = true;
+            bool assisted = false;
+            for (uint8_t other = 0U; other < first.state.worker_count; other++) {
+                assisted |= first.state.workers[other].tended_builder_id == id;
+            }
+            saw_independent_rope |= !assisted && worker->position.y > worker->rope.anchor.y;
             expect_true(worker->rope.platform_id < world.platform_count, "rope identifies its supporting world platform");
             const building_clock_platform_t* platform = &world.platforms[worker->rope.platform_id];
             expect_true(worker->rope.anchor.y == platform->surface_y && worker->rope.anchor.x >= platform->x_start && worker->rope.anchor.x <= platform->x_end,
@@ -832,7 +836,7 @@ static void test_rope_work_and_unfinished_rollover(void) {
             peak_contributors = contributors;
         }
     }
-    expect_true(saw_rope && saw_belay && saw_ambient && interrupted, "sequence includes rope builder, tender, ambient activity, and interruption");
+    expect_true(saw_rope && saw_independent_rope && saw_ambient && interrupted, "sequence includes independent rope work, ambient activity, and interruption");
     expect_true(peak_contributors >= 5U, "single-digit crew has five useful simultaneous contributors");
     uint32_t recovery_ms = 0U;
     expect_true(run_to_stable(&first, &world, &recovery_ms), "interrupted construction safely collapses and reaches the latest target");
@@ -886,7 +890,7 @@ static void test_coordinated_fronts_and_relief(void) {
                 shifted = true;
                 const int32_t reach = (int32_t)worker->position.x - worker->rope.anchor.x;
                 expect_true(reach >= -12 && reach <= 12, "horizontal rope travel keeps the builder near its moving pulley");
-                expect_true(worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS, "lateral travel has an assigned rope tender");
+                expect_true(!worker->rope.moved_vertically, "horizontal repositioning is not vertical rope work");
             }
             if (worker->rope.phase == BUILDING_CLOCK_ROPE_WORK) {
                 const int32_t dx = (int32_t)worker->rope.work_position.x - worker->position.x;
@@ -913,7 +917,7 @@ static void test_coordinated_fronts_and_relief(void) {
     select_test_world(&world, UINT64_C(0x6496e29f64d8f6c2));
     prepare_transition(&simulation, &world, 14U, 37U, 14U, 38U, 6U);
     simulation.crew_limit = 6U;
-    expect_true(run_to_stable(&simulation, &world, NULL), "narrow roof access never permanently blocks the belaying job");
+    expect_true(run_to_stable(&simulation, &world, NULL), "narrow roof access never permanently blocks independent builders");
     expect_true(simulation.state.worker_count == 6U, "explicit fixed crew disables relief admission");
 
     select_test_world(&world, UINT64_C(0xe2e7cd4df0e6b95d));
@@ -941,12 +945,7 @@ static void test_paired_kits_and_rope_continuity(void) {
             if (builder->current_job_id >= BUILDING_CLOCK_MAX_JOBS) {
                 continue;
             }
-            if (builder->rope.phase != BUILDING_CLOCK_ROPE_NONE && builder->position.y > builder->rope.anchor.y) {
-                expect_true(builder->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS, "suspended builder has an actual tender job");
-                const uint8_t tender_id = simulation.state.jobs[builder->rope.belay_job_id].reserved_worker_id;
-                expect_true(tender_id < simulation.state.worker_count && simulation.state.workers[tender_id].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY,
-                            "dispatching early never permits unsupported descent");
-            }
+            expect_true(builder->tended_builder_id == BUILDING_CLOCK_INVALID_ID || builder->current_job_id == BUILDING_CLOCK_INVALID_ID, "optional tending never owns or blocks useful work");
         }
         for (uint8_t id = 0U; id < BUILDING_CLOCK_MAX_LOADS; id++) {
             const building_clock_load_t* load = &simulation.state.loads[id];
@@ -994,7 +993,7 @@ static void test_paired_kits_and_rope_continuity(void) {
                     expect_true(points_equal(old->position, current->position) && points_equal(old->rope.anchor, current->rope.anchor), "continuing a front never teleports the worker or rope");
                     expect_true(old->carried_load_id == current->carried_load_id && current->carried_load_id < BUILDING_CLOCK_MAX_LOADS, "continued work uses the kit already physically carried");
                     expect_true(job_references_clear(&simulation, old->current_job_id), "completed section job releases ownership before slot recycling");
-                    expect_true(old->rope.belay_job_id == current->rope.belay_job_id, "the same tender supports the continuing front");
+                    expect_true(old->rope.platform_id == current->rope.platform_id, "independent continuation retains the same real roof support");
                 }
             }
         }
@@ -1005,36 +1004,25 @@ static void test_paired_kits_and_rope_continuity(void) {
     expect_true(!building_clock_simulation_transition_active(&simulation) && transition_resources_clean(&simulation), "paired-kit project completes without resource leaks");
 }
 
-static void test_rope_tender_dispatch_during_travel(void) {
+static void test_solo_rope_builder(void) {
     building_clock_world_t world;
     select_test_world(&world, UINT64_C(0x6a09e667f3bcc909));
     building_clock_simulation_t simulation;
-    prepare_transition(&simulation, &world, 23U, 59U, 0U, 0U, 6U);
-    bool saw_early_tender = false;
-    for (uint32_t ms = 0U; ms < 120000U && !saw_early_tender; ms += 50U) {
+    prepare_transition(&simulation, &world, 14U, 37U, 14U, 38U, 1U);
+    simulation.crew_limit = 1U;
+    bool descended = false, ascended = false, shifted = false;
+    for (uint32_t ms = 0U; ms < FULL_TRANSITION_TIMEOUT_MS && building_clock_simulation_transition_active(&simulation); ms += 50U) {
         (void)building_clock_simulation_step(&simulation, &world, 50U);
-        for (uint8_t w = 0U; w < simulation.state.worker_count; w++) {
-            const building_clock_worker_t* builder = &simulation.state.workers[w];
-            if (builder->current_job_id >= BUILDING_CLOCK_MAX_JOBS || builder->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
-                continue;
-            }
-            const building_clock_job_t* work = &simulation.state.jobs[builder->current_job_id];
-            if (work->kind != BUILDING_CLOCK_JOB_PLACE_SECTION) {
-                continue;
-            }
-            for (uint8_t j = 0U; j < BUILDING_CLOCK_MAX_JOBS; j++) {
-                const building_clock_job_t* tender = &simulation.state.jobs[j];
-                saw_early_tender |= tender->kind == BUILDING_CLOCK_JOB_BELAY_ROPE && (tender->status == BUILDING_CLOCK_JOB_PENDING || tender->status == BUILDING_CLOCK_JOB_ACTIVE) &&
-                                    tender->subject.digit_id == work->subject.digit_id && tender->subject.section_id == work->subject.section_id;
-            }
-            if (saw_early_tender) {
-                expect_true(building_clock_simulation_cancel_job(&simulation, &world, builder->current_job_id) == BUILDING_CLOCK_SIMULATION_OK, "builder can be cancelled before reaching its tender");
-                break;
-            }
-        }
+        const building_clock_worker_t* worker = &simulation.state.workers[0];
+        descended |= worker->rope.phase == BUILDING_CLOCK_ROPE_DESCEND && worker->rope.moved_vertically;
+        ascended |= worker->rope.phase == BUILDING_CLOCK_ROPE_ASCEND && worker->rope.moved_vertically;
+        shifted |= worker->rope.phase == BUILDING_CLOCK_ROPE_SHIFT;
+        expect_true(worker->tended_builder_id == BUILDING_CLOCK_INVALID_ID, "solo worker never waits for or tends another worker");
+        expect_true(dependency_order_is_valid(&simulation), "solo construction retains actual support ordering");
     }
-    expect_true(saw_early_tender, "rope support is dispatched while its builder is still collecting material or travelling");
-    expect_true(run_to_stable(&simulation, &world, NULL) && transition_resources_clean(&simulation), "early tender cancellation cannot strand jobs or reservations");
+    expect_true(descended && ascended && shifted, "one worker lowers, repositions and retrieves their own rope");
+    expect_true(!building_clock_simulation_transition_active(&simulation) && simulation.state.worker_count == 1U && transition_resources_clean(&simulation),
+                "one independent worker supplies and completes a whole digit without a tender or relief");
 }
 
 static void test_consecutive_unfinished_minutes(void) {
@@ -1100,7 +1088,7 @@ int main(void) {
     test_rope_work_and_unfinished_rollover();
     test_coordinated_fronts_and_relief();
     test_paired_kits_and_rope_continuity();
-    test_rope_tender_dispatch_during_travel();
+    test_solo_rope_builder();
     test_consecutive_unfinished_minutes();
 
     if (failures != 0U) {

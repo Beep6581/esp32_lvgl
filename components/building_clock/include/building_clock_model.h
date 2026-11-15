@@ -461,7 +461,7 @@ typedef enum {
     BUILDING_CLOCK_ROPE_WORK,
     BUILDING_CLOCK_ROPE_ASCEND,
     BUILDING_CLOCK_ROPE_RETURN,
-    /* A roof-mounted travelling pulley, controlled by the rope tender. */
+    /* A roof-mounted travelling pulley controlled by the suspended builder. */
     BUILDING_CLOCK_ROPE_SHIFT,
 } building_clock_rope_phase_t;
 
@@ -473,7 +473,8 @@ typedef struct {
     building_clock_point_t work_position;
     uint8_t platform_id;
     uint8_t brick_index;
-    uint8_t belay_job_id;
+    /* Actual vertical displacement during the last simulation quantum. */
+    bool moved_vertically;
     bool returning;
     uint32_t motion_remainder_ms;
 } building_clock_rope_t;
@@ -485,8 +486,6 @@ typedef enum {
     BUILDING_CLOCK_PLATFORM_RETURN,
     BUILDING_CLOCK_PLATFORM_CART_APPROACH,
     BUILDING_CLOCK_PLATFORM_CART_PUSH,
-    BUILDING_CLOCK_PLATFORM_WINCH_WALK,
-    BUILDING_CLOCK_PLATFORM_WINCH_WORK,
 } building_clock_platform_activity_phase_t;
 
 typedef struct {
@@ -497,6 +496,8 @@ typedef struct {
     building_clock_facing_t facing;
     uint8_t current_job_id;
     uint8_t carried_load_id;
+    /* Optional local assistance, never a job or traversal prerequisite. */
+    uint8_t tended_builder_id;
     uint8_t current_node_id;
     uint8_t destination_node_id;
     uint16_t reserved_edge_id;
@@ -513,7 +514,7 @@ typedef struct {
     uint32_t state_elapsed_ms;
     uint32_t behavior_timer_ms;
     building_clock_rope_t rope;
-    /* A local winch station, break or empty-trolley task on the current broad
+    /* A local break or empty-trolley task on the current broad
      * platform. Return physically to the graph anchor before routing again. */
     building_clock_point_t platform_activity_position;
     uint8_t platform_activity_phase; /* building_clock_platform_activity_phase_t */
@@ -536,7 +537,6 @@ typedef enum {
     BUILDING_CLOCK_JOB_INSPECT,
     BUILDING_CLOCK_JOB_PATROL,
     BUILDING_CLOCK_JOB_CELEBRATE,
-    BUILDING_CLOCK_JOB_BELAY_ROPE,
 } building_clock_job_kind_t;
 
 typedef enum {

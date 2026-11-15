@@ -6,7 +6,7 @@ ESP32 renderer.
 
 The default view is uncluttered. Workers have hard hats, colored overalls and
 discrete walk/climb/tool animations; TAB restores seed, timing and lifecycle
-labels. Rope tenders occupy physical winch stations, spare crew walk to quiet
+labels. Builders control their own ropes, spare crew walk to quiet
 spots on broad platforms, and off-duty crew can shunt empty site trolleys.
 Pallets, baskets, bottom-up access erection and bounded site-event feedback
 make construction readable without debug text. Cranes and lifts remain parked;
@@ -65,15 +65,16 @@ The viewer supplies only deterministic time, clock transitions, and simple
 diagnostic jobs. Movement, routing, reservations, hazards, and collapse all
 come from the shared Building Clock component.
 
-Rope builders use brown ropes attached to real overhead platforms. A second
-worker tends each rope from the roof. Supply workers bring bundles from the
-depot to staging or a reachable roof cache. Tender-controlled beam clamps can
+Rope builders use brown ropes attached to real overhead platforms and control
+their own harness ascenders/descenders. Supply workers bring bundles from the
+depot to staging or a reachable roof cache. Builder-controlled beam clamps can
 shift suspended builders along a real roof without repeated full retrievals.
 Couriers can bring two compatible small kits on one trip. A builder may carry
 the next dependent kit and continue on the same rope once its supports are
-secured. Rope tenders can prepare support-ready deliveries before builders
-arrive. Dispatch uses actual route duration and nearby returning/unpacking crew
-rather than unnecessary inspector/tender trips across roofs. Permanent ladders
+secured. A nearby idle rigger may assist at a winch, but only while a builder
+actually ascends/descends; assistance never owns a job or delays a builder.
+Dispatch uses actual route duration and nearby returning/unpacking/clearing crew
+rather than unnecessary trips across roofs. Permanent ladders
 allow same-direction following at 20-unit spacing; opposing traffic queues.
 Busy six-worker crews may admit relief through generated spawns, up to the
 existing nine-worker limit. Unassigned crew drink, smoke, rest, or watch; these poses are
@@ -91,8 +92,10 @@ build/building_clock_tests/building_clock_throughput_tests 32
 The argument is the number of deterministic world roots (1-128). Each root
 runs three single-digit changes, a multi-digit rollover, and midnight. An
 optional second argument prints a five-second timeline for the first fixture.
-Output includes activity-time percentages, navigation/tender/rope-lane waits,
+Output includes activity-time percentages, navigation/rope-lane waits,
 paired deliveries, continued rope sections, relief use and peak job/load slots.
+Optional tending is reported separately and excluded from productive counts;
+simultaneous masonry work and aggregate stable-within-60s results are included.
 See `docs/building_clock_throughput.md` for measured limits and remaining issues.
 
 ## Motion review and character checks

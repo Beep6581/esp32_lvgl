@@ -157,6 +157,100 @@ static void test_break_spacing_and_cart_interruption(void) {
     expect_true(saw_push && interrupted && simulation.metrics.jobs_completed == 1U, "worker visibly pushes then returns to useful graph work");
 }
 
+static void test_optional_rope_tending(void) {
+    building_clock_world_t world;
+    initialize_world(&world, 2U);
+    world.platform_count = 1U;
+    world.platforms[0] = (building_clock_platform_t){.x_start = 10, .x_end = 400, .surface_y = 100};
+    world.navigation.nodes[0].position.x = 100;
+    world.navigation.nodes[1].position.x = 140;
+    add_spawn(&world, 0U);
+    add_spawn(&world, 1U);
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_WALK, 40U, 2U);
+    building_clock_simulation_t initial;
+    expect_true(building_clock_simulation_init(&initial, &world, 2U) == BUILDING_CLOCK_SIMULATION_OK, "optional tender fixture initializes");
+    initial.state.workers[0].position.y = 140;
+    initial.state.workers[0].rope = (building_clock_rope_t){.phase = BUILDING_CLOCK_ROPE_DESCEND, .anchor = {100, 100}, .work_position = {100, 200}, .platform_id = 0U};
+    (void)building_clock_navigation_release_node(&world, &initial.navigation, 0U, 0U);
+    building_clock_simulation_t simulation = initial;
+    building_clock_simulation_t control = initial;
+    control.state.workers[1].capabilities &= (uint16_t)~BUILDING_CLOCK_WORKER_CAN_RIG;
+    for (unsigned ms = 0U; ms < 800U; ms += 50U) {
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        (void)building_clock_simulation_step(&control, &world, 50U);
+        expect_true(simulation.state.workers[0].position.y == control.state.workers[0].position.y, "optional assistance never changes builder motion or speed");
+        expect_true(simulation.state.workers[1].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY && simulation.state.workers[1].tended_builder_id == 0U,
+                    "nearby idle rigger cranks during actual descent");
+        expect_true(simulation.state.workers[1].current_job_id == BUILDING_CLOCK_INVALID_ID && simulation.state.used_job_slot_count == 0U, "optional winching owns no job slot or reservation");
+    }
+    for (uint8_t phase = BUILDING_CLOCK_ROPE_ALIGN; phase <= BUILDING_CLOCK_ROPE_SHIFT; phase++) {
+        simulation = initial;
+        building_clock_worker_t* builder = &simulation.state.workers[0];
+        builder->rope.phase = (building_clock_rope_phase_t)phase;
+        if (phase == BUILDING_CLOCK_ROPE_ALIGN) {
+            builder->position.y = 100;
+        }
+        (void)building_clock_simulation_step(&simulation, &world, 50U);
+        const bool moved_y = simulation.state.workers[0].position.y != builder->rope.anchor.y && simulation.state.workers[0].rope.moved_vertically;
+        const bool winding = simulation.state.workers[1].state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY;
+        expect_true(winding == moved_y, "only actual ascent/descent triggers cranking, never preparation, work, horizontal shift or waiting");
+    }
+    simulation = initial;
+    (void)building_clock_simulation_step(&simulation, &world, 50U);
+    const building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_INSPECT, 1U, BUILDING_CLOCK_WORKER_CAN_INSPECT, 500U);
+    uint8_t job;
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &job) == BUILDING_CLOCK_SIMULATION_OK, "useful nearby work is submitted while tending");
+    (void)building_clock_simulation_step(&simulation, &world, 50U);
+    expect_true(simulation.state.workers[1].current_job_id == job && simulation.state.workers[1].state == BUILDING_CLOCK_WORKER_INSPECT &&
+                    simulation.state.workers[1].tended_builder_id == BUILDING_CLOCK_INVALID_ID,
+                "optional tender yields immediately to useful work without a return trip");
+    simulation = initial;
+    simulation.state.workers[0].rope.motion_remainder_ms = 0U;
+    (void)building_clock_simulation_step(&simulation, &world, 1U);
+    expect_true(!simulation.state.workers[0].rope.moved_vertically && simulation.state.workers[1].tended_builder_id == BUILDING_CLOCK_INVALID_ID, "a phase without displacement does not crank");
+
+    add_spawn(&world, 1U);
+    expect_true(building_clock_simulation_init(&simulation, &world, 3U) == BUILDING_CLOCK_SIMULATION_OK, "blocked rope fixture initializes");
+    simulation.state.workers[0].rope = initial.state.workers[0].rope;
+    simulation.state.workers[0].rope.phase = BUILDING_CLOCK_ROPE_ALIGN;
+    simulation.state.workers[1].rope = initial.state.workers[0].rope;
+    simulation.state.workers[1].rope.phase = BUILDING_CLOCK_ROPE_WORK;
+    simulation.state.workers[1].position = (building_clock_point_t){100, 160};
+    simulation.state.workers[1].rope.work_position = simulation.state.workers[1].position;
+    (void)building_clock_simulation_step(&simulation, &world, 50U);
+    expect_true(simulation.state.workers[0].state == BUILDING_CLOCK_WORKER_WAIT, "a real occupied rope lane blocks alignment");
+    expect_true(simulation.state.workers[2].tended_builder_id == BUILDING_CLOCK_INVALID_ID && simulation.state.workers[2].state != BUILDING_CLOCK_WORKER_OPERATE_MACHINERY,
+                "blocked alignment and stationary suspension never trigger optional winching");
+}
+
+static void test_local_station_continuity(void) {
+    building_clock_world_t world;
+    initialize_world(&world, 2U);
+    world.navigation.nodes[1].kind = BUILDING_CLOCK_NAV_NODE_DIGIT_WORK;
+    add_spawn(&world, 0U);
+    add_spawn(&world, 1U);
+    add_edge(&world, 0U, 1U, BUILDING_CLOCK_NAV_EDGE_WALK, 20U, 2U);
+    building_clock_simulation_t simulation;
+    expect_true(building_clock_simulation_init(&simulation, &world, 2U) == BUILDING_CLOCK_SIMULATION_OK, "local station fixture initializes");
+    const building_clock_simple_job_spec_t spec = job_spec(BUILDING_CLOCK_JOB_INSPECT, 1U, BUILDING_CLOCK_WORKER_CAN_INSPECT, 150U);
+    uint8_t first, second;
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &first) == BUILDING_CLOCK_SIMULATION_OK, "first local task is submitted");
+    expect_true(building_clock_simulation_add_job(&simulation, &world, &spec, &second) == BUILDING_CLOCK_SIMULATION_OK, "second local task is submitted");
+    run_for(&simulation, &world, 150U, 50U);
+    expect_true(simulation.state.jobs[first].status == BUILDING_CLOCK_JOB_COMPLETE && simulation.state.jobs[second].status == BUILDING_CLOCK_JOB_PENDING,
+                "one useful action finishes while another remains ready at the same exclusive station");
+    expect_true(simulation.state.workers[1].current_node_id == 1U && simulation.state.workers[1].route_purpose == BUILDING_CLOCK_WORKER_ROUTE_NONE &&
+                    simulation.metrics.edge_reservations_acquired == 0U,
+                "local worker does not begin idle egress or dispatch a distant replacement between tasks");
+    run_for(&simulation, &world, 50U, 50U);
+    expect_true(simulation.state.jobs[second].reserved_worker_id == 1U && simulation.state.workers[0].current_job_id == BUILDING_CLOCK_INVALID_ID,
+                "the same local worker immediately takes the next ready task");
+    run_for(&simulation, &world, 1000U, 50U);
+    expect_true(simulation.state.jobs[second].status == BUILDING_CLOCK_JOB_COMPLETE && simulation.state.workers[1].current_node_id == 0U && all_edge_reservations_clear(&world, &simulation) &&
+                    worker_occupancy_is_consistent(&world, &simulation),
+                "finished crew still yields the exclusive station and cleans reservations after the last task");
+}
+
 static void test_walk_job_completion(void) {
     building_clock_world_t world;
     initialize_world(&world, 2U);
@@ -547,6 +641,8 @@ static void test_long_run(void) {
 
 int main(void) {
     test_break_spacing_and_cart_interruption();
+    test_optional_rope_tending();
+    test_local_station_continuity();
     test_walk_job_completion();
     test_ladder_multi_edge_and_actions();
     test_deterministic_contention();

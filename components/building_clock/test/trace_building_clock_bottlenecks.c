@@ -14,13 +14,13 @@
 static const char* const states[] = {"idle",   "choose", "walk",  "climb",    "ride",   "carry",     "push",  "wait",  "turn", "inspect",
                                      "hammer", "tend",   "clear", "evacuate", "finish", "celebrate", "smoke", "drink", "rest", "watch"};
 static const char* const jobs[] = {"supply",         "carry", "cart",  "crane",  "lift",    "install_ladder", "install_platform", "remove_temp",
-                                   "remove_support", "clear", "place", "secure", "inspect", "patrol",         "celebrate",        "belay"};
+                                   "remove_support", "clear", "place", "secure", "inspect", "patrol",         "celebrate"};
 static const char* const sections[] = {"foundation", "top", "middle", "upper_left", "upper_right", "lower_left", "lower_right", "corner", "infill"};
 static const char* const phases[] = {"stable", "preparing", "evacuating", "collapsing", "settling", "clearing", "foundation", "structure", "recognizable", "finishing", "complete"};
 
-enum { ACTION, TRAVEL, ROPE_TRAVEL, WAIT_EDGE, WAIT_NODE, WAIT_TENDER, WAIT_ROPE, RETRY, NO_PENDING, BUILDER_LIMIT, DISPATCH_LIMIT, NO_ROUTE, HAZARD, DISPATCH_CHOICE, REASON_COUNT };
-static const char* const reasons[] = {"action",         "travel",        "rope_travel",    "edge_busy", "node_busy", "tender_not_ready", "rope_lane_busy", "retry_next_quantum",
-                                      "no_pending_job", "builder_limit", "dispatch_limit", "no_route",  "hazard",    "dispatch_choice"};
+enum { ACTION, TRAVEL, ROPE_TRAVEL, WAIT_EDGE, WAIT_NODE, WAIT_ROPE, RETRY, NO_PENDING, DISPATCH_LIMIT, NO_ROUTE, HAZARD, DISPATCH_CHOICE, REASON_COUNT };
+static const char* const reasons[] = {"action",         "travel",         "rope_travel", "edge_busy", "node_busy",      "rope_lane_busy", "retry_next_quantum",
+                                      "no_pending_job", "dispatch_limit", "no_route",    "hazard",    "dispatch_choice"};
 
 typedef struct {
     uint32_t ready, assigned, build_assigned, supplied, first_brick, placed, secured;
@@ -30,7 +30,7 @@ typedef struct {
 typedef struct {
     unsigned reason;
     uint16_t resource, owners;
-    unsigned pending, reachable, builder_blocked, dispatch_blocked, unreachable, unsafe;
+    unsigned pending, reachable, dispatch_blocked, unreachable, unsafe;
 } worker_probe_t;
 
 static void require(bool condition, const char* message) {
@@ -80,13 +80,6 @@ static worker_probe_t probe_worker(const building_clock_world_t* world, const bu
     if (worker->state == BUILDING_CLOCK_WORKER_WAIT) {
         if (worker->rope.phase != BUILDING_CLOCK_ROPE_NONE) {
             probe.reason = WAIT_ROPE;
-            probe.resource = worker->rope.belay_job_id;
-            if (worker->rope.belay_job_id < BUILDING_CLOCK_MAX_JOBS) {
-                const uint8_t tender = simulation->state.jobs[worker->rope.belay_job_id].reserved_worker_id;
-                if (tender >= simulation->state.worker_count || simulation->state.workers[tender].state != BUILDING_CLOCK_WORKER_OPERATE_MACHINERY) {
-                    probe.reason = WAIT_TENDER;
-                }
-            }
             if (probe.reason == WAIT_ROPE && worker->current_job_id < BUILDING_CLOCK_MAX_JOBS) {
                 const building_clock_job_t* job = &simulation->state.jobs[worker->current_job_id];
                 const building_clock_rect_t envelope = world->digit_work_areas[job->subject.digit_id].envelope;
@@ -148,11 +141,6 @@ static worker_probe_t probe_worker(const building_clock_world_t* world, const bu
     }
     /* Mirror only the hard dispatch gates. A surviving candidate means
      * dispatch preference/order must be inspected, not proven unreachable. */
-    unsigned builders = 0U;
-    for (uint8_t j = 0U; j < BUILDING_CLOCK_MAX_JOBS; j++) {
-        const building_clock_job_t* job = &simulation->state.jobs[j];
-        builders += job->status == BUILDING_CLOCK_JOB_ACTIVE && (job->kind == BUILDING_CLOCK_JOB_PLACE_SECTION || job->kind == BUILDING_CLOCK_JOB_SECURE_SECTION) ? 1U : 0U;
-    }
     for (uint8_t j = 0U; j < BUILDING_CLOCK_MAX_JOBS; j++) {
         const building_clock_job_t* job = &simulation->state.jobs[j];
         if (job->status != BUILDING_CLOCK_JOB_PENDING || job->earliest_start_elapsed_ms > simulation->state.elapsed_ms ||
@@ -160,11 +148,6 @@ static worker_probe_t probe_worker(const building_clock_world_t* world, const bu
             continue;
         }
         probe.pending++;
-        if ((job->kind == BUILDING_CLOCK_JOB_PLACE_SECTION || job->kind == BUILDING_CLOCK_JOB_SECURE_SECTION) && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_DIGIT_SECTION &&
-            builders >= (simulation->state.worker_count > 1U ? simulation->state.worker_count / 2U : 1U)) {
-            probe.builder_blocked++;
-            continue;
-        }
         unsigned here = 0U;
         for (uint8_t other = 0U; other < BUILDING_CLOCK_MAX_JOBS; other++) {
             const building_clock_job_t* active = &simulation->state.jobs[other];
@@ -173,7 +156,8 @@ static worker_probe_t probe_worker(const building_clock_world_t* world, const bu
                         ? 1U
                         : 0U;
         }
-        const unsigned capacity = job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL ? 2U : building_clock_navigation_node_capacity(world, job->target_node_id);
+        const unsigned node_capacity = building_clock_navigation_node_capacity(world, job->target_node_id);
+        const unsigned capacity = job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && node_capacity > 4U ? 4U : node_capacity;
         if (here >= capacity) {
             probe.dispatch_blocked++;
             continue;
@@ -191,10 +175,7 @@ static worker_probe_t probe_worker(const building_clock_world_t* world, const bu
             probe.reachable++;
         }
     }
-    probe.reason =
-        probe.pending == 0U
-            ? NO_PENDING
-            : (probe.reachable > 0U ? DISPATCH_CHOICE : (probe.builder_blocked > 0U ? BUILDER_LIMIT : (probe.dispatch_blocked > 0U ? DISPATCH_LIMIT : (probe.unsafe > 0U ? HAZARD : NO_ROUTE))));
+    probe.reason = probe.pending == 0U ? NO_PENDING : (probe.reachable > 0U ? DISPATCH_CHOICE : (probe.dispatch_blocked > 0U ? DISPATCH_LIMIT : (probe.unsafe > 0U ? HAZARD : NO_ROUTE)));
     return probe;
 }
 
@@ -263,8 +244,8 @@ int main(int argc, char** argv) {
     simulation.state.date = (building_clock_date_t){.year = 1984U, .month = 10U, .day = 26U, .weekday = 5U};
     require(building_clock_simulation_set_time(&simulation, &world, rollover ? 15U : 14U, rollover ? 0U : 38U) == BUILDING_CLOCK_SIMULATION_OK, "target time");
     building_clock_simulation_t replay = simulation;
-    FILE* workers = open_csv(prefix, "workers",
-                             "ms,worker,x,y,node,state,job,kind,digit,section,load,companion,rope,brick,reason,resource,owners,pending,reachable,builder_blocked,dispatch_blocked,unreachable,unsafe");
+    FILE* workers =
+        open_csv(prefix, "workers", "ms,worker,x,y,node,state,job,kind,digit,section,load,companion,rope,brick,reason,resource,owners,pending,reachable,dispatch_blocked,unreachable,unsafe");
     FILE* changes = open_csv(prefix, "sections", "ms,digit,section,kind,lifecycle,status,ready,assigned,load,load_status,progress,dependencies");
     FILE* job_events = open_csv(prefix, "jobs", "ms,job,status,kind,worker,source,target,digit,section,object,source_complete");
     uint32_t time_ms[BUILDING_CLOCK_MAX_WORKERS][REASON_COUNT] = {{0}};
@@ -336,10 +317,10 @@ int main(int argc, char** argv) {
             const building_clock_job_t* job = worker->current_job_id < BUILDING_CLOCK_MAX_JOBS ? &simulation.state.jobs[worker->current_job_id] : NULL;
             const unsigned companion = worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS ? simulation.state.loads[worker->carried_load_id].companion_load_id : BUILDING_CLOCK_INVALID_ID;
             if (workers != NULL)
-                fprintf(workers, "%u,%u,%d,%d,%u,%s,%u,%s,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u,%u\n", ms, w, worker->position.x, worker->position.y, worker->current_node_id,
-                        states[worker->state], worker->current_job_id, job != NULL ? jobs[job->kind] : "none", job != NULL ? job->subject.digit_id : 255U, job != NULL ? job->subject.section_id : 255U,
+                fprintf(workers, "%u,%u,%d,%d,%u,%s,%u,%s,%u,%u,%u,%u,%u,%u,%s,%u,%u,%u,%u,%u,%u,%u\n", ms, w, worker->position.x, worker->position.y, worker->current_node_id, states[worker->state],
+                        worker->current_job_id, job != NULL ? jobs[job->kind] : "none", job != NULL ? job->subject.digit_id : 255U, job != NULL ? job->subject.section_id : 255U,
                         worker->carried_load_id, companion, worker->rope.phase, worker->rope.brick_index, reasons[probe.reason], probe.resource, probe.owners, probe.pending, probe.reachable,
-                        probe.builder_blocked, probe.dispatch_blocked, probe.unreachable, probe.unsafe);
+                        probe.dispatch_blocked, probe.unreachable, probe.unsafe);
         }
         if (job_events != NULL)
             for (uint8_t j = 0U; j < BUILDING_CLOCK_MAX_JOBS; j++) {
