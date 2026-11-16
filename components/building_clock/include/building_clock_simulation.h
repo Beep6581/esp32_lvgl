@@ -14,6 +14,7 @@ extern "C" {
 #define BUILDING_CLOCK_SIMULATION_MAX_STEP_MS 1000U
 #define BUILDING_CLOCK_SIMULATION_QUANTUM_MS 50U
 #define BUILDING_CLOCK_CART_TRANSFER_MS 900U
+#define BUILDING_CLOCK_WALK_MS_PER_UNIT 12U
 
 typedef struct {
     uint32_t preparation_ms;
@@ -35,6 +36,7 @@ typedef struct {
     uint32_t finishing_action_ms;
     uint32_t temporary_install_action_ms;
     uint32_t staging_action_ms;
+    uint32_t crane_attach_action_ms;
     uint32_t relief_entry_interval_ms;
     uint32_t complete_hold_ms;
 } building_clock_transition_pacing_t;
@@ -90,6 +92,11 @@ typedef struct {
     uint32_t relief_workers_entered;
     uint32_t paired_deliveries;
     uint32_t chained_rope_sections;
+    uint32_t crane_trips;
+    uint32_t crane_kits_delivered;
+    uint32_t crane_kits_returned;
+    uint32_t crane_aborts;
+    uint32_t crane_estimated_saving_ms;
     uint8_t peak_active_workers;
     uint8_t peak_job_slots;
     uint8_t peak_load_slots;
@@ -106,6 +113,8 @@ typedef struct {
     building_clock_simulation_metrics_t metrics;
     /* Runtime admission ceiling. Set to initial worker_count for fixed-crew tests. */
     uint8_t crew_limit;
+    /* A/B switch: prevents new crane dispatch; in-flight work still finishes. */
+    bool crane_enabled;
     uint64_t next_crew_entry_ms;
     uint64_t next_recovery_dispatch_ms;
 } building_clock_simulation_t;

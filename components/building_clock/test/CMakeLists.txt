@@ -117,8 +117,8 @@ target_compile_definitions(
     building_clock_invalid_fallback_tests
     PRIVATE
         BUILDING_CLOCK_WORLD_MAX_CANDIDATE_ATTEMPTS=1U
-        BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED=76ULL
-        BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION=5U
+        BUILDING_CLOCK_WORLD_FALLBACK_ROOT_SEED=64ULL
+        BUILDING_CLOCK_WORLD_FALLBACK_GENERATOR_VERSION=6U
         BUILDING_CLOCK_WORLD_FALLBACK_ATTEMPT=0U
 )
 
@@ -148,6 +148,7 @@ add_executable(
     "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
 )
 
 target_include_directories(
@@ -167,6 +168,7 @@ add_executable(
     "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
 )
 
 target_include_directories(
@@ -187,6 +189,7 @@ add_executable(
     "../building_clock_runtime_navigation.c"
     "../building_clock_scene.c"
     "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
 )
 
 target_include_directories(
@@ -205,11 +208,39 @@ add_executable(building_clock_site_tests
     "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
 )
 target_include_directories(building_clock_site_tests PRIVATE "../include")
 target_compile_features(building_clock_site_tests PRIVATE c_std_11)
 target_compile_options(building_clock_site_tests PRIVATE -Wall -Wextra -Werror)
 add_test(NAME building_clock_site_tests COMMAND building_clock_site_tests)
+
+add_executable(building_clock_upkeep_tests
+    "test_building_clock_upkeep.c"
+    ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
+    "../building_clock_runtime_navigation.c"
+    "../building_clock_scene.c"
+    "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
+)
+target_include_directories(building_clock_upkeep_tests PRIVATE "../include")
+target_compile_features(building_clock_upkeep_tests PRIVATE c_std_11)
+target_compile_options(building_clock_upkeep_tests PRIVATE -Wall -Wextra -Werror)
+add_test(NAME building_clock_upkeep_tests COMMAND building_clock_upkeep_tests)
+
+add_executable(building_clock_crane_tests
+    "test_building_clock_crane.c"
+    ${BUILDING_CLOCK_WORLD_SELECTION_SOURCES}
+    "../building_clock_geometry.c"
+    "../building_clock_runtime_navigation.c"
+    "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
+)
+target_include_directories(building_clock_crane_tests PRIVATE "../include")
+target_compile_features(building_clock_crane_tests PRIVATE c_std_11)
+target_compile_options(building_clock_crane_tests PRIVATE -Wall -Wextra -Werror)
+add_test(NAME building_clock_crane_tests COMMAND building_clock_crane_tests 4)
 
 add_executable(building_clock_throughput_tests
     "test_building_clock_throughput.c"
@@ -217,6 +248,7 @@ add_executable(building_clock_throughput_tests
     "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
 )
 target_include_directories(building_clock_throughput_tests PRIVATE "../include")
 target_compile_features(building_clock_throughput_tests PRIVATE c_std_11)
@@ -229,6 +261,7 @@ add_executable(building_clock_bottleneck_trace
     "../building_clock_geometry.c"
     "../building_clock_runtime_navigation.c"
     "../building_clock_simulation.c"
+    "../building_clock_upkeep.c"
 )
 target_include_directories(building_clock_bottleneck_trace PRIVATE "../include")
 target_compile_features(building_clock_bottleneck_trace PRIVATE c_std_11)

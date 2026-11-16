@@ -11,8 +11,15 @@ spots on broad platforms, and crews bag, carry and recover actual rubble using
 loaded site trolleys. Stable-clock recovery jobs fetch equipment through the
 normal navigation graph and yield safely to useful construction.
 Pallets, baskets, bottom-up access erection and bounded site-event feedback
-make construction readable without debug text. Cranes and lifts remain parked;
-the working machinery is the rope/winch system and loaded recovery trolleys.
+make construction readable without debug text. A cyan-blue crane now carries
+real kit pallets when route/crew estimates favor it over manual delivery. Its
+loader operates the pendant, cargo lands without a receiving builder, and cancelled
+flights return cargo safely. Lifts remain parked; independent builder ropes
+and loaded recovery trolleys remain functional.
+Quiet crews now fetch shared maintenance kits, sweep actual girder patches,
+tighten joints, check tools/beams, meet over a drawing and occasionally take tea.
+These are shared simulation activities, not injected viewer jobs. Tools remain
+where interrupted workers put them down, and construction/recovery takes priority.
 
 Build and run:
 
@@ -22,9 +29,27 @@ cmake --build build/building_clock_viewer
 build/building_clock_viewer/building_clock_viewer --seed 0x6a09e667f3bcc909
 ```
 
+For a version-6 world where `7 -> 8` uses the crane, run seed `0xf9fd2ded6d5b25c6`.
+Add `--no-crane` for identical-world manual delivery. A diagnostic
+`--interrupt-at-ms 9000` advances the target once during that seed's loaded
+flight; it uses the normal simulation time-input API. Values must be multiples
+of 50 ms. `R` repeats the same input sequence, including the interruption.
+
+The cable stays yellow in every phase. After offload it automatically retracts
+to the jib and returns horizontally to the loading position, with no crew claim.
+Parking there prevents the empty return cost from starving later clock minutes.
+Permanent girders are horizontal; vertical access is shown as yellow ladders.
+The generator/fallback are version 6, so older seeds have different layouts.
+
 The default scenario is `14:37 -> 14:38`. Command-line scenarios are `stable`,
-`single`, `rollover`, `midnight`, and `unfinished`. The last scenario advances
+`single`, `rollover`, `midnight`, and `continuous` (`unfinished` is an alias). The last scenario advances
 the target every 60 simulated seconds even while construction is incomplete.
+Use `--help` or `-h` for all options and interactive controls. Mode `4` selects
+continuous time interactively; `M` advances the target minute immediately.
+
+```sh
+build/building_clock_viewer/building_clock_viewer --seed 0xf9fd2ded6d5b25c6 --scenario continuous
+```
 A deterministic screenshot can be made
 without opening an interactive window:
 
@@ -63,9 +88,23 @@ Controls:
 - `+`/`-`: simulation speed
 - `Esc`: quit
 
-The viewer supplies only deterministic time, clock transitions, and simple
-diagnostic jobs. Movement, routing, reservations, hazards, and collapse all
+The viewer supplies only deterministic time and clock transitions.
+Movement, routing, upkeep, reservations, hazards, and collapse all
 come from the shared Building Clock component.
+
+Trace quiet activity without PNG compression/display (CSV every 250 ms):
+
+```sh
+cmake --build build/building_clock_viewer --target building_clock_living_trace
+build/building_clock_viewer/building_clock_living_trace \
+    0x6a09e667f3bcc909 stable 180000 build/living-workers.csv
+```
+
+CSV columns are elapsed milliseconds, worker ID, semantic x/y, worker state,
+job slot (255 means none), upkeep kind, phase and partner (255 means none).
+Kinds/phases are the `building_clock_upkeep_*` enums in the semantic model.
+The summary counts explicit jobs/rounds, movement, close pairs and stationary
+close pairs. It does not treat a tea round as construction productivity.
 
 Rope builders use brown ropes attached to real overhead platforms and control
 their own harness ascenders/descenders. Supply workers bring bundles from the

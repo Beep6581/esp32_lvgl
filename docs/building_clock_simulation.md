@@ -1,7 +1,7 @@
 # Building Clock Simulation Specification
 
 Status: approved design direction plus current implementation notes.
-Reviewed against the uncommitted collapse-sampling refinement after `274ab1a`
+Reviewed against the uncommitted living-site and functional-crane refinement after `3ead7c4`
 on `buildclock`, 2026-11-16.
 
 ## Current implementation and ChatGPT handoff
@@ -11,11 +11,15 @@ for current measurements and diagnostic commands, and
 [visual overview](building_clock_visual_overhaul.md) for presentation and review.
 Requirements expressed as future goals are not claims of implemented behavior.
 
-- Implemented: version-5 generation/validation/selection, bounded navigation,
+- Implemented: version-6 generation/validation/selection, bounded navigation,
   reservations and spaced permanent-ladder following, workers/jobs/material
   kits, complete collapse/rebuild, safe unfinished rollover, semantic snapshots
   and the SDL2 viewer. Builders manage their own ropes; tending is optional.
-- The 32-root single-digit target is met in the measured batch: 88/96 (91.7%)
+- Stable-site behavior now belongs to the simulation, not viewer-fed jobs:
+  shared maintenance kits, actual dust patches, girder servicing, beam checks,
+  brief paired drawing reviews and tea stops. These bounded platform excursions
+  yield to recovery, construction and hazards without teleporting workers/tools.
+- The 32-root single-digit target is met in the current v6 batch: 89/96 (92.7%)
   fully stable within 60 seconds with six plus relief. Before individual-brick
   collapse it was 89/96; before site recovery, 93/96 (96.9%).
   This is not a guarantee for arbitrary worlds or multi-digit changes.
@@ -23,17 +27,25 @@ Requirements expressed as future goals are not claims of implemented behavior.
   winching, installed temporary access and worker-operated rubble trolleys.
   Clearing bags rubble, carries it to real bays, then loaded trolleys deliver
   sacks to recovery chutes. Stable crews fetch equipment through real routes.
-  Cranes/lifts remain parked; structural-kit cart delivery and worker rides
-  remain deferred.
+  A worker-operated crane now competes with manual kit delivery using route,
+  hoist and loading estimates. No receiving builder is required to land real kits
+  on roof receiving trestles; manual transport remains the default/fallback.
+  Lifts, structural-kit cart delivery and worker rides remain deferred.
 - Firmware compilation is verified, but Building Clock application-mode wiring,
   the ESP32 renderer, live calendar updates and a minute-ahead scheduler remain
   deferred. The viewer supplies explicit HH:MM targets and a fixed demo date.
 - The latest accepted presentation keeps short/wide masonry digits and the C64
-  workers, uses a muted blue-purple crane, and colors weekday/month orange and
+  workers, uses a cyan-blue crane with a consistently yellow hoist cable, and colors weekday/month orange and
   day/year steel blue. `ref/mockup4.png` remains the aesthetic reference.
 - Preserve deterministic replay, fixed storage, actual generated routes, safe
   evacuation, and the existing display configuration. Next work requires its
   own task; do not treat older diagnostic recommendations as an active request.
+
+Version 6 removes generated standalone vertical support girders and their
+drawing code. Platforms/girders are horizontal; yellow ladders provide vertical
+worker access, including ladders with horizontal temporary decks. The crane
+mast remains functional equipment, not a walkable girder. Existing semantic
+support slots are empty; geometry is not repaired after validation.
 
 This document defines the generated construction world, clock transition
 simulation, workers, jobs, materials, machinery, validation, and deterministic
@@ -823,7 +835,7 @@ the destination section's visible brick group is progressively revealed and
 the carried bundle diminishes; only then is the load consumed and the section
 marked placed for the securing action. This keeps the visible cause and result
 connected without pretending that one worker carried a full beam vertically or
-requiring strict conservation or a cart/crane state machine yet.
+requiring strict conservation or individually simulated bricks.
 
 If the required material would miss its pacing milestone, an off-screen supply
 delivery may provide it. This is preferable to making workers visibly cheat.
@@ -831,13 +843,66 @@ delivery may provide it. This is preferable to making workers visibly cheat.
 ## 15. Machinery
 
 Machinery layouts and state records are generated as part of the level.
-The crane and lift sequences described below are planned behavior: currently
-both remain parked and receive no autonomous delivery/ride jobs. The dark
-purple crane is a visual landmark, not a construction prerequisite.
+The crane now has a bounded functional state machine. Lift operation remains
+planned; lifts are parked and worker routing still excludes machinery rides.
 
 A crane can be idle, slewing, lowering, waiting for attachment, lifting,
 carrying, lowering at destination, or returning. Its jobs are limited to its
 validated working range.
+
+### Implemented crane transport
+
+`choose_crane_delivery()` compares an ordinary staged-kit courier job with a
+crane alternative. It uses actual hazard-safe walking/climbing routes, existing
+ladder occupancy, source-to-controls travel, empty-hook positioning, loading,
+loaded hoist/trolley travel and normal unpacking. It requires a 1.2-second
+benefit margin plus a small operating allowance, for either single or paired kits. It never
+waits for another kit to fill a sling. Unavailable equipment, insufficient reach,
+no spare job slot or poor estimated benefit leave the manual
+job intact. No worker speed or existing construction action is shortened.
+
+The original courier carries actual kits from their source to the generated
+crane controls, moves to an adjacent loading stance and operates the pendant.
+Only then may the motor move the empty hook. The additional unpack job is
+BLOCKED and owns no worker while cargo travels. Landing makes it PENDING;
+a builder may unpack later using the unchanged four-second action. The crane
+does not wait for a receiving builder. It lifts, traverses and lowers on separate axes,
+using integer motor timing. The operator releases the path node while standing
+beside the controls, so a machinery control point cannot block the main route.
+
+The existing generated working rectangle defines service-surface reach. Its
+crane tower/jib clearance is derived above that rectangle; pickup and destination
+must be real supported locations inside it. The sling travels outboard of girder
+fronts, a coarse 2.5D convention: it is not moving through the walking-plane
+platform collision volume or creating a new worker navigation connection. The
+viewer draws foreground rigging and roof receiving trestles accordingly. The
+generator, immutable graph and geometry are unchanged.
+
+Ownership is courier -> suspended sling -> `LOAD_LANDED` -> unpacked/staged kit
+-> normal builder. A safely landed pallet is detached immediately; neither the
+crane nor its operator waits through unpacking. Obsolete landed kits remain at
+their real location and can be reassigned before new supply slots are allocated.
+In-flight cancellation instead retains cargo until a safe return to the loading
+area. Recovered kit stock there becomes an actual subsequent manual/crane supply
+source. Cancellation before pickup refunds only the stock at the original source.
+Receiver cancellation during an edge finishes that edge before releasing the
+terminal job slot. This prevents cargo deletion, stale section owners and slot
+reuse beneath a worker. It does not redesign every pre-existing cancellation
+case elsewhere in the simulation.
+
+After offload, `CRANE_RETURNING` retracts the empty hook vertically to clearance
+then returns the trolley horizontally to its loading position without retaining
+a worker/job/cargo claim. It then returns to IDLE for further
+deliveries. This is an automatic motor cycle initiated by offload, not an
+invisible operator doing new loading work. Cancellation after landing follows
+the same retraction path; aborts before landing first return the cargo safely.
+
+`simulation.crane_enabled` defaults true; false prevents new dispatch only and
+never abandons an in-flight lift. The viewer's `--no-crane` flag exposes the same
+switch for identical-world A/B tests. `--interrupt-at-ms` injects one target-minute
+change through the normal input API for reproducible visual interruption checks.
+There is still only one crane, at most two kits per sling and one extra delivery
+job per operation. Existing worker, load, job and navigation capacities remain.
 
 A cart can be parked, loading, moving between route stops, unloading, or waiting
 for a blocked route.
@@ -860,10 +925,42 @@ recalls the operator safely. Structural kits and worker rides remain deferred.
 
 ## 16. Normal-minute behavior
 
-This section is the ambient-activity design target. Today the shared simulation
-has interruptible breaks and useful autonomous rubble recovery; the viewer's stable demo
-adds two low-rate inspection/maintenance jobs at real locations. It is not a
-complete autonomous ambient scheduler and does not predict the next minute.
+This section includes the broader ambient design target. The current shared
+simulation owns interruptible local upkeep rounds as well as autonomous rubble
+recovery. The viewer no longer injects two artificial maintenance jobs.
+
+`building_clock_upkeep.c` owns quiet rounds. Suitable permanent platforms have
+one portable kit, a small tool tray/flask, bounded dust patches and joint-service
+state. Slots mirror platform IDs; no permanent geometry, graph nodes, job slots,
+material inventory or renderer objects are added. Workers fetch/carry/return
+kits, sweep an actual patch, tighten joints, check tools or inspect another beam
+while the kit is occupied. An occasional nearby colleague can join a drawing
+review or tea stop at two claimed positions 24 units apart. A bounded rendezvous
+timeout releases both workers if the meeting cannot happen. Start times differ
+by worker and round/travel history; there is no shared global pose playlist for
+these activities. Dirt/service needs recur on staggered 30-second timers; these
+are stylized upkeep needs, not structural damage or recoverable rubble.
+
+An active round retains an ordinary broad graph reservation. Motion remains on
+that real continuous platform, at the existing 12 ms/unit walk speed. On finish
+or interruption it reserves the nearest existing broad node on the same surface,
+releases its previous reservation, then physically walks to the new anchor
+before routed travel. This avoids retracing a whole platform without inventing
+connections. Busy colleagues' work positions and ladder mouths are excluded
+when choosing destinations. Broad-platform passing uses the existing depth lane
+and a shoulder turn; it is not continuous collision physics.
+
+Any digit transition recalls all quiet rounds before hazard handling. Compatible
+pending jobs (including recovery) also preempt. Tools are put down at their actual
+location, paired claims are released, and returning workers become available
+without completing the abandoned round. Subsequent workers fetch dropped kits
+where they lie. Tool pickup, work and return phases are explicit semantic state
+and are included in snapshots. All six phases have interruption/replay tests.
+
+This is not a minute-ahead scheduler: it does not predict future targets. Quiet
+activities deliberately remain local, and are suspended globally during digit
+reconstruction. Cross-level rounds and independent ambient work during a
+partially active transition remain potential refinements, not implemented APIs.
 
 At least three clear activities should normally be visible:
 
@@ -882,7 +979,7 @@ parts. Preparation should become more obvious when several digits will change.
 The scenario descriptions express intended final choreography. The current
 viewer exercises all three complete collapse/rebuild lifecycles, but supplies
 targets immediately rather than pre-staging during the preceding minute, and
-does not operate cranes/lifts or material carts. Current measured timings and
+operates cranes opportunistically but not lifts or structural-kit carts. Current measured timings and
 unfinished-rollover results are in the throughput report.
 
 ### 17.1 14:37 to 14:38

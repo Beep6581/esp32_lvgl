@@ -58,21 +58,6 @@ static uint8_t add_platform(candidate_builder_t* builder, int16_t x_start, int16
     return id;
 }
 
-static uint8_t add_support(candidate_builder_t* builder, building_clock_support_kind_t kind, int16_t x, int16_t y, uint16_t width, uint16_t height) {
-    building_clock_world_t* world = builder->world;
-    if (world->major_support_count >= BUILDING_CLOCK_MAX_MAJOR_SUPPORTS) {
-        return BUILDING_CLOCK_INVALID_ID;
-    }
-
-    const uint8_t id = world->major_support_count++;
-    world->major_supports[id] = (building_clock_major_support_t){
-        .kind = kind,
-        .bounds = {.x = x, .y = y, .width = width, .height = height},
-        .platform_mask = 0U,
-    };
-    return id;
-}
-
 static uint8_t find_platform_at(const building_clock_world_t* world, int16_t x, bool upper) {
     uint8_t selected = BUILDING_CLOCK_INVALID_ID;
     int16_t selected_y = upper ? INT16_MIN : INT16_MAX;
@@ -421,78 +406,6 @@ static void generate_topology(candidate_builder_t* builder) {
     add_side_ladders(builder);
 }
 
-static bool support_column_clears_debris_bays(const building_clock_world_t* world, int16_t x, uint16_t width) {
-    const int32_t right = (int32_t)x + width;
-    for (uint8_t bay_id = 0U; bay_id < world->debris_bay_count; bay_id++) {
-        const building_clock_rect_t bay = world->debris_bays[bay_id].area;
-        if (x < (int32_t)bay.x + bay.width && bay.x < right) {
-            return false;
-        }
-    }
-    return true;
-}
-
-static int16_t choose_lower_support_x(candidate_builder_t* builder, int16_t minimum, int16_t maximum_exclusive, uint16_t width) {
-    uint16_t valid_count = 0U;
-    for (int16_t x = minimum; x < maximum_exclusive; x++) {
-        if (support_column_clears_debris_bays(builder->world, x, width)) {
-            valid_count++;
-        }
-    }
-    if (valid_count == 0U) {
-        return -1;
-    }
-
-    uint16_t selected = (uint16_t)building_clock_random_bounded(&builder->random, valid_count);
-    for (int16_t x = minimum; x < maximum_exclusive; x++) {
-        if (!support_column_clears_debris_bays(builder->world, x, width)) {
-            continue;
-        }
-        if (selected == 0U) {
-            return x;
-        }
-        selected--;
-    }
-    return -1;
-}
-
-static void generate_supports(candidate_builder_t* builder) {
-    const building_clock_topology_family_t family = builder->world->topology_family;
-    const int16_t left_top_y = builder->world->platforms[builder->top_left_platform_id].surface_y;
-    const int16_t right_top_y = builder->world->platforms[builder->top_right_platform_id].surface_y;
-
-    if (family == BUILDING_CLOCK_TOPOLOGY_TWIN_TOWERS || (family == BUILDING_CLOCK_TOPOLOGY_ASYMMETRIC_LOOP && builder->crane_left) || random_chance(builder, 1U, 2U)) {
-        (void)add_support(builder, BUILDING_CLOCK_SUPPORT_TOWER, random_i16(builder, 20, 29), left_top_y, (uint16_t)random_i16(builder, 10, 15), (uint16_t)(builder->lower_y - left_top_y + 1));
-    }
-
-    if (family == BUILDING_CLOCK_TOPOLOGY_TWIN_TOWERS || (family == BUILDING_CLOCK_TOPOLOGY_ASYMMETRIC_LOOP && !builder->crane_left) || random_chance(builder, 1U, 2U)) {
-        const uint16_t width = (uint16_t)random_i16(builder, 10, 15);
-        (void)add_support(builder, BUILDING_CLOCK_SUPPORT_TOWER, (int16_t)(451 - width), right_top_y, width, (uint16_t)(builder->lower_y - right_top_y + 1));
-    }
-
-    const uint8_t lower_supports = family == BUILDING_CLOCK_TOPOLOGY_SPLIT_LOWER_RAISED_BRIDGE ? 2U : 1U;
-    for (uint8_t index = 0; index < lower_supports; index++) {
-        const uint16_t width = (uint16_t)random_i16(builder, 8, 13);
-        const int16_t x = index == 0U ? choose_lower_support_x(builder, 104, 144, width) : choose_lower_support_x(builder, 305, 360, width);
-        if (x >= 0) {
-            (void)add_support(builder, random_chance(builder, 1U, 2U) ? BUILDING_CLOCK_SUPPORT_FRAME : BUILDING_CLOCK_SUPPORT_BRACE, x, builder->lower_y, width, (uint16_t)(411 - builder->lower_y));
-        }
-    }
-
-    for (uint8_t support_id = 0; support_id < builder->world->major_support_count; support_id++) {
-        building_clock_major_support_t* support = &builder->world->major_supports[support_id];
-        const int16_t center_x = (int16_t)(support->bounds.x + (int16_t)(support->bounds.width / 2U));
-        const int16_t bottom_y = (int16_t)(support->bounds.y + (int16_t)support->bounds.height - 1);
-        for (uint8_t platform_id = 0; platform_id < builder->world->platform_count; platform_id++) {
-            building_clock_platform_t* platform = &builder->world->platforms[platform_id];
-            if (center_x >= platform->x_start && center_x <= platform->x_end && platform->surface_y >= support->bounds.y && platform->surface_y <= bottom_y) {
-                support->platform_mask |= UINT32_C(1) << platform_id;
-                platform->support_mask |= UINT32_C(1) << support_id;
-            }
-        }
-    }
-}
-
 static void generate_crane_and_lift(candidate_builder_t* builder) {
     building_clock_world_t* world = builder->world;
     building_clock_crane_layout_t* crane = &world->cranes[0];
@@ -814,7 +727,6 @@ void building_clock_generate_candidate(building_clock_world_t* world, uint64_t r
 
     generate_topology(&builder);
     generate_locations(&builder);
-    generate_supports(&builder);
     generate_crane_and_lift(&builder);
     generate_cart_routes(&builder);
     generate_worker_spawns(&builder);

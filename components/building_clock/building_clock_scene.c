@@ -11,7 +11,7 @@ static bool world_counts_are_valid(const building_clock_world_t* world) {
            world->navigation.node_count <= BUILDING_CLOCK_MAX_NAV_NODES && world->navigation.edge_count <= BUILDING_CLOCK_MAX_NAV_EDGES;
 }
 
-static bool state_counts_are_valid(const building_clock_simulation_state_t* state) {
+static bool state_counts_are_valid(const building_clock_world_t* world, const building_clock_simulation_state_t* state) {
     if (state->next_site_event >= BUILDING_CLOCK_RECENT_SITE_EVENTS || state->worker_count > BUILDING_CLOCK_MAX_WORKERS || state->used_job_slot_count > BUILDING_CLOCK_MAX_JOBS ||
         state->used_temp_structure_slot_count > BUILDING_CLOCK_MAX_TEMP_STRUCTURES || state->used_load_slot_count > BUILDING_CLOCK_MAX_LOADS ||
         state->used_debris_slot_count > BUILDING_CLOCK_MAX_DEBRIS_PIECES || state->falling_section_count > BUILDING_CLOCK_MAX_FALLING_SECTIONS || state->cart_count > BUILDING_CLOCK_MAX_CARTS ||
@@ -20,6 +20,22 @@ static bool state_counts_are_valid(const building_clock_simulation_state_t* stat
     }
     for (uint8_t digit = 0U; digit < BUILDING_CLOCK_DIGIT_COUNT; digit++) {
         if (state->digits[digit].outgoing.section_count > BUILDING_CLOCK_MAX_DIGIT_SECTIONS || state->digits[digit].incoming.section_count > BUILDING_CLOCK_MAX_DIGIT_SECTIONS) {
+            return false;
+        }
+    }
+    for (uint8_t worker = 0U; worker < state->worker_count; worker++) {
+        const building_clock_worker_t* w = &state->workers[worker];
+        if (w->site_activity > BUILDING_CLOCK_UPKEEP_SURVEY ||
+            (w->site_activity != BUILDING_CLOCK_UPKEEP_NONE && (w->site_station_id >= world->platform_count || w->site_phase > BUILDING_CLOCK_UPKEEP_PUT_DOWN ||
+                                                                (w->site_partner_id != BUILDING_CLOCK_INVALID_ID && w->site_partner_id >= state->worker_count)))) {
+            return false;
+        }
+    }
+    for (uint8_t station = 0U; station < world->platform_count; station++) {
+        const building_clock_upkeep_station_t* s = &state->upkeep[station];
+        if (s->enabled && s->owner_worker_id != BUILDING_CLOCK_INVALID_ID &&
+            (s->owner_worker_id >= state->worker_count || state->workers[s->owner_worker_id].site_station_id != station ||
+             state->workers[s->owner_worker_id].site_activity == BUILDING_CLOCK_UPKEEP_NONE)) {
             return false;
         }
     }
@@ -79,7 +95,7 @@ building_clock_scene_status_t building_clock_scene_capture(const building_clock_
         memset(snapshot, 0, sizeof(*snapshot));
         return BUILDING_CLOCK_SCENE_INVALID_WORLD;
     }
-    if (!state_counts_are_valid(&simulation->state)) {
+    if (!state_counts_are_valid(world, &simulation->state)) {
         memset(snapshot, 0, sizeof(*snapshot));
         return BUILDING_CLOCK_SCENE_INVALID_STATE;
     }

@@ -11,7 +11,7 @@
 #define BATCH_SIZE 4096U
 
 #define ATTEMPT_ZERO_ROOT UINT64_C(1)
-#define RETRY_ROOT UINT64_C(76)
+#define RETRY_ROOT UINT64_C(64)
 
 static unsigned int failures;
 

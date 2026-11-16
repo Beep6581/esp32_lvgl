@@ -1,13 +1,277 @@
 # Builders throughput measurements
 
-Current implementation: uncommitted collapse-sampling refinement after `274ab1a`
+Current implementation: uncommitted living-site and functional-crane refinement after `3ead7c4`
 on `buildclock`; reviewed 2026-11-16.
 This file owns measured performance, diagnostic reproduction and remaining
 bottlenecks. The [specification](building_clock_simulation.md) owns architecture
 and planned behavior; the [visual overview](building_clock_visual_overhaul.md)
 owns presentation status. Older numbers below are explicitly historical.
 
-## Current check: collapse sampling and drawing
+## Current check: independent landing (generator v6)
+
+Continuous-mode regression check: seed `f9fd2ded6d5b25c6`, 14:38 through 15:17,
+one new target every 60 simulated seconds without resetting worker state.
+Previously the crane performed one lift and then parked at the delivery end;
+later estimates included its unperformed empty return and rejected further use.
+Automatic empty return now retracts vertically and parks over the loading
+position. The same run performs 45 lifts in 39/40 minutes, including three
+at 15:00. A continuous replay/ownership/safety test covers the full run.
+Artifacts: `build/crane_continuous/before.txt`, `after.txt`, `tests-and-batch.txt`.
+The viewer now documents keyboard 4/M and has proper --help/-h plus the
+--scenario continuous alias; invalid scenario names no longer silently run single.
+The 32-root rerun still meets 90.6% fresh/after-quiet single-digit completion
+within 60 seconds. The independent-landing timing table below predates the
+empty-return correction; the latest raw batch is `tests-and-batch.txt` above.
+
+No roof builder is reserved or required for a delivery. Its unpack job stays
+BLOCKED during flight and becomes PENDING only after safe landing. The ordinary
+four-second unpack action can then happen later without tying up the crane.
+Receiving-crew checks, clearing/project penalties and the special single-kit
+four-second saving threshold are removed. Actual route/motor costs, a small
+operating allowance and a common 1.2-second benefit margin remain.
+
+Same 32 roots, 512 runs, adaptive six plus relief:
+
+| Scenario | Previous auto mean | Independent landing mean | Crane lifts, before -> after |
+| --- | ---: | ---: | ---: |
+| 7 -> 8 | 50.730 s | 51.845 s | 6 -> 6 |
+| 1 -> 2 | 51.031 s | 51.395 s | 6 -> 6 |
+| 8 -> 9 | 48.964 s | 49.252 s | 0 -> 6 |
+| 14:59 -> 15:00 | 97.214 s | 94.998 s | 5 -> 25 |
+| Midnight | 143.138 s | 141.297 s | 1 -> 33 |
+
+Seven worlds in each multi-digit batch now have multiple crane operations.
+Root `f9fd2ded6d5b25c6` improves 105.55 -> 102.30 s on rollover and
+143.40 -> 136.70 s at midnight. Single `7 -> 8` loses the pre-positioned receiver:
+41.30 -> 46.10 s, still faster than manual-only 47.90 s. This tradeoff lowers
+fresh and after-quiet single-digit <=60 s counts from 89/96 to 87/96 (90.6%).
+No worker speeds, existing actions or capacities change.
+
+Focused checks: crane cancellation/replay/reuse tests, an in-flight assertion
+that no receiver is reserved, the 32-root A/B and an SDL rollover sequence.
+Artifacts: `build/crane_independent/after32.txt`, `focused-tests.txt`, `sequence/`.
+The older full-suite results below were not rerun for this focused change.
+
+## Previous check: crane retraction and horizontal girders (generator v6)
+
+The crane now retracts its empty hook automatically after delivery or safe
+abort/offload. Crew/job/cargo claims are already released during retraction;
+dispatch becomes available again when the hook reaches overhead clearance.
+The motor speed, worker speeds and construction action durations are unchanged.
+An explicit replay test uses the same crane for two deliveries/four kits across
+five target changes without reinitializing the world or simulation.
+
+Permanent vertical-support generation and drawing are removed, rather than
+merely hidden. Temporary access uses yellow ladders with horizontal blue decks.
+This changes generated geometry and random consumption, so the generator and
+validated fallback advance to version 6 (fallback root 2, attempt 0).
+Root/version-specific rejection and five-family test fixtures were re-established.
+Version-5 timing tables below remain historical, not identical-world comparisons
+with version 6.
+
+The same 32-root, eight-scenario, two-mode test (512 runs) passes with no timeout.
+Current fresh single-digit results are manual **87/96**, crane-enabled **89/96
+(92.7%)** within 60 s. After quiet activities they are **88/96 -> 89/96 (92.7%)**.
+Within-version mean times in seconds:
+
+| Transition | Manual | Crane enabled |
+| --- | ---: | ---: |
+| 14:37 -> 14:38 | 51.561 | 50.730 |
+| 14:31 -> 14:32 | 51.455 | 51.031 |
+| 14:38 -> 14:39 | 48.964 | 48.964 |
+| 14:59 -> 15:00 | 97.423 | 97.214 |
+| 23:59 -> 00:00 | 142.902 | 143.138 |
+
+The crane remains selective: repeat-capable does not mean every next delivery
+should use it. Six `7 -> 8` and six `1 -> 2` worlds use it; `8 -> 9` prefers
+manual delivery throughout this batch. One repeated-target test explicitly proves
+two actual operations rather than requiring decorative trips.
+
+Artifacts are in `build/crane_refinement/`: `before32.txt` (version 5),
+`after32.txt` (version 6 manual/auto pairs), `crane-trace.txt`, `tests-final.txt`,
+`sanitized-tests.txt`, `retract-contact.png`, and complete PNG sequences.
+Host tests and strict native/ESP32-S3 component compilation pass. A full firmware
+build was attempted but is blocked by DNS fetching the existing locked GitHub
+touch dependency. Disabling the component manager also omits its transitive
+header dependencies, so that is not a valid replacement build. No dependency,
+LCD, timing or SDK configuration changes are retained.
+
+## Previous check: functional crane versus manual transport (generator v5)
+
+The control is the living-site implementation below with new crane dispatch
+disabled, not the older pre-upkeep commit. Generator v5, world, six-plus-relief
+crew policy, time inputs, worker speeds and existing action durations are
+identical within each pair. Thirty-two roots use
+`0x6a09e667f3bcc909 + root * 0x9e3779b97f4a7c15`, with unsigned 64-bit wrap.
+Eight scenarios and two modes give 512 complete runs; none timed out or failed
+evacuation. Automatic transport remains mostly manual by design.
+
+| Scenario | Manual mean | Auto mean | Worlds using crane | Kits unpacked |
+| --- | ---: | ---: | ---: | ---: |
+| 14:37 -> 14:38 | 52.595 s | 51.402 s | 10/32 | 20 |
+| 14:31 -> 14:32 | 52.467 s | 52.227 s | 8/32 | 16 |
+| 14:38 -> 14:39 | 50.109 s | 50.033 s | 1/32 | 2 |
+| 14:59 -> 15:00 | 98.931 s | 99.111 s | 6/32 | 13 |
+| 23:59 -> 00:00 | 145.706 s | 145.584 s | 1/32 | 1 |
+| Quiet -> 14:37 -> 14:38 | 52.758 s | 51.695 s | 10/32 | 20 |
+| Quiet -> 14:31 -> 14:32 | 52.012 s | 52.008 s | 8/32 | 16 |
+| Quiet -> 14:38 -> 14:39 | 50.409 s | 50.395 s | 1/32 | 2 |
+
+Fresh single-digit completion within 60 seconds remains **88/96 (91.7%)**.
+After 15-22.75 seconds of quiet activities it improves from **87/96 (90.6%) to
+89/96 (92.7%)**. Fresh aggregate mean improves 51.724 -> 51.220 s; after quiet,
+51.727 -> 51.366 s. Fresh p90 is 58.55 -> 58.50 s, maximum 63.50 -> 65.40 s;
+after-quiet p90 is 59.40 -> 58.20 s, maximum remains 64.65 s.
+
+For the ten fresh `7 -> 8` worlds actually using the crane, complete-transition
+mean improves **53.125 -> 49.305 s (7.2%)**, with no regressions in that subset.
+This is the clearest demonstrated benefit, not a claim of a 7.2% improvement
+everywhere. The other two used single-digit subsets improve 54.538 -> 53.575 s
+and 49.750 -> 47.300 s. Quiet used `7 -> 8` improves 53.670 -> 50.270 s.
+
+The heuristic is not a future-critical-path oracle. Two fresh `1 -> 2` worlds
+regress by 0.60/5.10 s. Busy three-digit rollovers average 0.18 s slower overall;
+four of its six crane-using worlds regress by 2.55-6.40 s. Five after-quiet used
+cases regress by 0.75-6.05 s. Receiving-crew assignment changes later clearing,
+rope and inspection order. The policy already forecasts outgoing clearing work
+and charges crew opportunity, but those are estimates, not a guarantee of a
+positive end-to-end saving for every selected lift. Increasing crew or speeding
+workers was not used to hide this limitation. Multi-digit scheduling remains
+the most useful next performance refinement; safe unfinished rollover remains.
+
+### Cost and verification
+
+Native and installed ESP32-S3 compiler layouts agree:
+
+| Type | Living-site baseline | With crane | Change |
+| --- | ---: | ---: | ---: |
+| Worker | 308 B | 308 B | 0 |
+| Mutable state | 9,992 B | 10,016 B | +24 B |
+| Simulation context | 10,864 B | 10,912 B | +48 B |
+| Scene snapshot | 10,768 B | 10,808 B | +40 B |
+
+State growth is included in context growth, not additive. A separately retained
+snapshot adds 40 B. There are no new heap allocations or capacity increases.
+The earlier living-site changes were already uncommitted when crane work began;
+the combined worktree versus `3ead7c4` adds 376 B to the context and 368 B to a
+retained snapshot. The table isolates the crane's additional cost.
+An active lift needs one extra job slot and uses existing one/two kit records;
+the established 480-case test peaks at 31/48 jobs and 8/8 load slots. Full queues
+fall back/backpressure instead of dropping cargo. The target `-O2` compiler
+reports a 1,216 B individual `assign_job` stack frame with inlined planning;
+this is not the full call-chain/task-stack requirement. A single route scratch
+buffer is reused for the bounded cost queries.
+
+One optimized native 512-run comparison uses 11.734 s process CPU for all manual
+runs versus 11.870 s automatic, about +1.2%; normalized by simulated duration,
+661 versus 671 microseconds per simulated second (+1.6%). These include host
+ownership assertions, omit SDL/file rendering, and are noisy host measurements,
+not ESP32 performance or a hardware stack measurement.
+
+Six in-flight stages are interrupted by delivery cancellation, operator
+cancellation and new-minute input. Tests also cover landed cancellation/reuse,
+recovered loading-area stock, contention, insufficient reach/manual fallback,
+bounded axis movement and byte-identical replay. Four worlds additionally
+receive seven unfinished target changes each, then finish without resetting.
+The 16-test normal and ASan/UBSan suites, 480-case existing throughput test,
+viewer animation check, strict compilation and firmware build pass. No flashing
+or real-device runtime measurement was performed.
+
+Artifacts: `build/builders_crane/benchmark.txt`, `benchmark-errors.txt`,
+`throughput.txt`, `final-trace.txt`, `crane-final.txt`, `tests-final.txt`,
+`sanitized-final.txt`, and `idf-build-final.log`.
+
+```sh
+cmake -S components/building_clock/test -B build/building_clock_tests
+cmake --build build/building_clock_tests
+build/building_clock_tests/building_clock_crane_tests 32
+build/building_clock_tests/building_clock_throughput_tests 32
+```
+
+The crane test's optional `trace ROOT SCENARIO` arguments produce timestamped
+worker/rigging traces on stderr without changing simulation behavior.
+
+## Baseline retained: living stable-minute site
+
+The established 480-run benchmark (32 roots, five transitions, three crew
+policies) retains the committed completion times: adaptive six plus relief is
+**88/96 single-digit cases within 60 seconds (91.7%)**, with no timeout or
+evacuation failure. Traversal speeds, construction durations, generator v5,
+clock geometry and capacities are unchanged. See `throughput-final.txt` under
+`build/builders_living_site/` for the full result.
+
+A second 96-case diagnostic starts the same three single-digit changes after
+15-22.75 seconds of real quiet-site activity, rather than from the reset state.
+It exercises tool drop, meeting cancellation, actual return walking and routing.
+
+| Transition | Reset baseline <=60 s | After quiet work <=60 s |
+| --- | ---: | ---: |
+| 14:37 -> 14:38 | 29/32 | 28/32 |
+| 14:31 -> 14:32 | 28/32 | 29/32 |
+| 14:38 -> 14:39 | 31/32 | 30/32 |
+| Total | 88/96 (91.7%) | 87/96 (90.6%) |
+
+The after-quiet mean is 51,726 ms, maximum 64,650 ms. There are no timeouts or
+evacuation failures. One scenario alone is below 90%; the overall measured
+single-digit goal is met, not guaranteed for every seed/starting position.
+No artificial worker speedup or material teleport was used to recover time.
+
+### Stable-site observations
+
+Each family was traced and captured for 180 simulated seconds, sampling worker
+positions every 250 ms. The baseline binary uses the old viewer's exact two-job
+demo; the revised viewer supplies only time/targets, and activity is autonomous.
+"Task" means an explicit job or a local upkeep/social round, including its travel,
+fetch/return and tea phases; this is not a construction-productivity percentage.
+
+| Family / seed | Mean workers on task, before -> after | Longest unmoved, before -> after |
+| --- | ---: | ---: |
+| Split/bridge / 6a09e667f3bcc909 | 1.54 -> 3.97 | 52.75 -> 9.25 s |
+| Twin towers / 02ce5c58e42372d7 | 1.35 -> 3.96 | 180 -> 8.75 s |
+| Central machinery / 7bac433ee14d632b | 1.54 -> 4.03 | 56 -> 15.5 s |
+| Continuous lower / af4a0846691a0e44 | 1.53 -> 3.93 | 142.25 -> 24.75 s |
+| Asymmetric loop / f9fd2ded6d5b25c6 | 1.58 -> 4.01 | 71.5 -> 8 s |
+
+Mean close worker pairs per sample (|dx|<12, |dy|<8) fall from 0.235 to 0.052
+over the five worlds. No stationary close pair was sampled after the change;
+brief walking crossings still occur and use broad-platform depth/shoulder poses.
+The finer 50 ms replay tests average 3.98 workers on task, record 51 complete
+dust-mask cleanups and 9,601 tool-motion quanta across five 180-second runs.
+All activity kinds appear and replay is byte-identical. These sample intervals
+measure different things; movement counts from 50 and 250 ms are not comparable.
+
+### Fixed cost and verification
+
+Both native and installed ESP32-S3 compiler layouts measure:
+
+| Type | Before | After |
+| --- | ---: | ---: |
+| Worker | 304 B | 308 B |
+| Mutable state | 9,664 B | 9,992 B |
+| Simulation context | 10,536 B | 10,864 B |
+| Scene snapshot | 10,440 B | 10,768 B |
+
+State/context growth is the same 328 B, not additive. A separately retained
+snapshot adds another 328 B. Eighteen 16-byte stations and nine worker extensions
+fit existing limits; no extra job/load/debris/nav capacities or heap allocations.
+The isolated target upkeep object at `-O2` is 4,303 text bytes and no global
+data/BSS. Its largest compiler-reported individual stack frame is 128 B; this
+is not a measurement of full task stack or firmware render/FPS cost.
+
+Twenty paired `-O2` host trace runs (180 simulated seconds each, no rendering or
+CSV file output) average approximately 17 ms process CPU before and 2 ms after.
+This compares whole quiet-site policies: removing repeated cross-world demo-job
+planning accounts for much of the reduction. It does not show an eightfold
+improvement to construction or predict ESP32 FPS. Host summary precision is 1 ms.
+
+The normal host suite now has 15 tests, including all upkeep phases, tool
+ownership/movement, pair cleanup, interruption idempotence, valid snapshots,
+real-platform bounds, deterministic replay and post-quiet rollovers. The viewer
+animation check, strict runtime compilation and ESP-IDF build are also exercised.
+Artifacts, worker CSV traces, sanitizer/build logs and full sequences are under
+`build/builders_living_site/`. The trace reproduction command is in the host README.
+
+## Previous committed check: collapse sampling and drawing
 
 The committed approach was already correct architecturally: simulation updates
 section groups, never individual bricks. This refinement retains that approach,
@@ -373,7 +637,7 @@ Remaining questions for future tasks, not fixes authorized by this handoff:
 - All permanent platforms must be reachable, but reachability is not proof of
   useful visits. Version-4 zero-visit platform IDs are not current-world
   evidence; new purpose/visit measurements would be needed before redesign.
-- Cranes/lifts remain parked. Trolleys now recover rubble; they do not yet
+- The crane now delivers kits opportunistically; lifts remain parked. Trolleys recover rubble but do not yet
   deliver structural kits or carry workers. Bays without a compatible route
   retain stored cargo. Broad-platform passing is not general collision physics.
 - This batch meets the single-digit target, not the multi-digit one-minute

@@ -28,6 +28,7 @@ typedef enum {
     SCENARIO_ROLLOVER,
     SCENARIO_MIDNIGHT,
     SCENARIO_UNFINISHED,
+    SCENARIO_COUNT,
 } viewer_scenario_t;
 
 typedef struct {
@@ -52,7 +53,9 @@ typedef struct {
     bool paused;
     bool running;
     uint32_t speed;
-    uint32_t job_serial;
+    bool manual_crane;
+    uint32_t interrupt_at_ms;
+    bool interrupt_done;
     uint64_t next_job_refresh_ms;
     uint64_t next_minute_ms;
 } viewer_t;
@@ -61,8 +64,8 @@ static const SDL_Color COLOR_BACKGROUND = {7, 8, 13, 255};
 static const SDL_Color COLOR_STEEL = {105, 122, 193, 255};
 static const SDL_Color COLOR_STEEL_DARK = {48, 57, 99, 255};
 static const SDL_Color COLOR_LADDER = {238, 206, 105, 255};
-static const SDL_Color COLOR_CRANE = {91, 103, 161, 255};
-static const SDL_Color COLOR_CRANE_DARK = {48, 53, 94, 255};
+static const SDL_Color COLOR_CRANE = {47, 148, 211, 255};
+static const SDL_Color COLOR_CRANE_DARK = {26, 63, 102, 255};
 static const SDL_Color COLOR_MASONRY = {205, 92, 54, 255};
 static const SDL_Color COLOR_MASONRY_LIGHT = {239, 126, 67, 255};
 static const SDL_Color COLOR_MASONRY_DARK = {104, 42, 34, 255};
@@ -173,18 +176,6 @@ static void draw_platforms(SDL_Renderer* renderer, const building_clock_world_t*
     }
 }
 
-static void draw_supports(SDL_Renderer* renderer, const building_clock_world_t* world) {
-    for (uint8_t index = 0U; index < world->major_support_count; index++) {
-        const building_clock_rect_t bounds = world->major_supports[index].bounds;
-        fill_rect(renderer, bounds.x, bounds.y, bounds.width, bounds.height, COLOR_STEEL_DARK);
-        fill_rect(renderer, bounds.x, bounds.y, 2, bounds.height, COLOR_STEEL);
-        fill_rect(renderer, (int)(bounds.x + bounds.width - 2U), bounds.y, 2, bounds.height, COLOR_STEEL);
-        for (int y = bounds.y + 6; y + 7 < bounds.y + bounds.height; y += 13) {
-            fill_rect(renderer, bounds.x + 3, y, (int)bounds.width - 6, 7, COLOR_BACKGROUND);
-        }
-    }
-}
-
 static void draw_ladders(SDL_Renderer* renderer, const building_clock_world_t* world) {
     for (uint8_t index = 0U; index < world->ladder_count; index++) {
         const building_clock_ladder_t* ladder = &world->ladders[index];
@@ -242,14 +233,16 @@ static void draw_recovery_sack(SDL_Renderer* renderer, int x, int y) {
     fill_rect(renderer, x - 3, y - 3, 1, 4, COLOR_LADDER);
 }
 
+static void draw_load_bundle(SDL_Renderer* renderer, building_clock_point_t position, uint8_t count, SDL_Color color);
+
 static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
     const building_clock_world_t* world = scene->world;
     for (uint8_t crane = 0U; crane < world->crane_count; crane++) {
         const building_clock_crane_layout_t* layout = &world->cranes[crane];
         const building_clock_crane_t* state = &scene->state.cranes[crane];
-        const int bx = layout->base_position.x, by = layout->home_hook_position.y - 12;
+        const int bx = layout->base_position.x, by = state->travel_y - 8;
         const int direction = bx < BUILDING_CLOCK_WORLD_WIDTH / 2 ? 1 : -1;
-        const int boom_end = state->status == BUILDING_CLOCK_CRANE_IDLE ? bx + direction * 120 : (direction > 0 ? layout->working_area.x + layout->working_area.width : layout->working_area.x);
+        const int boom_end = direction > 0 ? layout->working_area.x + layout->working_area.width - 1 : layout->working_area.x;
         const int left = bx < boom_end ? bx : boom_end;
         fill_rect(renderer, bx - 4, by, 9, layout->base_position.y - by, COLOR_CRANE_DARK);
         fill_rect(renderer, bx - 4, by, 2, layout->base_position.y - by, COLOR_CRANE);
@@ -269,9 +262,16 @@ static void draw_machinery(SDL_Renderer* renderer, const building_clock_scene_sn
         fill_rect(renderer, bx - 7, by - 9, 15, 13, COLOR_CRANE);
         fill_rect(renderer, bx - 4, by - 6, 9, 6, COLOR_CRANE_DARK);
         const building_clock_point_t hook = state->hook_position.x == 0 && state->hook_position.y == 0 ? layout->home_hook_position : state->hook_position;
-        set_color(renderer, COLOR_CRANE);
-        (void)SDL_RenderDrawLine(renderer, hook.x, layout->home_hook_position.y - 12, hook.x, hook.y);
+        fill_rect(renderer, hook.x - 4, by - 3, 9, 9, COLOR_CRANE_DARK);
+        fill_rect(renderer, hook.x - 3, by + 3, 7, 3, COLOR_CRANE);
+        fill_rect(renderer, hook.x - 3, by - 3, 2, 2, COLOR_STEEL);
+        fill_rect(renderer, hook.x + 2, by - 3, 2, 2, COLOR_STEEL);
         fill_rect(renderer, hook.x - 2, hook.y, 5, 4, COLOR_CRANE);
+        fill_rect(renderer, bx + direction * 10 - 3, layout->base_position.y - 10, 7, 9, COLOR_CRANE_DARK);
+        fill_rect(renderer, bx + direction * 10 - 2, layout->base_position.y - 9, 5, 3, COLOR_STEEL);
+        if (state->returned_kits > 0U) {
+            draw_load_bundle(renderer, (building_clock_point_t){state->stock_position.x, (int16_t)(state->stock_position.y - 7)}, 3U, COLOR_MASONRY_LIGHT);
+        }
     }
     set_color(renderer, COLOR_LADDER);
     for (uint8_t lift = 0U; lift < world->lift_count; lift++) {
@@ -486,12 +486,44 @@ static void draw_load_bundle(SDL_Renderer* renderer, building_clock_point_t posi
 }
 
 static void draw_loads(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
+    /* The hoist works outboard of the girder fronts, not in the workers'
+     * walking plane. Keep its taut cable visible across foreground masonry. */
+    for (uint8_t id = 0U; id < scene->state.crane_count; id++) {
+        const building_clock_crane_t* crane = &scene->state.cranes[id];
+        /* One foreground cable path for every phase, including idle/retract.
+         * Do not inherit the mast or load's drawing color. */
+        set_color(renderer, COLOR_LADDER);
+        (void)SDL_RenderDrawLine(renderer, crane->hook_position.x, crane->travel_y - 4, crane->hook_position.x, crane->hook_position.y);
+        fill_rect(renderer, crane->hook_position.x - 2, crane->hook_position.y, 5, 3, COLOR_CRANE);
+    }
     for (uint8_t load_id = 0U; load_id < BUILDING_CLOCK_MAX_LOADS; load_id++) {
         const building_clock_load_t* load = &scene->state.loads[load_id];
-        if (load->status != BUILDING_CLOCK_LOAD_STAGED && load->status != BUILDING_CLOCK_LOAD_CARRIED) {
+        if (load->status != BUILDING_CLOCK_LOAD_STAGED && load->status != BUILDING_CLOCK_LOAD_CARRIED && load->status != BUILDING_CLOCK_LOAD_SUSPENDED && load->status != BUILDING_CLOCK_LOAD_LANDED) {
             continue;
         }
-        if (load->digit_id >= BUILDING_CLOCK_DIGIT_COUNT || load->section_id >= scene->state.digits[load->digit_id].incoming.section_count) {
+        if (load->status == BUILDING_CLOCK_LOAD_LANDED) {
+            fill_rect(renderer, load->position.x - 7, load->position.y + 5, 14, 2, COLOR_STEEL);
+            fill_rect(renderer, load->position.x - 6, load->position.y + 7, 2, 2, COLOR_STEEL);
+            fill_rect(renderer, load->position.x + 5, load->position.y + 7, 2, 2, COLOR_STEEL);
+        }
+        if (load->status == BUILDING_CLOCK_LOAD_SUSPENDED && load->machinery_id < scene->state.crane_count) {
+            const building_clock_crane_t* crane = &scene->state.cranes[load->machinery_id];
+            if (crane->suspended_load_id != load_id) {
+                continue; /* One joined sling, not two overlapping pallets. */
+            }
+            const bool paired = load->companion_load_id < BUILDING_CLOCK_MAX_LOADS;
+            const int x = load->position.x + (paired ? 3 : 0), y = load->position.y;
+            const int columns = paired ? 3 : 2, count = paired ? 6 : 3;
+            for (int brick = 0; brick < count; brick++) {
+                draw_masonry_brick(renderer, (building_clock_rect_t){(int16_t)(x - columns * 4 + brick % columns * 8), (int16_t)(y - brick / columns * 6), 7U, 5U}, COLOR_MASONRY_LIGHT);
+            }
+            fill_rect(renderer, x - columns * 4 - 1, y + 5, columns * 8 + 1, 2, COLOR_BOOTS);
+            set_color(renderer, COLOR_ROPE);
+            (void)SDL_RenderDrawLine(renderer, crane->hook_position.x, crane->hook_position.y + 2, x - columns * 4, y + 5);
+            (void)SDL_RenderDrawLine(renderer, crane->hook_position.x, crane->hook_position.y + 2, x + columns * 4 - 1, y + 5);
+            if (crane->status == BUILDING_CLOCK_CRANE_LOWERING_AT_DESTINATION) {
+                (void)SDL_RenderDrawLine(renderer, x + columns * 4 - 1, y + 5, x + columns * 4 - 1, y + 15);
+            }
             continue;
         }
         building_clock_point_t position = load->position;
@@ -531,6 +563,16 @@ static void draw_loads(SDL_Renderer* renderer, const building_clock_scene_snapsh
             draw_load_bundle(renderer, position, visible > 4U ? 4U : visible, color);
             fill_rect(renderer, position.x - 8, position.y + 5, 17, 2, COLOR_BOOTS);
         }
+    }
+    for (uint8_t id = 0U; id < scene->state.crane_count; id++) {
+        const building_clock_crane_t* crane = &scene->state.cranes[id];
+        if (crane->status != BUILDING_CLOCK_CRANE_LOWERING_AT_DESTINATION || crane->abort_requested) {
+            continue;
+        }
+        const int x = crane->delivery_position.x, y = crane->delivery_position.y + 16;
+        fill_rect(renderer, x - 12, y - 1, 25, 2, COLOR_STEEL_DARK);
+        fill_rect(renderer, x - 10, y - 3, 3, 3, COLOR_STEEL);
+        fill_rect(renderer, x + 8, y - 3, 3, 3, COLOR_STEEL);
     }
 }
 
@@ -614,24 +656,19 @@ static void draw_temp_structures(SDL_Renderer* renderer, const building_clock_sc
                 fill_rect(renderer, x - 3, y, 7, 2, COLOR_LADDER);
             }
         } else {
-            fill_rect(renderer, x - 6, top, 2, bottom - top + 1, COLOR_STEEL);
-            fill_rect(renderer, x + 5, top, 2, bottom - top + 1, COLOR_STEEL);
+            /* Horizontal decks on an explicit yellow climbing ladder, not
+             * vertical blue girders that look like another kind of route. */
+            fill_rect(renderer, x - 4, top, 2, bottom - top + 1, COLOR_LADDER);
+            fill_rect(renderer, x + 3, top, 2, bottom - top + 1, COLOR_LADDER);
             for (uint8_t anchor = 0U; anchor < attachment->anchor_count; anchor++) {
                 const int deck_y = attachment->anchors[anchor].y;
                 if (deck_y < top) {
                     continue;
                 }
                 fill_rect(renderer, x - 8, deck_y - 2, 17, 4, COLOR_STEEL);
-                if (anchor + 1U < attachment->anchor_count) {
-                    const int next_y = attachment->anchors[anchor + 1U].y;
-                    set_color(renderer, COLOR_STEEL_DARK);
-                    (void)SDL_RenderDrawLine(renderer, x - 5, deck_y + 2, x + 5, next_y - 2);
-                    (void)SDL_RenderDrawLine(renderer, x + 5, deck_y + 2, x - 5, next_y - 2);
-                }
             }
-            fill_rect(renderer, x - 1, top, 2, bottom - top + 1, COLOR_LADDER);
             for (int y = top + 4; y < bottom; y += 7) {
-                fill_rect(renderer, x - 4, y, 8, 1, COLOR_LADDER);
+                fill_rect(renderer, x - 3, y, 7, 2, COLOR_LADDER);
             }
         }
     }
@@ -643,8 +680,11 @@ static unsigned worker_frame(const building_clock_scene_snapshot_t* scene, const
     if (worker->reserved_edge_id < scene->world->navigation.edge_count || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_WALK_OUT ||
         worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_RETURN || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_APPROACH ||
         worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_PUSH || worker->rope.phase == BUILDING_CLOCK_ROPE_DESCEND || worker->rope.phase == BUILDING_CLOCK_ROPE_ASCEND ||
-        worker->rope.phase == BUILDING_CLOCK_ROPE_SHIFT) {
+        worker->rope.phase == BUILDING_CLOCK_ROPE_SHIFT || (worker->site_activity != BUILDING_CLOCK_UPKEEP_NONE && worker->state == BUILDING_CLOCK_WORKER_WALK)) {
         return (unsigned)((abs(worker->position.x) + abs(worker->position.y)) / 3) % 8U;
+    }
+    if (worker->site_activity != BUILDING_CLOCK_UPKEEP_NONE) {
+        return (unsigned)(worker->site_elapsed_ms / 110U + id * 3U) % 8U;
     }
     return (unsigned)(scene->state.elapsed_ms / 110U + id * 3U) % 8U;
 }
@@ -681,6 +721,54 @@ static void draw_rope_equipment(SDL_Renderer* renderer, const building_clock_sce
     }
 }
 
+static bool carrying_upkeep_tool(const building_clock_worker_t* worker) {
+    return worker->site_activity >= BUILDING_CLOCK_UPKEEP_SWEEP && worker->site_activity <= BUILDING_CLOCK_UPKEEP_CHECK_TOOLS && worker->site_phase >= BUILDING_CLOCK_UPKEEP_APPROACH;
+}
+
+static void draw_toolbox(SDL_Renderer* renderer, int x, int y, bool open) {
+    fill_rect(renderer, x - 5, y - 5, 11, 5, COLOR_BOOTS);
+    fill_rect(renderer, x - 4, y - 4, 9, 2, COLOR_MASONRY);
+    fill_rect(renderer, x - 2, y - 7, 5, 1, COLOR_STEEL);
+    fill_rect(renderer, x - 2, y - 6, 1, 2, COLOR_STEEL);
+    fill_rect(renderer, x + 2, y - 6, 1, 2, COLOR_STEEL);
+    if (open) {
+        fill_rect(renderer, x - 5, y - 9, 10, 2, COLOR_MASONRY_DARK);
+        fill_rect(renderer, x - 3, y - 5, 1, 3, COLOR_WORKER);
+        fill_rect(renderer, x, y - 6, 3, 1, COLOR_STEEL);
+    }
+}
+
+static void draw_upkeep_stations(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
+    for (uint8_t id = 0U; id < scene->world->platform_count; id++) {
+        const building_clock_upkeep_station_t* station = &scene->state.upkeep[id];
+        if (!station->enabled) {
+            continue;
+        }
+        const int x = station->home.x, y = station->home.y;
+        /* A low tool tray and flask, not another big decorative structure. */
+        fill_rect(renderer, x - 9, y - 2, 23, 2, COLOR_ROPE);
+        fill_rect(renderer, x + 9, y - 8, 3, 6, COLOR_STEEL);
+        fill_rect(renderer, x + 9, y - 9, 3, 1, COLOR_WORKER);
+        fill_rect(renderer, x + 13, y - 4, 3, 2, COLOR_WORKER);
+        const uint8_t owner = station->owner_worker_id;
+        if (owner >= scene->state.worker_count || !carrying_upkeep_tool(&scene->state.workers[owner])) {
+            draw_toolbox(renderer, station->tool_position.x, station->tool_position.y, false);
+        }
+        for (unsigned patch = 0U; patch < 3U; patch++) {
+            if ((station->dust_mask & (1U << patch)) != 0U) {
+                const int px = scene->world->platforms[id].x_end - 24 - (int)patch * 13;
+                fill_rect(renderer, px - 3, y - 1, 3, 1, COLOR_BOOTS);
+                fill_rect(renderer, px + 2, y - 2, 2, 2, COLOR_ROPE);
+            }
+        }
+        /* A chalk inspection mark is the lasting result of a completed round. */
+        if (station->rounds_completed > 0U) {
+            fill_rect(renderer, x + 19, y + 3, 1, 2, COLOR_WORKER);
+            fill_rect(renderer, x + 20, y + 4, 3, 1, COLOR_WORKER);
+        }
+    }
+}
+
 static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene, uint8_t worker_id, bool show_id) {
     static const int stride[8] = {-3, -2, 0, 2, 3, 2, 0, -2};
     static const SDL_Color uniforms[3] = {{92, 104, 191, 255}, {74, 143, 151, 255}, {139, 88, 136, 255}};
@@ -695,7 +783,13 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     const bool sitting = worker->state == BUILDING_CLOCK_WORKER_REST;
     const bool clearing = worker->state == BUILDING_CLOCK_WORKER_CLEAR_DEBRIS;
     const bool carrying = worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS || worker->carried_debris_id < BUILDING_CLOCK_MAX_DEBRIS_PIECES;
-    const int crouch = sitting ? 5 : (clearing || (job != NULL && job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && worker->state == BUILDING_CLOCK_WORKER_FINISH_JOB)) && frame < 4U ? 3 : 0;
+    const bool crane_loading = job != NULL && job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE && carrying;
+    const int crouch = sitting ? 5
+                       : (clearing || crane_loading || (worker->site_activity == BUILDING_CLOCK_UPKEEP_TIGHTEN && worker->site_phase == BUILDING_CLOCK_UPKEEP_WORK) ||
+                          (job != NULL && job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && worker->state == BUILDING_CLOCK_WORKER_FINISH_JOB)) &&
+                               frame < 4U
+                           ? 3
+                           : 0;
     const int head_y = y - 16 + crouch;
     const SDL_Color uniform = uniforms[worker_id % 3U];
     const SDL_Color helmet = worker_id == 0U ? COLOR_WORKER : COLOR_LADDER;
@@ -712,7 +806,8 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         fill_rect(renderer, x + direction, head_y + 3, 2, 1, COLOR_BOOTS);
     if ((worker_id & 1U) == 0U)
         fill_rect(renderer, x + direction, head_y + 5, 3, 1, COLOR_BOOTS);
-    fill_rect(renderer, x - 3, y - 10 + crouch, 7, 6, uniform);
+    const int shoulder = worker->passing_side != 0 ? 2 : 3;
+    fill_rect(renderer, x - shoulder, y - 10 + crouch, shoulder * 2 + 1, 6, uniform);
     fill_rect(renderer, x - 2, y - 10 + crouch, 1, 4, COLOR_WORKER);
     fill_rect(renderer, x + 2, y - 10 + crouch, 1, 4, COLOR_WORKER);
     fill_rect(renderer, x, y - 6 + crouch, 2, 2, COLOR_STEEL_DARK);
@@ -726,6 +821,70 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     if (climbing) {
         left_y = y - (frame < 4U ? 14 : 7);
         right_y = y - (frame < 4U ? 7 : 14);
+    } else if (worker->site_activity != BUILDING_CLOCK_UPKEEP_NONE && worker->site_phase == BUILDING_CLOCK_UPKEEP_WORK && worker->state != BUILDING_CLOCK_WORKER_WATCH) {
+        if (worker->site_activity == BUILDING_CLOCK_UPKEEP_SWEEP) {
+            const int brush_x = x + direction * (frame < 4U ? 7 : 12);
+            left_x = x + direction * 3;
+            left_y = y - 10;
+            right_x = x + direction * 6;
+            right_y = y - 6;
+            draw_limb(renderer, left_x, left_y - 2, brush_x, y - 1, COLOR_ROPE);
+            fill_rect(renderer, brush_x - 4, y - 1, 8, 2, COLOR_BOOTS);
+            if (frame >= 4U) {
+                fill_rect(renderer, brush_x + direction * 5, y - 2, 2, 1, COLOR_ROPE);
+                fill_rect(renderer, brush_x + direction * 8, y - 3, 1, 1, COLOR_BOOTS);
+            }
+        } else if (worker->site_activity == BUILDING_CLOCK_UPKEEP_TIGHTEN) {
+            /* Kneel to a real beam joint; no hammering imaginary head-height air. */
+            right_x = x + direction * (frame < 4U ? 6 : 9);
+            right_y = y - 1;
+            left_x = x + direction * 4;
+            left_y = y - 3;
+            draw_limb(renderer, right_x, right_y, right_x + direction * 3, right_y + 3, COLOR_STEEL);
+            fill_rect(renderer, right_x + direction * 3 - 1, y + 2, 3, 2, COLOR_WORKER);
+        } else if (worker->site_activity == BUILDING_CLOCK_UPKEEP_PLAN) {
+            const uint8_t partner_id = worker->site_partner_id;
+            if (partner_id < scene->state.worker_count && scene->state.workers[partner_id].site_phase == BUILDING_CLOCK_UPKEEP_WORK) {
+                const building_clock_worker_t* partner = &scene->state.workers[partner_id];
+                /* A shared folded drawing is passed hand to hand, never thrown.
+                 * Only one copy is drawn; both workers reach towards it. */
+                const uint16_t together_ms = worker->site_elapsed_ms < partner->site_elapsed_ms ? worker->site_elapsed_ms : partner->site_elapsed_ms;
+                left_x = x + direction * 7;
+                right_x = x + direction * (frame < 4U ? 10 : 8);
+                left_y = right_y = y - 8;
+                if (worker_id < partner_id) {
+                    int handoff = together_ms < 1500U ? 0 : together_ms > 2500U ? 1000 : (int)together_ms - 1500;
+                    const int paper_x = (x + partner->position.x) / 2 + direction * (-4 + handoff * 8 / 1000);
+                    fill_rect(renderer, paper_x - 4, y - 10, 9, 6, COLOR_WORKER);
+                    fill_rect(renderer, paper_x - 2, y - 9, 1, 4, COLOR_STEEL);
+                    fill_rect(renderer, paper_x, y - 8, 3, 1, COLOR_STEEL_DARK);
+                    fill_rect(renderer, right_x, right_y - (frame < 4U ? 2 : 0), 3, 1, COLOR_ROPE);
+                }
+            }
+        } else if (worker->site_activity == BUILDING_CLOCK_UPKEEP_TEA) {
+            right_x = x + direction * 5;
+            right_y = frame < 4U ? head_y + 6 : y - 6;
+            fill_rect(renderer, right_x - 1, right_y - 3, 4, 4, COLOR_WORKER);
+            if (worker->site_elapsed_ms < 750U) {
+                /* Pour from the real flask at the meeting's bench. */
+                fill_rect(renderer, right_x + direction * 3, right_y - 5, 5, 3, COLOR_STEEL);
+                fill_rect(renderer, right_x + direction * 2, right_y - 2, 1, 3, COLOR_ROPE);
+            }
+        } else if (worker->site_activity == BUILDING_CLOCK_UPKEEP_SURVEY) {
+            left_x = x + direction * 5;
+            left_y = y - 8;
+            right_x = x + direction * (frame < 4U ? 7 : 10);
+            right_y = y - (frame < 4U ? 8 : 2);
+            fill_rect(renderer, left_x - 2, left_y - 2, 5, 7, COLOR_BOOTS);
+            fill_rect(renderer, left_x - 1, left_y - 1, 3, 5, COLOR_WORKER);
+            fill_rect(renderer, right_x, right_y - 1, 2, 1, COLOR_WORKER);
+        } else {
+            left_x = x + direction * 5;
+            right_x = x + direction * (frame < 4U ? 8 : 5);
+            left_y = right_y = y - 5;
+            draw_toolbox(renderer, x + direction * 8, y - 1, true);
+            fill_rect(renderer, right_x, right_y - 3, 1, 4, COLOR_STEEL);
+        }
     } else if (worker->state == BUILDING_CLOCK_WORKER_HAMMER) {
         const int target_x = worker->rope.phase == BUILDING_CLOCK_ROPE_WORK ? worker->rope.work_position.x : x + direction * 8;
         const int target_y = worker->rope.phase == BUILDING_CLOCK_ROPE_WORK ? worker->rope.work_position.y - 8 : y - 9;
@@ -758,6 +917,16 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
                 fill_rect(renderer, target_x + direction * 3, target_y - 3, 2, 2, COLOR_WORKER_ACTION);
                 fill_rect(renderer, target_x + direction * 5, target_y, 1, 1, COLOR_WORKER_ACTION);
             }
+        }
+    } else if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY && job != NULL && job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE) {
+        const bool loading = worker->carried_load_id < BUILDING_CLOCK_MAX_LOADS;
+        left_x = x + direction * 5;
+        right_x = x + direction * (frame < 4U ? 7 : 10);
+        left_y = right_y = y - (loading ? 4 : 8);
+        if (!loading) {
+            fill_rect(renderer, x + direction * 7 - 3, y - 10, 7, 7, COLOR_CRANE_DARK);
+            fill_rect(renderer, x + direction * 7 - 2, y - 9, 3, 2, COLOR_STEEL);
+            fill_rect(renderer, right_x, right_y - 1, 1, 4, COLOR_WORKER);
         }
     } else if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY && worker->tended_builder_id < scene->state.worker_count &&
                scene->state.workers[worker->tended_builder_id].rope.moved_vertically) {
@@ -813,6 +982,10 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         left_x = x + direction * 8;
         right_x = x + direction * 10;
         left_y = right_y = y - 7;
+    } else if (carrying_upkeep_tool(worker)) {
+        right_x = x + direction * 7;
+        right_y = y - 5 + (moving ? (int)(frame % 2U) : 0);
+        draw_toolbox(renderer, right_x, right_y + 4, worker->site_activity == BUILDING_CLOCK_UPKEEP_CHECK_TOOLS && !moving);
     } else if (carrying || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_CART_TRANSFER || (job != NULL && job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL)) {
         right_x = x + direction * 6;
         right_y = y - 6 + (int)(frame % 3U);
@@ -960,7 +1133,6 @@ static void render_scene(SDL_Renderer* renderer, viewer_t* viewer) {
     }
     set_color(renderer, COLOR_BACKGROUND);
     (void)SDL_RenderClear(renderer);
-    draw_supports(renderer, viewer->scene.world);
     draw_locations(renderer, viewer->scene.world, viewer->overlays.locations);
     draw_platforms(renderer, viewer->scene.world);
     draw_ladders(renderer, viewer->scene.world);
@@ -970,6 +1142,7 @@ static void render_scene(SDL_Renderer* renderer, viewer_t* viewer) {
     draw_temp_structures(renderer, &viewer->scene);
     draw_falling_and_debris(renderer, &viewer->scene, viewer->overlays.hazards);
     draw_loads(renderer, &viewer->scene);
+    draw_upkeep_stations(renderer, &viewer->scene);
     draw_site_feedback(renderer, &viewer->scene);
     draw_debug_areas(renderer, &viewer->scene, &viewer->overlays);
     for (int lane = -1; lane <= 1; lane++) {
@@ -986,49 +1159,6 @@ static void render_scene(SDL_Renderer* renderer, viewer_t* viewer) {
     SDL_RenderPresent(renderer);
 }
 
-static bool add_job(viewer_t* viewer, uint8_t target, building_clock_job_kind_t kind) {
-    const building_clock_simple_job_spec_t spec = {
-        .kind = kind,
-        .priority = (uint8_t)(10U + viewer->job_serial % 6U),
-        .target_node_id = target,
-        .required_worker_capabilities = kind == BUILDING_CLOCK_JOB_INSPECT ? BUILDING_CLOCK_WORKER_CAN_INSPECT : BUILDING_CLOCK_WORKER_CAN_BUILD,
-        .action_duration_ms = kind == BUILDING_CLOCK_JOB_PATROL ? 200U : 1000U,
-    };
-    uint8_t job_id = BUILDING_CLOCK_INVALID_ID;
-    if (building_clock_simulation_add_job(&viewer->simulation, &viewer->world, &spec, &job_id) != BUILDING_CLOCK_SIMULATION_OK) {
-        return false;
-    }
-    viewer->job_serial++;
-    return true;
-}
-
-static uint8_t collect_demo_targets(const viewer_t* viewer, uint8_t targets[24]) {
-    uint8_t target_count = 0U;
-    if (viewer->world.depot_count > 0U) {
-        targets[target_count++] = viewer->world.depots[0].access_node_id;
-    }
-    for (uint8_t node = 0U; node < viewer->world.navigation.node_count && target_count < 24U; node++) {
-        if (viewer->world.navigation.nodes[node].kind == BUILDING_CLOCK_NAV_NODE_MACHINERY_CONTROL || viewer->world.navigation.nodes[node].kind == BUILDING_CLOCK_NAV_NODE_LADDER_TOP) {
-            targets[target_count++] = node;
-        }
-    }
-    for (uint8_t staging = 0U; staging < viewer->world.staging_area_count && target_count < 24U; staging++) {
-        targets[target_count++] = viewer->world.staging_areas[staging].access_node_id;
-    }
-    return target_count;
-}
-
-static void add_demo_jobs(viewer_t* viewer, uint8_t desired_count) {
-    uint8_t targets[24];
-    const uint8_t target_count = collect_demo_targets(viewer, targets);
-    uint8_t attempts = 0U;
-    while (viewer->simulation.state.used_job_slot_count < desired_count && target_count > 0U && attempts < 24U) {
-        const building_clock_job_kind_t kind = viewer->job_serial % 3U == 0U ? BUILDING_CLOCK_JOB_SECURE_SECTION : BUILDING_CLOCK_JOB_INSPECT;
-        (void)add_job(viewer, targets[(uint8_t)(((viewer->job_serial + attempts) * 7U) % target_count)], kind);
-        attempts++;
-    }
-}
-
 static void refresh_demo_jobs(viewer_t* viewer) {
     if (building_clock_simulation_transition_active(&viewer->simulation)) {
         return;
@@ -1038,10 +1168,6 @@ static void refresh_demo_jobs(viewer_t* viewer) {
         if (status == BUILDING_CLOCK_JOB_COMPLETE || status == BUILDING_CLOCK_JOB_CANCELLED) {
             (void)building_clock_simulation_recycle_job(&viewer->simulation, job);
         }
-    }
-    /* Ambient poses come from the simulation; patrol fixtures are stable-only. */
-    if (viewer->scenario == SCENARIO_STABLE) {
-        add_demo_jobs(viewer, 2U);
     }
 }
 
@@ -1074,7 +1200,8 @@ static bool reset_viewer(viewer_t* viewer, bool select_world) {
     if (building_clock_simulation_init(&viewer->simulation, &viewer->world, 6U) != BUILDING_CLOCK_SIMULATION_OK) {
         return false;
     }
-    viewer->job_serial = 0U;
+    viewer->simulation.crane_enabled = !viewer->manual_crane;
+    viewer->interrupt_done = false;
     uint8_t from_hour;
     uint8_t from_minute;
     uint8_t to_hour;
@@ -1098,16 +1225,24 @@ static bool reset_viewer(viewer_t* viewer, bool select_world) {
 static void advance_viewer(viewer_t* viewer, uint32_t elapsed_ms) {
     uint32_t remaining = elapsed_ms;
     while (remaining > 0U) {
-        const uint32_t delta = remaining > BUILDING_CLOCK_SIMULATION_MAX_STEP_MS ? BUILDING_CLOCK_SIMULATION_MAX_STEP_MS : remaining;
+        uint32_t delta = remaining > BUILDING_CLOCK_SIMULATION_MAX_STEP_MS ? BUILDING_CLOCK_SIMULATION_MAX_STEP_MS : remaining;
+        if (!viewer->interrupt_done && viewer->interrupt_at_ms > viewer->simulation.state.elapsed_ms && viewer->interrupt_at_ms - viewer->simulation.state.elapsed_ms < delta) {
+            delta = (uint32_t)(viewer->interrupt_at_ms - viewer->simulation.state.elapsed_ms);
+        }
         const building_clock_simulation_step_result_t result = building_clock_simulation_step(&viewer->simulation, &viewer->world, delta);
         if (result.processed_ms == 0U) {
             break;
         }
         remaining -= result.processed_ms;
-        if (viewer->scenario == SCENARIO_UNFINISHED && viewer->simulation.state.elapsed_ms >= viewer->next_minute_ms) {
+        const bool interrupt = viewer->interrupt_at_ms > 0U && !viewer->interrupt_done && viewer->simulation.state.elapsed_ms >= viewer->interrupt_at_ms;
+        const bool minute_due = viewer->scenario == SCENARIO_UNFINISHED && viewer->simulation.state.elapsed_ms >= viewer->next_minute_ms;
+        if (interrupt || minute_due) {
             const uint16_t minutes = (uint16_t)(((uint16_t)viewer->simulation.state.target_hour * 60U + viewer->simulation.state.target_minute + 1U) % 1440U);
             (void)building_clock_simulation_set_time(&viewer->simulation, &viewer->world, (uint8_t)(minutes / 60U), (uint8_t)(minutes % 60U));
-            viewer->next_minute_ms += 60000U;
+            if (minute_due) {
+                viewer->next_minute_ms += 60000U;
+            }
+            viewer->interrupt_done = viewer->interrupt_done || interrupt;
         }
         if (viewer->simulation.state.elapsed_ms >= viewer->next_job_refresh_ms) {
             refresh_demo_jobs(viewer);
@@ -1181,8 +1316,31 @@ static void save_interactive_screenshot(SDL_Surface* surface) {
 }
 
 static void print_controls(void) {
-    puts("Controls: SPACE pause | . step 50ms | R replay | N next seed | 0 stable | 1 14:37->14:38 | 2 14:59->15:00 | 3 23:59->00:00");
-    puts("          TAB status | V navigation | I node IDs | L locations | H hazards | W worker routes | D digit areas | S screenshot | +/- speed | ESC quit");
+    puts("Controls: SPACE pause | . / RIGHT step 50ms | R replay | N next seed");
+    puts("          0 stable | 1 14:37->14:38 | 2 14:59->15:00 | 3 23:59->00:00");
+    puts("          4 continuous: advance minute every 60 simulated seconds, even if unfinished | M next minute now");
+    puts("          TAB status | V navigation | I node IDs | L locations | H hazards | W worker routes | D digit areas");
+    puts("          S timestamped PNG screenshot | + / = / - speed (1x-8x) | ESC quit");
+}
+
+static void print_help(const char* program) {
+    printf("Usage: %s [options]\n", program);
+    puts("  --help, -h                 Show options and interactive controls; exit");
+    puts("  --seed N                   Fixed root seed (decimal or 0x hexadecimal)");
+    puts("  --scenario NAME            stable, single (default), rollover, midnight, continuous");
+    puts("                             unfinished is an alias for continuous (keyboard 4)");
+    puts("  --no-crane                 Disable new crane dispatch for manual-only comparison");
+    puts("  --interrupt-at-ms N         Advance target once at N ms (multiple of 50)");
+    puts("  --duration-ms N             Screenshot time or sequence duration in simulated ms");
+    puts("  --screenshot FILE           Save a headless capture; .png selects PNG, otherwise BMP");
+    puts("  --sequence DIR              Save numbered PNG frames to an existing directory");
+    puts("  --frame-ms N                Sequence interval (default 100; positive multiple of 50)");
+    puts("  --all-overlays              Start with all debug overlays enabled");
+    puts("  --animation-check           Run character animation checks and exit");
+    puts("  --animation-sheet PNG       Save animation sheet and run the checks");
+    puts("  --diagnose N                Report generation/selection statistics for N roots");
+    puts("");
+    print_controls();
 }
 
 static void handle_key(viewer_t* viewer, SDL_Surface* surface, SDL_Keycode key) {
@@ -1344,7 +1502,7 @@ static int run_diagnostics(uint32_t count) {
 }
 
 static viewer_scenario_t parse_scenario(const char* name) {
-    if (strcmp(name, "unfinished") == 0) {
+    if (strcmp(name, "unfinished") == 0 || strcmp(name, "continuous") == 0) {
         return SCENARIO_UNFINISHED;
     }
     if (strcmp(name, "stable") == 0) {
@@ -1356,7 +1514,10 @@ static viewer_scenario_t parse_scenario(const char* name) {
     if (strcmp(name, "midnight") == 0) {
         return SCENARIO_MIDNIGHT;
     }
-    return SCENARIO_SINGLE;
+    if (strcmp(name, "single") == 0) {
+        return SCENARIO_SINGLE;
+    }
+    return SCENARIO_COUNT;
 }
 
 static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canvas, viewer_t* viewer, const char* sheet_path) {
@@ -1451,10 +1612,25 @@ int main(int argc, char** argv) {
     uint32_t duration_ms = 0U;
     uint32_t diagnostic_count = 0U;
     for (int argument = 1; argument < argc; argument++) {
-        if (strcmp(argv[argument], "--seed") == 0 && argument + 1 < argc) {
+        if (strcmp(argv[argument], "--help") == 0 || strcmp(argv[argument], "-h") == 0) {
+            print_help(argv[0]);
+            return 0;
+        } else if (strcmp(argv[argument], "--seed") == 0 && argument + 1 < argc) {
             viewer.root_seed = strtoull(argv[++argument], NULL, 0);
         } else if (strcmp(argv[argument], "--scenario") == 0 && argument + 1 < argc) {
             viewer.scenario = parse_scenario(argv[++argument]);
+            if (viewer.scenario == SCENARIO_COUNT) {
+                fprintf(stderr, "Unknown scenario '%s'; use --help\n", argv[argument]);
+                return 2;
+            }
+        } else if (strcmp(argv[argument], "--no-crane") == 0) {
+            viewer.manual_crane = true;
+        } else if (strcmp(argv[argument], "--interrupt-at-ms") == 0 && argument + 1 < argc) {
+            viewer.interrupt_at_ms = (uint32_t)strtoul(argv[++argument], NULL, 0);
+            if (viewer.interrupt_at_ms % VIEW_STEP_MS != 0U) {
+                fprintf(stderr, "Interruption time must be a multiple of 50 ms\n");
+                return 2;
+            }
         } else if (strcmp(argv[argument], "--screenshot") == 0 && argument + 1 < argc) {
             screenshot_path = argv[++argument];
         } else if (strcmp(argv[argument], "--sequence") == 0 && argument + 1 < argc) {
@@ -1473,10 +1649,7 @@ int main(int argc, char** argv) {
         } else if (strcmp(argv[argument], "--all-overlays") == 0) {
             viewer.overlays = (viewer_overlays_t){true, true, true, true, true, true, true};
         } else {
-            fprintf(stderr,
-                    "Usage: %s [--seed N] [--scenario stable|single|rollover|midnight|unfinished] [--duration-ms N] [--screenshot FILE | --sequence DIR --frame-ms N] [--animation-check | "
-                    "--animation-sheet PNG] [--all-overlays] [--diagnose N]\n",
-                    argv[0]);
+            fprintf(stderr, "Unknown option or missing argument: %s; use --help\n", argv[argument]);
             return 2;
         }
     }

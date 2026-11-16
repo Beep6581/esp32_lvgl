@@ -120,7 +120,8 @@ static void test_break_spacing_and_cart_interruption(void) {
     for (unsigned a = 0U; a < 4U; a++) {
         for (unsigned b = a + 1U; b < 4U; b++) {
             const int dx = simulation.state.workers[a].position.x - simulation.state.workers[b].position.x;
-            expect_true(dx <= -22 || dx >= 22, "idle colleagues occupy separate real platform positions");
+            const bool moving = simulation.state.workers[a].state == BUILDING_CLOCK_WORKER_WALK || simulation.state.workers[b].state == BUILDING_CLOCK_WORKER_WALK;
+            expect_true(moving || dx <= -22 || dx >= 22, "stationary colleagues occupy separate real platform positions; walkers may pass in platform depth");
         }
     }
 

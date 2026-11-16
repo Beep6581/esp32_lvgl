@@ -113,6 +113,7 @@ static void check_counts(const building_clock_world_t* world) {
     expect_true(world->platform_count <= BUILDING_CLOCK_MAX_PLATFORM_SPANS, "platform count within capacity");
     expect_true(world->ladder_count <= BUILDING_CLOCK_MAX_LADDERS, "ladder count within capacity");
     expect_true(world->major_support_count <= BUILDING_CLOCK_MAX_MAJOR_SUPPORTS, "support count within capacity");
+    expect_true(world->major_support_count == 0U, "horizontal girders only: no generated vertical supports");
     expect_true(world->crane_count <= BUILDING_CLOCK_MAX_CRANES, "crane count within capacity");
     expect_true(world->lift_count <= BUILDING_CLOCK_MAX_LIFTS, "lift count within capacity");
     expect_true(world->cart_route_count <= BUILDING_CLOCK_MAX_CART_ROUTES, "cart route count within capacity");

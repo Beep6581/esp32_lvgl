@@ -10,6 +10,7 @@ idf_component_register(
         "building_clock_scene.c"
         "building_clock_seed.c"
         "building_clock_simulation.c"
+        "building_clock_upkeep.c"
         "building_clock_validation.c"
         "building_clock_world_selection.c"
     INCLUDE_DIRS "include"

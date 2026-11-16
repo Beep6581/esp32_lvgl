@@ -491,7 +491,41 @@ typedef enum {
     BUILDING_CLOCK_PLATFORM_WORK,
     BUILDING_CLOCK_PLATFORM_PICKUP_APPROACH,
     BUILDING_CLOCK_PLATFORM_PICKUP,
+    BUILDING_CLOCK_PLATFORM_UPKEEP,
 } building_clock_platform_activity_phase_t;
+
+typedef enum {
+    BUILDING_CLOCK_UPKEEP_NONE = 0,
+    BUILDING_CLOCK_UPKEEP_SWEEP,
+    BUILDING_CLOCK_UPKEEP_TIGHTEN,
+    BUILDING_CLOCK_UPKEEP_CHECK_TOOLS,
+    BUILDING_CLOCK_UPKEEP_PLAN,
+    BUILDING_CLOCK_UPKEEP_TEA,
+    BUILDING_CLOCK_UPKEEP_SURVEY,
+} building_clock_upkeep_kind_t;
+
+typedef enum {
+    BUILDING_CLOCK_UPKEEP_FETCH = 0,
+    BUILDING_CLOCK_UPKEEP_PICK_UP,
+    BUILDING_CLOCK_UPKEEP_APPROACH,
+    BUILDING_CLOCK_UPKEEP_WORK,
+    BUILDING_CLOCK_UPKEEP_RETURN_TOOL,
+    BUILDING_CLOCK_UPKEEP_PUT_DOWN,
+} building_clock_upkeep_phase_t;
+
+/* One portable maintenance kit per suitable permanent platform. A dropped kit
+ * stays where it was put down; its next user must fetch it there. No inventory
+ * or material-recovery accounting is manufactured by quiet-site activities. */
+typedef struct {
+    building_clock_point_t home;
+    building_clock_point_t tool_position;
+    uint16_t wear_elapsed_ms;
+    uint8_t owner_worker_id;
+    uint8_t dust_mask;
+    uint8_t loose_joint;
+    uint8_t rounds_completed;
+    bool enabled;
+} building_clock_upkeep_station_t;
 
 typedef struct {
     building_clock_worker_role_t preferred_role;
@@ -529,6 +563,11 @@ typedef struct {
     building_clock_point_t platform_activity_position;
     uint8_t platform_activity_phase; /* building_clock_platform_activity_phase_t */
     uint8_t platform_motion_remainder_ms;
+    uint8_t site_activity; /* building_clock_upkeep_kind_t */
+    uint8_t site_phase;    /* building_clock_upkeep_phase_t */
+    uint8_t site_station_id;
+    uint8_t site_partner_id;
+    uint16_t site_elapsed_ms;
 } building_clock_worker_t;
 
 typedef enum {
@@ -645,6 +684,8 @@ typedef enum {
     BUILDING_CLOCK_LOAD_SUSPENDED,
     BUILDING_CLOCK_LOAD_PLACED,
     BUILDING_CLOCK_LOAD_CONSUMED,
+    /* Safely on a receiving platform, detached but not yet unpacked. */
+    BUILDING_CLOCK_LOAD_LANDED,
 } building_clock_load_status_t;
 
 typedef struct {
@@ -740,7 +781,8 @@ typedef enum {
     BUILDING_CLOCK_CRANE_LIFTING,
     BUILDING_CLOCK_CRANE_CARRYING,
     BUILDING_CLOCK_CRANE_LOWERING_AT_DESTINATION,
-    BUILDING_CLOCK_CRANE_RETURNING,
+    BUILDING_CLOCK_CRANE_RETURNING, /* Empty hook retracts and returns to loading; no crew claim. */
+    BUILDING_CLOCK_CRANE_WAITING_FOR_UNLOAD,
 } building_clock_crane_status_t;
 
 typedef struct {
@@ -750,6 +792,19 @@ typedef struct {
     uint8_t suspended_load_id;
     uint8_t operator_worker_id;
     uint16_t movement_progress_per_mille;
+    /* A two-kit sling operates outboard of platform fronts. The layout's
+     * working_area bounds service surfaces, not the empty overhead clearance.
+     * The loader/operator walks real routes; roof crew unpack at delivery. */
+    building_clock_point_t pickup_position;
+    building_clock_point_t delivery_position;
+    building_clock_point_t stock_position;
+    uint16_t returned_kits;
+    int16_t travel_y;
+    uint16_t motion_remainder_ms;
+    uint8_t operator_job_id;
+    uint8_t delivery_job_id;
+    bool abort_requested;
+    bool returning_cargo;
 } building_clock_crane_t;
 
 typedef enum {
@@ -835,6 +890,8 @@ typedef struct {
     /* Workers form a fixed dense roster; their array indices are stable IDs. */
     uint8_t worker_count;
     building_clock_worker_t workers[BUILDING_CLOCK_MAX_WORKERS];
+    /* Slots mirror platform IDs; disabled slots do not own equipment. */
+    building_clock_upkeep_station_t upkeep[BUILDING_CLOCK_MAX_PLATFORM_SPANS];
 
     /*
      * Referenced slots are reused only after their status becomes UNUSED.

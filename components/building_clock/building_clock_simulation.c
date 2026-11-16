@@ -1,11 +1,13 @@
 #include "building_clock_simulation.h"
 
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "building_clock_geometry.h"
+#include "building_clock_upkeep.h"
 
-#define WALK_MS_PER_COST_UNIT 12U
+#define WALK_MS_PER_COST_UNIT BUILDING_CLOCK_WALK_MS_PER_UNIT
 #define CLIMB_MS_PER_COST_UNIT 20U
 #define TEMP_MS_PER_COST_UNIT 16U
 #define MINIMUM_TRAVERSAL_MS 100U
@@ -17,6 +19,9 @@
 #define ROPE_MS_PER_PIXEL 20U
 #define ROPE_REACH 12
 #define CART_SACK_CAPACITY 4U
+#define CRANE_HOIST_MS_PER_UNIT 7U
+#define CRANE_TROLLEY_MS_PER_UNIT 10U
+#define CRANE_MINIMUM_SAVING_MS 1200U
 
 static const building_clock_transition_pacing_t s_default_transition_pacing = {
     .preparation_ms = 500U,
@@ -38,6 +43,7 @@ static const building_clock_transition_pacing_t s_default_transition_pacing = {
     .finishing_action_ms = 900U,
     .temporary_install_action_ms = 1200U,
     .staging_action_ms = 4000U,
+    .crane_attach_action_ms = 900U,
     .relief_entry_interval_ms = 1500U,
     .complete_hold_ms = 500U,
 };
@@ -56,9 +62,13 @@ static uint8_t section_target_node(const building_clock_world_t* world, uint8_t 
 static bool section_dependencies_secured(const building_clock_digit_structure_t* structure, const building_clock_section_state_t* section);
 static bool cache_nodes_share_platform(const building_clock_world_t* world, uint8_t first, uint8_t second);
 static bool worker_can_do_job(const building_clock_worker_t* worker, const building_clock_job_t* job, uint64_t elapsed_ms);
+static void rejoin_crane_operator(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id);
 static uint8_t job_route_destination(const building_clock_job_t* job);
 static bool job_is_live(const building_clock_job_t* job);
 static void update_carried_load_positions(building_clock_simulation_t* simulation, uint8_t worker_id);
+static bool choose_crane_delivery(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id, uint8_t job_id);
+static bool begin_crane_action(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id);
+static void advance_cranes(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint32_t elapsed_ms);
 
 static void park_worker_cart(building_clock_simulation_t* simulation, uint8_t worker_id) {
     for (uint8_t id = 0U; id < simulation->state.cart_count; id++) {
@@ -88,8 +98,8 @@ static bool world_is_usable(const building_clock_world_t* world) {
 }
 
 static bool pacing_is_usable(const building_clock_transition_pacing_t* pacing) {
-    return pacing->section_failure_interval_ms > 0U && pacing->falling_section_ms > 0U && pacing->debris_clear_action_ms > 0U && pacing->section_place_action_ms > 0U &&
-           pacing->section_secure_action_ms > 0U && pacing->finishing_action_ms > 0U;
+    return pacing->crane_attach_action_ms > 0U && pacing->crane_attach_action_ms <= UINT16_MAX && pacing->section_failure_interval_ms > 0U && pacing->falling_section_ms > 0U &&
+           pacing->debris_clear_action_ms > 0U && pacing->section_place_action_ms > 0U && pacing->section_secure_action_ms > 0U && pacing->finishing_action_ms > 0U;
 }
 
 static void record_site_event(building_clock_simulation_t* simulation, building_clock_site_event_kind_t kind, building_clock_point_t position, uint8_t digit_id) {
@@ -161,6 +171,8 @@ static void initialize_worker(building_clock_worker_t* worker, uint8_t worker_id
     worker->carried_load_id = BUILDING_CLOCK_INVALID_ID;
     worker->carried_debris_id = BUILDING_CLOCK_INVALID_ID;
     worker->tended_builder_id = BUILDING_CLOCK_INVALID_ID;
+    worker->site_station_id = BUILDING_CLOCK_INVALID_ID;
+    worker->site_partner_id = BUILDING_CLOCK_INVALID_ID;
     worker->current_node_id = node_id;
     worker->reserved_edge_id = BUILDING_CLOCK_INVALID_EDGE_ID;
     worker->reserved_destination_node_id = BUILDING_CLOCK_INVALID_ID;
@@ -185,9 +197,20 @@ building_clock_simulation_status_t building_clock_simulation_init(building_clock
     simulation->pacing = s_default_transition_pacing;
     simulation->state.worker_count = worker_count;
     simulation->crew_limit = worker_count >= 6U ? BUILDING_CLOCK_MAX_WORKERS : worker_count;
+    simulation->crane_enabled = true;
     simulation->state.cart_count = world->cart_route_count;
     simulation->state.crane_count = world->crane_count;
     simulation->state.lift_count = world->lift_count;
+    for (uint8_t id = 0U; id < simulation->state.crane_count; id++) {
+        building_clock_crane_t* crane = &simulation->state.cranes[id];
+        crane->hook_position = world->cranes[id].home_hook_position;
+        crane->suspended_load_id = BUILDING_CLOCK_INVALID_ID;
+        crane->operator_worker_id = BUILDING_CLOCK_INVALID_ID;
+        crane->operator_job_id = BUILDING_CLOCK_INVALID_ID;
+        crane->delivery_job_id = BUILDING_CLOCK_INVALID_ID;
+        crane->stock_position = world->cranes[id].base_position;
+        crane->travel_y = (int16_t)(world->cranes[id].working_area.y > 24 ? world->cranes[id].working_area.y - 20 : 4);
+    }
     for (uint8_t cart = 0U; cart < simulation->state.cart_count; cart++) {
         simulation->state.carts[cart].route_id = cart;
         simulation->state.carts[cart].operator_worker_id = BUILDING_CLOCK_INVALID_ID;
@@ -207,6 +230,7 @@ building_clock_simulation_status_t building_clock_simulation_init(building_clock
             return BUILDING_CLOCK_SIMULATION_INVALID_STATE;
         }
     }
+    building_clock_upkeep_init(simulation, world);
     return BUILDING_CLOCK_SIMULATION_OK;
 }
 
@@ -690,6 +714,34 @@ static void release_job_subject(building_clock_simulation_t* simulation, const b
     }
     if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_LOAD && job->subject.object_id < BUILDING_CLOCK_MAX_LOADS) {
         building_clock_load_t* load = &simulation->state.loads[job->subject.object_id];
+        if (load->status == BUILDING_CLOCK_LOAD_LANDED) {
+            const uint8_t ids[2] = {job->subject.object_id, load->companion_load_id};
+            for (uint8_t slot = 0U; slot < 2U; slot++) {
+                if (ids[slot] < BUILDING_CLOCK_MAX_LOADS) {
+                    building_clock_load_t* kit = &simulation->state.loads[ids[slot]];
+                    kit->digit_id = BUILDING_CLOCK_INVALID_ID;
+                    kit->section_id = BUILDING_CLOCK_INVALID_ID;
+                    kit->companion_load_id = BUILDING_CLOCK_INVALID_ID;
+                }
+            }
+            return; /* Reassign real landed stock in place, never delete it. */
+        }
+        if (load->machinery_kind == BUILDING_CLOCK_MACHINERY_CRANE && load->machinery_id < simulation->state.crane_count) {
+            building_clock_crane_t* crane = &simulation->state.cranes[load->machinery_id];
+            if (!crane->abort_requested) {
+                simulation->metrics.crane_aborts++;
+            }
+            crane->abort_requested = true;
+            crane->delivery_job_id = BUILDING_CLOCK_INVALID_ID;
+            const uint8_t ids[2] = {job->subject.object_id, load->companion_load_id};
+            for (uint8_t i = 0U; i < 2U; i++) {
+                if (ids[i] < BUILDING_CLOCK_MAX_LOADS) {
+                    simulation->state.loads[ids[i]].digit_id = BUILDING_CLOCK_INVALID_ID;
+                    simulation->state.loads[ids[i]].section_id = BUILDING_CLOCK_INVALID_ID;
+                }
+            }
+            return; /* The physical cargo remains owned until safe offload. */
+        }
         if (load->status != BUILDING_CLOCK_LOAD_UNUSED) {
             if (load->companion_load_id < BUILDING_CLOCK_MAX_LOADS) {
                 building_clock_load_t* companion = &simulation->state.loads[load->companion_load_id];
@@ -727,16 +779,59 @@ static void release_job_subject(building_clock_simulation_t* simulation, const b
 static void cancel_job_internal(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id, bool plan_egress, bool interrupted_by_transition) {
     building_clock_job_t* job = &simulation->state.jobs[job_id];
     const uint8_t worker_id = job->reserved_worker_id;
-    release_job_subject(simulation, world, job_id);
-    if (worker_id < simulation->state.worker_count && simulation->state.workers[worker_id].current_job_id == job_id) {
-        clear_worker_job(simulation, world, worker_id);
-        if (plan_egress) {
+    if (job->status == BUILDING_CLOCK_JOB_CANCELLED) {
+        /* A recalled receiver pins this terminal slot until its current edge
+         * ends. Subject cleanup already happened; never touch a recycled cargo
+         * ID a second time when the worker reaches the next real surface. */
+        if (worker_id < simulation->state.worker_count && simulation->state.workers[worker_id].current_job_id == job_id &&
+            simulation->state.workers[worker_id].reserved_edge_id == BUILDING_CLOCK_INVALID_EDGE_ID) {
+            clear_worker_job(simulation, world, worker_id);
             plan_idle_egress(simulation, world, worker_id);
+            job->reserved_worker_id = BUILDING_CLOCK_INVALID_ID;
+        }
+        return;
+    }
+    if (job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE && job->subject.object_id < simulation->state.crane_count) {
+        building_clock_crane_t* crane = &simulation->state.cranes[job->subject.object_id];
+        if (crane->suspended_load_id < BUILDING_CLOCK_MAX_LOADS) {
+            /* Cancellation is a request, not permission to delete a load in
+             * flight or snap its courier off a ladder. The operator parks it
+             * safely first. The receiving delivery owns its digit references. */
+            if (crane->delivery_job_id < BUILDING_CLOCK_MAX_JOBS && job_is_live(&simulation->state.jobs[crane->delivery_job_id])) {
+                cancel_job_internal(simulation, world, crane->delivery_job_id, true, interrupted_by_transition);
+            }
+            return;
+        }
+        /* Cargo already has physical roof support. Cancelling the released
+         * operator must not retain an equipment claim or cancel unpacking. */
+        crane->status = BUILDING_CLOCK_CRANE_RETURNING;
+        crane->operator_job_id = BUILDING_CLOCK_INVALID_ID;
+        crane->delivery_job_id = BUILDING_CLOCK_INVALID_ID;
+        crane->operator_worker_id = BUILDING_CLOCK_INVALID_ID;
+    }
+    release_job_subject(simulation, world, job_id);
+    if (job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE && worker_id < simulation->state.worker_count) {
+        rejoin_crane_operator(simulation, world, worker_id);
+    }
+    bool receiver_finishing_edge = false;
+    if (worker_id < simulation->state.worker_count && simulation->state.workers[worker_id].current_job_id == job_id) {
+        building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+        receiver_finishing_edge = job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL &&
+                                  (job->required_machinery_kind == BUILDING_CLOCK_MACHINERY_CRANE ||
+                                   (job->subject.object_id < BUILDING_CLOCK_MAX_LOADS && simulation->state.loads[job->subject.object_id].status == BUILDING_CLOCK_LOAD_LANDED)) &&
+                                  worker->reserved_edge_id != BUILDING_CLOCK_INVALID_EDGE_ID;
+        if (receiver_finishing_edge) {
+            worker->recovery_recalled = true;
+        } else {
+            clear_worker_job(simulation, world, worker_id);
+            if (plan_egress) {
+                plan_idle_egress(simulation, world, worker_id);
+            }
         }
     }
     clear_job_owner_references(simulation, job_id);
     job->status = BUILDING_CLOCK_JOB_CANCELLED;
-    job->reserved_worker_id = BUILDING_CLOCK_INVALID_ID;
+    job->reserved_worker_id = receiver_finishing_edge ? worker_id : BUILDING_CLOCK_INVALID_ID;
     simulation->metrics.jobs_cancelled++;
     if (interrupted_by_transition) {
         simulation->metrics.jobs_interrupted++;
@@ -983,6 +1078,7 @@ static bool assign_job(building_clock_simulation_t* simulation, const building_c
     if (best_job_id == BUILDING_CLOCK_INVALID_ID) {
         return false;
     }
+    (void)choose_crane_delivery(simulation, world, worker_id, best_job_id);
     building_clock_job_t* job = &simulation->state.jobs[best_job_id];
     job->status = BUILDING_CLOCK_JOB_ACTIVE;
     job->reserved_worker_id = worker_id;
@@ -1020,6 +1116,9 @@ static void free_section_load(building_clock_simulation_t* simulation, uint8_t d
         if (load->status == BUILDING_CLOCK_LOAD_UNUSED || load->digit_id != digit_id || load->section_id != section_id) {
             continue;
         }
+        if (load->machinery_kind == BUILDING_CLOCK_MACHINERY_CRANE) {
+            continue; /* Cancellation/rollover retires these after safe offload. */
+        }
         if (load->carrier_worker_id < simulation->state.worker_count && simulation->state.workers[load->carrier_worker_id].carried_load_id == load_id) {
             simulation->state.workers[load->carrier_worker_id].carried_load_id = load->companion_load_id;
         }
@@ -1034,6 +1133,7 @@ static void free_section_load(building_clock_simulation_t* simulation, uint8_t d
 static void apply_job_completion(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t job_id) {
     building_clock_job_t* job = &simulation->state.jobs[job_id];
     if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_LOAD && job->subject.object_id < BUILDING_CLOCK_MAX_LOADS) {
+        const bool landed = simulation->state.loads[job->subject.object_id].status == BUILDING_CLOCK_LOAD_LANDED;
         const uint8_t load_ids[2] = {job->subject.object_id, simulation->state.loads[job->subject.object_id].companion_load_id};
         for (uint8_t index = 0U; index < 2U; index++) {
             if (load_ids[index] >= BUILDING_CLOCK_MAX_LOADS) {
@@ -1043,12 +1143,15 @@ static void apply_job_completion(building_clock_simulation_t* simulation, const 
             load->status = BUILDING_CLOCK_LOAD_STAGED;
             load->carrier_worker_id = BUILDING_CLOCK_INVALID_ID;
             load->companion_load_id = BUILDING_CLOCK_INVALID_ID;
+            load->machinery_kind = BUILDING_CLOCK_MACHINERY_NONE;
+            load->machinery_id = BUILDING_CLOCK_INVALID_ID;
             load->position = simulation->state.workers[job->reserved_worker_id].position;
             load->position.x = (int16_t)(load->position.x + (index == 0U ? -3 : 4));
             load->position.y -= 7;
             simulation->state.digits[load->digit_id].incoming.sections[load->section_id].status = BUILDING_CLOCK_SECTION_STAGED;
             simulation->state.staging_inventory[load->location_id].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION]++;
             simulation->metrics.sections_staged++;
+            simulation->metrics.crane_kits_delivered += landed ? 1U : 0U;
         }
         return;
     }
@@ -1222,6 +1325,10 @@ static bool approach_work_spot(building_clock_simulation_t* simulation, const bu
     bool has_surface = false;
     for (uint8_t slot = 0U; slot < (pickup ? 1U : sizeof(offsets) / sizeof(offsets[0])); slot++) {
         const building_clock_point_t point = {(int16_t)(preferred_x + offsets[slot]), worker->position.y};
+        const building_clock_job_t* job = worker->current_job_id < BUILDING_CLOCK_MAX_JOBS ? &simulation->state.jobs[worker->current_job_id] : NULL;
+        if (job != NULL && job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE && !point_in_rect(point, world->cranes[job->subject.object_id].working_area)) {
+            continue;
+        }
         if (!same_platform(world, worker->position, point) || point_in_active_hazard(simulation, point)) {
             continue;
         }
@@ -1265,6 +1372,9 @@ static bool approach_work_spot(building_clock_simulation_t* simulation, const bu
 static bool begin_job_action(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id) {
     building_clock_worker_t* worker = &simulation->state.workers[worker_id];
     building_clock_job_t* job = &simulation->state.jobs[worker->current_job_id];
+    if (job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE) {
+        return begin_crane_action(simulation, world, worker_id);
+    }
     if (job->kind == BUILDING_CLOCK_JOB_PUSH_CART) {
         if (!choose_cart_task(simulation, world, worker_id)) {
             /* Another completed recovery may have consumed the final sacks. */
@@ -1277,8 +1387,12 @@ static bool begin_job_action(building_clock_simulation_t* simulation, const buil
         if (!job->source_action_complete && approach_work_spot(simulation, world, worker_id, debris->position.x, false)) {
             return true;
         }
-    } else if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->source_action_complete && approach_work_spot(simulation, world, worker_id, worker->position.x, false)) {
-        return true;
+    } else if (job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->source_action_complete) {
+        const bool landed = job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_LOAD && simulation->state.loads[job->subject.object_id].status == BUILDING_CLOCK_LOAD_LANDED;
+        const int16_t preferred_x = landed ? simulation->state.loads[job->subject.object_id].position.x : worker->position.x;
+        if (approach_work_spot(simulation, world, worker_id, preferred_x, landed)) {
+            return true;
+        }
     }
     if (job->kind != BUILDING_CLOCK_JOB_CLEAR_DEBRIS && job->source_node_id != BUILDING_CLOCK_INVALID_ID && !job->source_action_complete) {
         const bool delivery = job->kind == BUILDING_CLOCK_JOB_STAGE_MATERIAL && job->subject.kind == BUILDING_CLOCK_JOB_SUBJECT_LOAD;
@@ -1298,6 +1412,9 @@ static bool begin_job_action(building_clock_simulation_t* simulation, const buil
             return false;
         }
         building_clock_load_t* load = &simulation->state.loads[load_id];
+        if (delivery && job->source_node_id != world->depots[0].access_node_id && approach_work_spot(simulation, world, worker_id, load->position.x, true)) {
+            return true;
+        }
         if (!delivery && approach_work_spot(simulation, world, worker_id, load->position.x, true)) {
             return true;
         }
@@ -1591,6 +1708,15 @@ static void complete_current_job(building_clock_simulation_t* simulation, const 
 static uint32_t advance_action(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id, uint32_t available_ms) {
     building_clock_worker_t* worker = &simulation->state.workers[worker_id];
     building_clock_job_t* job = &simulation->state.jobs[worker->current_job_id];
+    if (job->kind == BUILDING_CLOCK_JOB_OPERATE_CRANE) {
+        /* The first action prepares the sling; subsequent updates operate the
+         * equipment, whose movement advances once per simulation quantum. */
+        if (worker->state_elapsed_ms < simulation->pacing.crane_attach_action_ms) {
+            worker->state_elapsed_ms += available_ms;
+        }
+        worker->action_phase = (uint8_t)((simulation->state.elapsed_ms / 150U) % 4U);
+        return available_ms;
+    }
     const uint32_t duration = action_duration(job);
     const uint32_t remaining = duration - worker->state_elapsed_ms;
     const uint32_t consumed = available_ms < remaining ? available_ms : remaining;
@@ -1940,13 +2066,27 @@ static void advance_worker(building_clock_simulation_t* simulation, const buildi
             advance_rope(simulation, world, worker_id, remaining_ms);
             return;
         }
+        if (building_clock_upkeep_advance(simulation, world, worker_id, remaining_ms)) {
+            return;
+        }
         if (advance_platform_activity(simulation, world, worker_id, remaining_ms)) {
             update_carried_load_positions(simulation, worker_id);
             return;
         }
         if (worker->current_job_id == BUILDING_CLOCK_INVALID_ID && worker->route_purpose == BUILDING_CLOCK_WORKER_ROUTE_NONE) {
+            if (simulation->state.clock_initialized && !building_clock_simulation_transition_active(simulation) && worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE &&
+                choose_platform_activity_position(simulation, world, worker_id)) {
+                /* A returning round may share a broad graph anchor with a
+                 * fitter. Disperse immediately, not after the idle-pose delay. */
+                (void)advance_platform_activity(simulation, world, worker_id, remaining_ms);
+                return;
+            }
             worker->behavior_timer_ms += remaining_ms;
             if (simulation->state.clock_initialized && worker->behavior_timer_ms >= 1000U) {
+                if (building_clock_upkeep_start(simulation, world, worker_id)) {
+                    (void)building_clock_upkeep_advance(simulation, world, worker_id, remaining_ms);
+                    return;
+                }
                 if (((worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE || worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_REST) &&
                      choose_cart_task(simulation, world, worker_id)) ||
                     (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_NONE && choose_platform_activity_position(simulation, world, worker_id))) {
@@ -2850,13 +2990,363 @@ static bool cache_nodes_share_platform(const building_clock_world_t* world, uint
     return false;
 }
 
-static uint8_t pair_pending_delivery(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t load_id) {
+static bool crane_surface_in_reach(const building_clock_crane_layout_t* layout, building_clock_point_t point) {
+    return point_in_rect(point, layout->working_area);
+}
+
+static bool delivery_route(const building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t from, uint8_t to, building_clock_route_t* route) {
+    const building_clock_route_request_t request = {.start_node_id = from, .destination_node_id = to, .allow_temporary_connections = true, .allow_machinery_edges = false};
+    return building_clock_find_route(world, &simulation->navigation, &request, route) == BUILDING_CLOCK_ROUTE_OK && !route_intersects_active_hazard(simulation, world, route);
+}
+
+static uint32_t crane_axis_ms(building_clock_point_t from, building_clock_point_t to) {
+    return (uint32_t)abs(from.x - to.x) * CRANE_TROLLEY_MS_PER_UNIT + (uint32_t)abs(from.y - to.y) * CRANE_HOIST_MS_PER_UNIT;
+}
+
+static bool choose_crane_delivery(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id, uint8_t job_id) {
+    building_clock_job_t* job = &simulation->state.jobs[job_id];
+    const building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+    if (!simulation->crane_enabled || job->kind != BUILDING_CLOCK_JOB_STAGE_MATERIAL || job->source_action_complete || job->subject.kind != BUILDING_CLOCK_JOB_SUBJECT_LOAD ||
+        (worker->capabilities & BUILDING_CLOCK_WORKER_CAN_RIG) == 0U) {
+        return false;
+    }
+    building_clock_route_t route;
+    if (!delivery_route(simulation, world, job->source_node_id, job->target_node_id, &route)) {
+        return false;
+    }
+    uint32_t manual_ms = route_duration_ms(world, &route) + job->action_duration_ms;
+    for (uint8_t edge = 0U; edge < route.edge_count; edge++) {
+        if (world->navigation.edges[route.edge_ids[edge]].kind != BUILDING_CLOCK_NAV_EDGE_CLIMB) {
+            continue;
+        }
+        for (uint8_t id = 0U; id < simulation->state.worker_count; id++) {
+            if (simulation->state.workers[id].reserved_edge_id == route.edge_ids[edge]) {
+                manual_ms += 700U; /* Existing spaced ladder entry, not a whole-climb lock. */
+            }
+        }
+    }
+    const building_clock_point_t destination = world->navigation.nodes[job->target_node_id].position;
+    for (uint8_t id = 0U; id < simulation->state.crane_count; id++) {
+        building_clock_crane_t* crane = &simulation->state.cranes[id];
+        const building_clock_crane_layout_t* layout = &world->cranes[id];
+        if (crane->status != BUILDING_CLOCK_CRANE_IDLE || !crane_surface_in_reach(layout, destination) || !crane_surface_in_reach(layout, layout->base_position)) {
+            continue;
+        }
+        if (!delivery_route(simulation, world, job->source_node_id, layout->operator_node_id, &route)) {
+            continue;
+        }
+        const uint32_t to_controls_ms = route_duration_ms(world, &route);
+        const building_clock_point_t pickup = {layout->base_position.x, (int16_t)(layout->base_position.y - 16)};
+        const building_clock_point_t delivery = {destination.x, (int16_t)(destination.y - 16)};
+        const uint32_t empty_ms = crane_axis_ms(crane->hook_position, (building_clock_point_t){crane->hook_position.x, crane->travel_y}) +
+                                  crane_axis_ms((building_clock_point_t){crane->hook_position.x, crane->travel_y}, (building_clock_point_t){pickup.x, crane->travel_y}) +
+                                  crane_axis_ms((building_clock_point_t){pickup.x, crane->travel_y}, pickup);
+        const uint32_t loaded_ms = crane_axis_ms(pickup, (building_clock_point_t){pickup.x, crane->travel_y}) +
+                                   crane_axis_ms((building_clock_point_t){pickup.x, crane->travel_y}, (building_clock_point_t){delivery.x, crane->travel_y}) +
+                                   crane_axis_ms((building_clock_point_t){delivery.x, crane->travel_y}, delivery);
+        uint32_t ready_ms = to_controls_ms + (empty_ms > simulation->pacing.crane_attach_action_ms ? empty_ms : simulation->pacing.crane_attach_action_ms);
+        ready_ms += loaded_ms;
+        /* A sling lands on a supported roof skid. No builder is reserved or
+         * required to receive it; ordinary unpacking can happen later. Charge
+         * the normal unpack action equally on both transport alternatives. */
+        const uint32_t crane_ms = ready_ms + job->action_duration_ms + 600U;
+        const uint32_t margin = CRANE_MINIMUM_SAVING_MS;
+        if (crane_ms + margin >= manual_ms) {
+            continue;
+        }
+        uint8_t delivery_job = BUILDING_CLOCK_INVALID_ID;
+        if (add_transition_job(simulation, world, BUILDING_CLOCK_JOB_STAGE_MATERIAL, job->subject, BUILDING_CLOCK_INVALID_ID, job->target_node_id, job->priority, BUILDING_CLOCK_WORKER_CAN_BUILD,
+                               job->action_duration_ms, &delivery_job) != BUILDING_CLOCK_SIMULATION_OK) {
+            return false; /* No capacity: leave the ordinary courier job intact. */
+        }
+        building_clock_job_t* unpack = &simulation->state.jobs[delivery_job];
+        unpack->status = BUILDING_CLOCK_JOB_BLOCKED;
+        unpack->priority = (uint8_t)(job->priority + 1U);
+        unpack->required_machinery_kind = BUILDING_CLOCK_MACHINERY_CRANE;
+        unpack->required_machinery_id = id;
+        crane->pickup_position = pickup;
+        crane->delivery_position = delivery;
+        crane->suspended_load_id = job->subject.object_id;
+        crane->operator_job_id = job_id;
+        crane->delivery_job_id = delivery_job;
+        crane->operator_worker_id = worker_id;
+        crane->abort_requested = false;
+        crane->returning_cargo = false;
+        crane->status = BUILDING_CLOCK_CRANE_SLEWING;
+        crane->motion_remainder_ms = 0U;
+        const uint8_t ids[2] = {crane->suspended_load_id, simulation->state.loads[crane->suspended_load_id].companion_load_id};
+        for (uint8_t slot = 0U; slot < 2U; slot++) {
+            if (ids[slot] < BUILDING_CLOCK_MAX_LOADS) {
+                building_clock_load_t* load = &simulation->state.loads[ids[slot]];
+                load->machinery_kind = BUILDING_CLOCK_MACHINERY_CRANE;
+                load->machinery_id = id;
+                simulation->state.digits[load->digit_id].incoming.sections[load->section_id].assigned_job_id = delivery_job;
+            }
+        }
+        job->kind = BUILDING_CLOCK_JOB_OPERATE_CRANE;
+        job->subject.kind = BUILDING_CLOCK_JOB_SUBJECT_CRANE;
+        job->subject.object_id = id;
+        job->subject.digit_id = BUILDING_CLOCK_INVALID_ID;
+        job->subject.section_id = BUILDING_CLOCK_INVALID_ID;
+        job->target_node_id = layout->operator_node_id;
+        job->required_worker_capabilities |= BUILDING_CLOCK_WORKER_CAN_RIG;
+        simulation->metrics.crane_trips++;
+        simulation->metrics.crane_estimated_saving_ms += manual_ms - crane_ms;
+        return true;
+    }
+    return false;
+}
+
+static bool begin_crane_action(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id) {
+    building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+    building_clock_job_t* job = &simulation->state.jobs[worker->current_job_id];
+    building_clock_crane_t* crane = &simulation->state.cranes[job->subject.object_id];
+    if (crane->suspended_load_id >= BUILDING_CLOCK_MAX_LOADS) {
+        worker->recovery_recalled = true;
+        return true;
+    }
+    if (!job->source_action_complete) {
+        if (job->source_node_id != world->depots[0].access_node_id && approach_work_spot(simulation, world, worker_id, simulation->state.loads[crane->suspended_load_id].position.x, true)) {
+            return true;
+        }
+        const uint8_t ids[2] = {crane->suspended_load_id, simulation->state.loads[crane->suspended_load_id].companion_load_id};
+        for (uint8_t index = 0U; index < 2U; index++) {
+            if (ids[index] < BUILDING_CLOCK_MAX_LOADS) {
+                simulation->state.loads[ids[index]].status = BUILDING_CLOCK_LOAD_CARRIED;
+                simulation->state.loads[ids[index]].carrier_worker_id = worker_id;
+            }
+        }
+        worker->carried_load_id = crane->suspended_load_id;
+        job->source_action_complete = true;
+        building_clock_route_t route;
+        if (!delivery_route(simulation, world, worker->current_node_id, job->target_node_id, &route)) {
+            return false;
+        }
+        copy_route_to_worker(worker, &route);
+        worker->route_purpose = BUILDING_CLOCK_WORKER_ROUTE_JOB;
+        worker->state = BUILDING_CLOCK_WORKER_CARRY;
+        if (worker->platform_activity_phase == BUILDING_CLOCK_PLATFORM_PICKUP) {
+            worker->platform_activity_phase = BUILDING_CLOCK_PLATFORM_RETURN;
+        }
+        return true;
+    }
+    const int16_t control_x = world->cranes[job->subject.object_id].base_position.x;
+    const int16_t beside_controls = (int16_t)(control_x + (control_x < BUILDING_CLOCK_WORLD_WIDTH / 2 ? 18 : -18));
+    if (approach_work_spot(simulation, world, worker_id, beside_controls, false)) {
+        return true;
+    }
+    /* The operating station is outboard of the walking lane. Its exclusive
+     * machinery claim is the crane itself, not a roadblock on the service
+     * graph's capacity-one control node. Rejoin a broad node after operating. */
+    (void)building_clock_navigation_release_node(world, &simulation->navigation, worker->current_node_id, worker_id);
+    crane->pickup_position = (building_clock_point_t){worker->position.x, (int16_t)(worker->position.y - 16)};
+    worker->state = BUILDING_CLOCK_WORKER_OPERATE_MACHINERY;
+    worker->state_elapsed_ms = 0U;
+    worker->action_phase = 0U;
+    return true;
+}
+
+static bool move_crane_hook(building_clock_crane_t* crane, building_clock_point_t target, uint32_t elapsed_ms) {
+    crane->target_position = target;
+    const bool horizontal = crane->hook_position.x != target.x;
+    const uint32_t period = horizontal ? CRANE_TROLLEY_MS_PER_UNIT : CRANE_HOIST_MS_PER_UNIT;
+    int16_t* coordinate = horizontal ? &crane->hook_position.x : &crane->hook_position.y;
+    const int16_t destination = horizontal ? target.x : target.y;
+    const uint32_t available = crane->motion_remainder_ms + elapsed_ms;
+    int step = (int)(available / period);
+    crane->motion_remainder_ms = (uint16_t)(available % period);
+    if (step > abs(destination - *coordinate)) {
+        step = abs(destination - *coordinate);
+    }
+    *coordinate = (int16_t)(*coordinate + (*coordinate < destination ? step : -step));
+    return crane->hook_position.x == target.x && crane->hook_position.y == target.y;
+}
+
+static void retire_crane_cargo(building_clock_simulation_t* simulation, const building_clock_world_t* world, building_clock_crane_t* crane, bool at_depot) {
+    const uint8_t ids[2] = {crane->suspended_load_id, simulation->state.loads[crane->suspended_load_id].companion_load_id};
+    for (uint8_t i = 0U; i < 2U; i++) {
+        if (ids[i] < BUILDING_CLOCK_MAX_LOADS) {
+            if (at_depot && simulation->state.jobs[crane->operator_job_id].source_node_id == world->depots[0].access_node_id) {
+                simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION]++;
+            } else {
+                crane->returned_kits++;
+                if (!at_depot) {
+                    crane->stock_position = (building_clock_point_t){crane->pickup_position.x, (int16_t)(crane->pickup_position.y + 16)};
+                }
+            }
+            memset(&simulation->state.loads[ids[i]], 0, sizeof(simulation->state.loads[ids[i]]));
+            simulation->state.used_load_slot_count--;
+            simulation->metrics.crane_kits_returned++;
+        }
+    }
+    crane->suspended_load_id = BUILDING_CLOCK_INVALID_ID;
+}
+
+static void rejoin_crane_operator(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t worker_id) {
+    building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+    if (worker->platform_activity_phase != BUILDING_CLOCK_PLATFORM_WORK) {
+        return;
+    }
+    uint8_t best = BUILDING_CLOCK_INVALID_ID;
+    int distance = INT32_MAX;
+    for (uint8_t node = 0U; node < world->navigation.node_count; node++) {
+        const building_clock_point_t point = world->navigation.nodes[node].position;
+        if (building_clock_navigation_node_capacity(world, node) >= BUILDING_CLOCK_MAX_WORKERS && same_platform(world, worker->position, point) && abs(point.x - worker->position.x) < distance) {
+            best = node;
+            distance = abs(point.x - worker->position.x);
+        }
+    }
+    if (best != BUILDING_CLOCK_INVALID_ID && reservation_acquired(building_clock_navigation_reserve_node(world, &simulation->navigation, best, worker_id))) {
+        worker->current_node_id = best;
+    }
+}
+
+static void advance_cranes(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint32_t elapsed_ms) {
+    for (uint8_t id = 0U; id < simulation->state.crane_count; id++) {
+        building_clock_crane_t* crane = &simulation->state.cranes[id];
+        if (crane->status == BUILDING_CLOCK_CRANE_IDLE) {
+            continue;
+        }
+        if (crane->status == BUILDING_CLOCK_CRANE_RETURNING) {
+            /* Retract first, then park over the real loading position. Leaving
+             * the trolley at its last delivery makes every later lift pay a
+             * redundant empty trip and can starve continuous-clock service.
+             * Released crew are not needed for this automatic return cycle. */
+            if (crane->hook_position.y != crane->travel_y) {
+                (void)move_crane_hook(crane, (building_clock_point_t){crane->hook_position.x, crane->travel_y}, elapsed_ms);
+            } else if (move_crane_hook(crane, (building_clock_point_t){crane->pickup_position.x, crane->travel_y}, elapsed_ms)) {
+                crane->status = BUILDING_CLOCK_CRANE_IDLE;
+            }
+            continue;
+        }
+        const uint8_t operator_id = crane->operator_worker_id;
+        building_clock_worker_t* worker = &simulation->state.workers[operator_id];
+        building_clock_load_t* first = crane->suspended_load_id < BUILDING_CLOCK_MAX_LOADS ? &simulation->state.loads[crane->suspended_load_id] : NULL;
+        if (first != NULL && crane->abort_requested && first->status == BUILDING_CLOCK_LOAD_AT_DEPOT) {
+            retire_crane_cargo(simulation, world, crane, true);
+            first = NULL;
+            worker->recovery_recalled = true; /* Finish the current empty edge. */
+        }
+        if (first == NULL) {
+            if (worker->reserved_edge_id != BUILDING_CLOCK_INVALID_EDGE_ID) {
+                continue;
+            }
+            const bool cancelled = crane->abort_requested;
+            const uint8_t job_id = crane->operator_job_id;
+            crane->status = BUILDING_CLOCK_CRANE_RETURNING;
+            crane->operator_job_id = BUILDING_CLOCK_INVALID_ID;
+            crane->delivery_job_id = BUILDING_CLOCK_INVALID_ID;
+            crane->operator_worker_id = BUILDING_CLOCK_INVALID_ID;
+            if (worker->current_job_id == job_id) {
+                rejoin_crane_operator(simulation, world, operator_id);
+                if (cancelled) {
+                    cancel_job_internal(simulation, world, job_id, true, false);
+                } else {
+                    complete_current_job(simulation, world, operator_id);
+                }
+            }
+            continue;
+        }
+        if (crane->abort_requested && first->status == BUILDING_CLOCK_LOAD_SUSPENDED && !crane->returning_cargo) {
+            crane->returning_cargo = true;
+            crane->status = BUILDING_CLOCK_CRANE_LIFTING;
+        }
+        if ((crane->status == BUILDING_CLOCK_CRANE_SLEWING || crane->status == BUILDING_CLOCK_CRANE_LOWERING) && worker->state != BUILDING_CLOCK_WORKER_OPERATE_MACHINERY) {
+            continue; /* No invisible operator during the courier's journey. */
+        }
+        switch (crane->status) {
+        case BUILDING_CLOCK_CRANE_SLEWING:
+            if (crane->hook_position.y != crane->travel_y) {
+                (void)move_crane_hook(crane, (building_clock_point_t){crane->hook_position.x, crane->travel_y}, elapsed_ms);
+            } else if (move_crane_hook(crane, (building_clock_point_t){crane->pickup_position.x, crane->travel_y}, elapsed_ms)) {
+                crane->status = BUILDING_CLOCK_CRANE_LOWERING;
+            }
+            break;
+        case BUILDING_CLOCK_CRANE_LOWERING:
+            if (move_crane_hook(crane, crane->pickup_position, elapsed_ms)) {
+                crane->status = BUILDING_CLOCK_CRANE_WAITING_FOR_ATTACHMENT;
+            }
+            break;
+        case BUILDING_CLOCK_CRANE_WAITING_FOR_ATTACHMENT:
+            if (worker->state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY && worker->state_elapsed_ms >= simulation->pacing.crane_attach_action_ms) {
+                if (crane->abort_requested) {
+                    worker->carried_load_id = BUILDING_CLOCK_INVALID_ID;
+                    retire_crane_cargo(simulation, world, crane, false);
+                    break;
+                }
+                /* Work-spot selection can move the loading point slightly.
+                 * The empty hook must reach that actual point before latching. */
+                if (!move_crane_hook(crane, crane->pickup_position, elapsed_ms)) {
+                    break;
+                }
+                const uint8_t ids[2] = {crane->suspended_load_id, first->companion_load_id};
+                for (uint8_t slot = 0U; slot < 2U; slot++) {
+                    if (ids[slot] < BUILDING_CLOCK_MAX_LOADS) {
+                        simulation->state.loads[ids[slot]].status = BUILDING_CLOCK_LOAD_SUSPENDED;
+                        simulation->state.loads[ids[slot]].carrier_worker_id = BUILDING_CLOCK_INVALID_ID;
+                    }
+                }
+                worker->carried_load_id = BUILDING_CLOCK_INVALID_ID;
+                crane->status = BUILDING_CLOCK_CRANE_LIFTING;
+            }
+            break;
+        case BUILDING_CLOCK_CRANE_LIFTING:
+            if (move_crane_hook(crane, (building_clock_point_t){crane->hook_position.x, crane->travel_y}, elapsed_ms)) {
+                crane->status = BUILDING_CLOCK_CRANE_CARRYING;
+            }
+            break;
+        case BUILDING_CLOCK_CRANE_CARRYING: {
+            const int16_t x = crane->returning_cargo ? crane->pickup_position.x : crane->delivery_position.x;
+            if (move_crane_hook(crane, (building_clock_point_t){x, crane->travel_y}, elapsed_ms)) {
+                crane->status = BUILDING_CLOCK_CRANE_LOWERING_AT_DESTINATION;
+            }
+            break;
+        }
+        case BUILDING_CLOCK_CRANE_LOWERING_AT_DESTINATION:
+            if (move_crane_hook(crane, crane->returning_cargo ? crane->pickup_position : crane->delivery_position, elapsed_ms)) {
+                if (crane->returning_cargo) {
+                    retire_crane_cargo(simulation, world, crane, false);
+                } else {
+                    crane->status = BUILDING_CLOCK_CRANE_WAITING_FOR_UNLOAD;
+                    building_clock_job_t* unpack = &simulation->state.jobs[crane->delivery_job_id];
+                    unpack->status = BUILDING_CLOCK_JOB_PENDING;
+                    unpack->required_machinery_kind = BUILDING_CLOCK_MACHINERY_NONE;
+                    unpack->required_machinery_id = BUILDING_CLOCK_INVALID_ID;
+                    const uint8_t ids[2] = {crane->suspended_load_id, first->companion_load_id};
+                    for (uint8_t slot = 0U; slot < 2U; slot++) {
+                        if (ids[slot] < BUILDING_CLOCK_MAX_LOADS) {
+                            building_clock_load_t* kit = &simulation->state.loads[ids[slot]];
+                            kit->position = (building_clock_point_t){(int16_t)(crane->hook_position.x + slot * 7), (int16_t)(crane->hook_position.y + 9)};
+                            kit->status = BUILDING_CLOCK_LOAD_LANDED;
+                            kit->machinery_kind = BUILDING_CLOCK_MACHINERY_NONE;
+                            kit->machinery_id = BUILDING_CLOCK_INVALID_ID;
+                        }
+                    }
+                    crane->suspended_load_id = BUILDING_CLOCK_INVALID_ID;
+                }
+            }
+            break;
+        default:
+            break;
+        }
+        if (first->status == BUILDING_CLOCK_LOAD_SUSPENDED) {
+            const uint8_t ids[2] = {crane->suspended_load_id, first->companion_load_id};
+            for (uint8_t slot = 0U; slot < 2U; slot++) {
+                if (ids[slot] < BUILDING_CLOCK_MAX_LOADS) {
+                    simulation->state.loads[ids[slot]].position = (building_clock_point_t){(int16_t)(crane->hook_position.x + slot * 7), (int16_t)(crane->hook_position.y + 9)};
+                }
+            }
+        }
+    }
+}
+
+static uint8_t pair_pending_delivery(building_clock_simulation_t* simulation, const building_clock_world_t* world, uint8_t load_id, uint8_t supply_node) {
     building_clock_load_t* load = &simulation->state.loads[load_id];
     building_clock_digit_structure_t* structure = &simulation->state.digits[load->digit_id].incoming;
     const building_clock_section_state_t* section = &structure->sections[load->section_id];
     for (uint8_t job_id = 0U; job_id < BUILDING_CLOCK_MAX_JOBS; job_id++) {
         const building_clock_job_t* job = &simulation->state.jobs[job_id];
-        if (job->status != BUILDING_CLOCK_JOB_PENDING || job->kind != BUILDING_CLOCK_JOB_STAGE_MATERIAL || job->subject.digit_id != load->digit_id ||
+        if (job->status != BUILDING_CLOCK_JOB_PENDING || job->kind != BUILDING_CLOCK_JOB_STAGE_MATERIAL || job->source_node_id != supply_node || job->subject.digit_id != load->digit_id ||
             job->subject.object_id >= BUILDING_CLOCK_MAX_LOADS) {
             continue;
         }
@@ -2895,11 +3385,36 @@ static bool stage_section_load(building_clock_simulation_t* simulation, const bu
         }
     }
     const uint8_t supply_limit = projects == 1U ? BUILDING_CLOCK_MAX_LOADS : 3U;
-    if (digit_loads >= supply_limit || simulation->state.used_load_slot_count >= BUILDING_CLOCK_MAX_LOADS) {
+    if (digit_loads >= supply_limit) {
         return false; /* Bounded supply backpressure, not a failed transition. */
     }
     const uint8_t staging_id = digit_staging_area(world, digit_id);
     if (staging_id == BUILDING_CLOCK_INVALID_ID) {
+        return false;
+    }
+    /* A minute change can leave an unpacked pallet on a real roof. Reuse it
+     * there before allocating supply slots or making another hoist trip. */
+    for (uint8_t id = 0U; id < BUILDING_CLOCK_MAX_LOADS; id++) {
+        building_clock_load_t* load = &simulation->state.loads[id];
+        if (load->status != BUILDING_CLOCK_LOAD_LANDED || load->digit_id != BUILDING_CLOCK_INVALID_ID) {
+            continue;
+        }
+        const building_clock_job_subject_t subject = {.kind = BUILDING_CLOCK_JOB_SUBJECT_LOAD, .object_id = id, .digit_id = digit_id, .section_id = section_id};
+        uint8_t job_id;
+        if (add_transition_job(simulation, world, BUILDING_CLOCK_JOB_STAGE_MATERIAL, subject, BUILDING_CLOCK_INVALID_ID, load->access_node_id, 35U, BUILDING_CLOCK_WORKER_CAN_BUILD,
+                               simulation->pacing.staging_action_ms, &job_id) != BUILDING_CLOCK_SIMULATION_OK) {
+            return false;
+        }
+        load->digit_id = digit_id;
+        load->section_id = section_id;
+        load->location_id = staging_id;
+        building_clock_job_t* job = &simulation->state.jobs[job_id];
+        job->source_node_id = BUILDING_CLOCK_INVALID_ID;
+        job->source_action_complete = true;
+        section->assigned_job_id = job_id;
+        return true;
+    }
+    if (simulation->state.used_load_slot_count >= BUILDING_CLOCK_MAX_LOADS) {
         return false;
     }
     for (uint8_t load_id = 0U; load_id < BUILDING_CLOCK_MAX_LOADS; load_id++) {
@@ -2951,16 +3466,30 @@ static bool stage_section_load(building_clock_simulation_t* simulation, const bu
             .digit_id = digit_id,
             .section_id = section_id,
         };
-        uint8_t job_id = pair_pending_delivery(simulation, world, load_id);
-        if (job_id == BUILDING_CLOCK_INVALID_ID && add_transition_job(simulation, world, BUILDING_CLOCK_JOB_STAGE_MATERIAL, subject, world->depots[0].access_node_id, source_node, 35U,
-                                                                      BUILDING_CLOCK_WORKER_CAN_BUILD, simulation->pacing.staging_action_ms, &job_id) != BUILDING_CLOCK_SIMULATION_OK) {
+        uint8_t supply_node = world->depots[0].access_node_id;
+        uint8_t recovered_crane = BUILDING_CLOCK_INVALID_ID;
+        for (uint8_t crane = 0U; crane < simulation->state.crane_count; crane++) {
+            if (simulation->state.cranes[crane].returned_kits > 0U) {
+                supply_node = world->cranes[crane].operator_node_id;
+                recovered_crane = crane;
+                break;
+            }
+        }
+        uint8_t job_id = pair_pending_delivery(simulation, world, load_id, supply_node);
+        if (job_id == BUILDING_CLOCK_INVALID_ID && add_transition_job(simulation, world, BUILDING_CLOCK_JOB_STAGE_MATERIAL, subject, supply_node, source_node, 35U, BUILDING_CLOCK_WORKER_CAN_BUILD,
+                                                                      simulation->pacing.staging_action_ms, &job_id) != BUILDING_CLOCK_SIMULATION_OK) {
             memset(&simulation->state.loads[load_id], 0, sizeof(simulation->state.loads[load_id]));
             simulation->state.used_load_slot_count--;
             return false;
         }
         section->assigned_job_id = job_id;
-        simulation->state.loads[load_id].position = world->navigation.nodes[world->depots[0].access_node_id].position;
+        simulation->state.loads[load_id].position =
+            recovered_crane < simulation->state.crane_count ? simulation->state.cranes[recovered_crane].stock_position : world->navigation.nodes[supply_node].position;
         simulation->state.loads[load_id].position.y -= 7;
+        if (recovered_crane < simulation->state.crane_count) {
+            simulation->state.cranes[recovered_crane].returned_kits--;
+            return true;
+        }
         if (simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION] == 0U) {
             simulation->state.depot_inventory[0].quantity[BUILDING_CLOCK_MATERIAL_STRUCTURAL_SECTION] = 64U;
         }
@@ -3485,6 +4014,16 @@ static void enforce_active_hazards(building_clock_simulation_t* simulation, cons
 static void prepare_workers_for_quantum(building_clock_simulation_t* simulation, const building_clock_world_t* world) {
     for (uint8_t worker_id = 0U; worker_id < simulation->state.worker_count; worker_id++) {
         building_clock_worker_t* worker = &simulation->state.workers[worker_id];
+        if (worker->site_activity != BUILDING_CLOCK_UPKEEP_NONE) {
+            bool recalled = building_clock_simulation_transition_active(simulation);
+            for (uint8_t job = 0U; !recalled && job < BUILDING_CLOCK_MAX_JOBS; job++) {
+                recalled = worker_can_do_job(worker, &simulation->state.jobs[job], simulation->state.elapsed_ms);
+            }
+            if (!recalled) {
+                continue;
+            }
+            building_clock_upkeep_interrupt(simulation, world, worker_id);
+        }
         if (worker->current_job_id < BUILDING_CLOCK_MAX_JOBS && simulation->state.jobs[worker->current_job_id].kind == BUILDING_CLOCK_JOB_PUSH_CART) {
             for (uint8_t job_id = 0U; job_id < BUILDING_CLOCK_MAX_JOBS; job_id++) {
                 const building_clock_job_t* job = &simulation->state.jobs[job_id];
@@ -3641,6 +4180,16 @@ static void update_platform_passing(building_clock_simulation_t* simulation, con
                 b->passing_side = (int8_t)-a->passing_side;
             }
         }
+        /* A fitter at a joint must not vanish into a walking colleague. Broad
+         * platforms have depth: the walker turns a shoulder and passes behind.
+         * This never grants extra capacity to a ladder or changes travel time. */
+        for (uint8_t other = 0U; other < simulation->state.worker_count; other++) {
+            const building_clock_worker_t* b = &simulation->state.workers[other];
+            if (id != other && b->site_activity != BUILDING_CLOCK_UPKEEP_NONE && b->state != BUILDING_CLOCK_WORKER_WALK && abs(a->position.x - b->position.x) < 20 &&
+                same_platform(world, a->position, b->position)) {
+                a->passing_side = a->facing == BUILDING_CLOCK_FACING_RIGHT ? 1 : -1;
+            }
+        }
     }
 }
 
@@ -3684,6 +4233,14 @@ building_clock_simulation_step_result_t building_clock_simulation_step(building_
         recycle_finished_transition_jobs(simulation);
         advance_falling_sections(simulation, world, quantum_ms);
         advance_digit_lifecycles(simulation, world, quantum_ms);
+        /* Recall before hazard handling so a local tool/meeting claim cannot
+         * outlive a forced evacuation return. No positions change here. */
+        if (building_clock_simulation_transition_active(simulation)) {
+            for (uint8_t worker = 0U; worker < simulation->state.worker_count; worker++) {
+                building_clock_upkeep_interrupt(simulation, world, worker);
+            }
+        }
+        building_clock_upkeep_tick(simulation, quantum_ms);
         enforce_active_hazards(simulation, world);
         schedule_site_recovery(simulation, world);
         prepare_workers_for_quantum(simulation, world);
@@ -3691,6 +4248,7 @@ building_clock_simulation_step_result_t building_clock_simulation_step(building_
         for (uint8_t worker_id = 0U; worker_id < simulation->state.worker_count; worker_id++) {
             advance_worker(simulation, world, worker_id, quantum_ms);
         }
+        advance_cranes(simulation, world, quantum_ms);
         update_optional_rope_tenders(simulation, world);
         update_platform_passing(simulation, world);
         update_peak_active_workers(simulation);

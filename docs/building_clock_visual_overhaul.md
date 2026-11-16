@@ -1,16 +1,143 @@
 # Clock - Builders visual/gameplay status
 
-Current implementation: uncommitted collapse-sampling refinement after `274ab1a`
+Current implementation: uncommitted living-site and functional-crane refinement after `3ead7c4`
 on `buildclock`; reviewed 2026-11-16.
 The character/site overhaul was committed in `4ccb755`; independent ropes,
 logistics and crane/date color corrections followed in `035220d`. This file
 describes the current viewer, not the superseded mandatory-tender model.
 See [the specification](building_clock_simulation.md) for architecture/design
 and [throughput](building_clock_throughput.md) for measurements and diagnostics.
-Hardware/display configuration, generator version 5, clock scale, traversal
-speeds and construction action durations are unchanged by these refinements.
+Hardware/display configuration, clock scale, traversal speeds and construction
+action durations are unchanged. Generator version 6 removes vertical supports.
 
-## What is different
+## Functional crane: current visual review
+
+The crane is now cyan-blue (47,148,211) with dark blue shadows, distinct from
+terracotta masonry and periwinkle platforms. Its cable is always ladder-yellow,
+drawn by one foreground path in every phase, including idle and retraction.
+The unloaded hook retracts while roof crew unpack; the same crane can then take
+another advantageous delivery. Standalone vertical girders are no longer
+generated or drawn. Temporary decks retain horizontal beams and explicit
+yellow climbing ladders, not blue vertical rails. The crane mast remains.
+
+Its tower/jib extend
+to the derived overhead clearance of the generated working range; this is
+functional reach, not merely a decorative boom. A trolley, hook, taut outboard
+cable and joined one/two-kit sling show the real state machine. Six bricks on
+a paired pallet correspond to two three-brick kit records, not duplicate art
+pretending to be cargo.
+
+The loader physically collects stock and brings it to the adjacent control
+stance, attaches the sling and operates a pendant. Cargo now lands on a supported
+roof skid without reserving a receiving builder or a signalling/waiting pose.
+Landing unlocks an ordinary unpack job. Stock can wait while the operator and
+crane take other work; a builder later performs the unchanged unpacking action.
+Builders then take these actual kits onto their
+normal rope jobs. A cancelled airborne pallet returns along separate vertical,
+horizontal and lowering legs; later couriers can collect its recovered stock.
+
+Review used consecutive 100/200 ms SDL captures correlated with worker/hoist
+traces, including complete single, three-digit, midnight and interrupted runs.
+Early inspection exposed three semantic defects that were fixed: holding the
+main path's control node, chasing the moving cargo horizontally, and moving an
+empty hook before an operator arrived. A later review removed the unnecessary
+operator hold through roof unpacking. The receiving hands now meet the cargo;
+the hook no longer leads the receiver around the scene. Foreground rigging
+expresses an outboard hoist, not a new climbable abstract connection.
+
+Current review evidence is in `build/crane_refinement/`: `retract-contact.png`
+shows successive loading, lowering and retracting frames; `scene-contact.png`
+follows construction into quiet operation. `single/` is a full 65-second
+100 ms sequence on v6 root `f9fd2ded6d5b25c6`. `interrupted/` changes the target
+mid-flight at 9 seconds; `rollover/` follows a complete multi-digit rebuild on
+root `72db14d36a85161a`. The ordered frames show no red/blue cable-color change,
+no parked extended cable after delivery and no standalone vertical girders.
+Version-6 seeds intentionally produce different layouts from version 5.
+
+Earlier version-5 visual evidence was in `build/builders_crane/`:
+
+- `crane-single.mp4` versus `manual-single.mp4`: same split/bridge root
+  `084160217307451e`, 100 seconds, 100 ms frames. `final-crane-contact.png` and
+  `final-landing-contact.png` show loaded lift/traverse/landing and six close
+  consecutive landing poses; `final-build-contact.png` follows roof stock into
+  actual reconstruction and back to quiet activity.
+- `crane-interrupted.mp4`, `final-interruption-contact.png`: target change at
+  9 seconds during the loaded traverse, safe return and completed new target.
+- `crane-rollover.mp4`, `crane-midnight.mp4`: complete 220/240-second sequences;
+  ordered overviews are `final-rollover-contact.png` and
+  `final-midnight-contact.png`.
+- `final-continuous/` (`a678d9daf251c133`), `final-loop/`
+  (`44b05394719c3d48`), `final-towers/` (`02ce5c58e42372d7`) and
+  `final-central/` (`7bac433ee14d632b`): 100-second sequences spanning the other
+  four topology families. The last two correctly prefer manual transport.
+  No topology or generator changes were made just to make the crane busier.
+
+Remaining weaknesses: the long top jib is visually prominent; the deliberate
+outboard plane allows the sling to pass in front of intervening girders in the
+flat image. A future renderer can strengthen depth cues, not invent navigation
+or teleport loads. Receiving a large early delivery still ties up one worker
+for preparation/signalling, and some busy-roof scheduling choices regress.
+Three/four-digit collapse produces the existing crowded temporary assembly
+around retreat nodes. The crane is selective rather than continuously animated;
+it is intentionally inactive when manual work wins. Lifts and kit-delivery carts
+remain future work. See the throughput report for paired gains and regressions.
+
+## Retained living-site improvement
+
+Quiet periods now have shared maintenance kits, girder sweeping and tightening,
+tool sorting, clipboard/chalk beam checks, brief two-person drawing reviews and
+occasional tea at real platform locations. Kits are fetched, carried and returned;
+an urgent interruption leaves a kit where it was put down. Sweepers clean actual
+patches instead of making remote dirt disappear. A colleague can inspect a
+separate connection while the kit is occupied, rather than waiting in a crowd.
+Drawing reviews reserve two positions 24 units apart; a single folded drawing
+passes between reaching hands on a shared timer. Meetings time out cleanly and
+both workers disperse. Returning crew use nearby existing graph anchors instead
+of commuting back across a whole platform. Walk cycles follow displacement;
+tool actions follow their local phase rather than a synchronized global cycle.
+
+The earlier living-site portion did not add machinery. Rope construction, individual-brick collapse,
+local rubble and loaded trolley recovery remain functional and unchanged. Quiet
+rounds stop when reconstruction starts; they are not competing priority-10 jobs.
+The old viewer-fed inspection/hammer queue is removed, so the behavior also runs
+in the shared headless simulation without a viewer.
+
+### Visual review evidence
+
+Artifacts are repository-local and untracked in `build/builders_living_site/`:
+
+- `before.mp4` and `living-site.mp4`: 180-second before/after on root
+  `6a09e667f3bcc909`; `before-contact.png` shows the former sparse activity.
+- `stable-0x*/`: full 250 ms sequences for all five families, 180 seconds each;
+  seeds are listed in the throughput report. `families-contact.png` compares them.
+- `single.mp4`, `rollover.mp4`, `midnight.mp4`: complete 240-second sequences,
+  including the return to quiet activity; `unfinished.mp4` advances targets every
+  minute without waiting for completion.
+- `sweep-sequence.png`: ordered 250 ms frames of a crouching sweeper brushing
+  a real girder patch. `plan-sequence.png`: ordered 500 ms frames of a drawing
+  review/handoff. `consecutive-50ms.png`, `closeup/` and `twin-closeup/` retain
+  finer walking/action frames. Full worker timelines are `0x*-workers.csv`.
+
+Review used ordered consecutive captures and traces, not an assumption that an
+MP4 export alone proves the movement. Sweeping/toolbox trips now read clearly;
+the folded drawing gives a readable small social moment, with both faces visible.
+The lower routes and upper roofs remain active independently in quiet scenes.
+Initial inspection found blocked fixed work spots, remote sweeping and an
+unsynchronized paper handoff; all three were corrected before final captures.
+Construction still visibly preempts rounds, and the site resumes upkeep after
+single/multiple digits become stable. Heavy rollovers still have some roof
+congestion from the existing logistics/construction system.
+
+Remaining artistic limitations: rounds are deliberately local and can become
+repetitive over long frozen-clock runs; a short/narrow platform offers fewer
+activity choices. Occasional inactivity reaches 24.75 seconds in one sampled
+world, although the other workers remain busy. Walking bodies can briefly
+occlude during depth-lane passing. The chalk marks and tool-check gesture are
+subtler than the sweeping/tea/drawing actions. Cross-level planned inspections
+and richer contextual interactions would be useful later. Functional crane work
+is described above; no display-path change is implied.
+
+### Previously committed collapse refinement
 
 The collapse review preserves section-authoritative simulation and adds only
 transient per-brick tilts. Failure still spreads spatially from one brick per
@@ -91,13 +218,13 @@ transfers finish atomically. Stable-clock dispatch fetches equipment through
 real routes, and a minute change recalls workers after their current traversal.
 Structural-kit deliveries and worker rides are still deferred.
 
-The stable viewer scenario now supplies two low-rate inspection/maintenance
+Historically, the stable viewer scenario supplied two low-rate inspection/maintenance
 jobs at real site locations instead of an eighteen-job patrol queue. Recovery,
 off-duty behavior and all actual job execution remain shared simulation code.
-Those two maintenance inputs are viewer demo wiring, not a new firmware
-ambient scheduler.
+Those two maintenance inputs were viewer demo wiring. The current living-site
+simulation replaces them, as described above.
 
-## Site and construction storytelling
+## Historical site and construction storytelling
 
 Depots are little stocked racks, staging areas have timber skids, and debris
 service bays are open bins rather than filled UI rectangles. The parked crane
@@ -215,14 +342,14 @@ The trolley provides
 a readable activity on the lower route. Construction is more intelligible with
 labels disabled, especially when watching a placement hand meet its joint.
 
-Remaining weaknesses: brief queues still bunch at roof/ladder arrivals.
+Weaknesses at that checkpoint: brief queues still bunch at roof/ladder arrivals.
 Passing gestures do not solve all same-direction or stationary-worker overlap.
 The parked crane/lift are not active material machinery. Rubble recovery is
 section-scale and some bays lack trolley access; their stored sacks remain
 visible. Stable crews now have recovery jobs, but the full ambient scheduler
 and richer equipment interactions remain future work.
 
-## Current throughput and resources
+## Historical throughput and resources
 
 The latest comparison is 89/96 (92.7%) single-digit transitions stable within
 60 s, versus 93/96 (96.9%). Visible handling adds some time; worker speeds
