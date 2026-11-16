@@ -406,6 +406,24 @@ static void test_individual_brick_collapse(void) {
                 }
                 expect_true(detached == 1U, "each section starts failing at exactly one brick");
                 expect_true(memcmp(&section, &saved, sizeof(section)) == 0, "trajectory sampling cannot mutate simulation state");
+                int16_t previous_y[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+                for (uint8_t brick = 0U; brick < count; brick++) {
+                    previous_y[brick] = original[brick].y;
+                }
+                bool saw_tilt = false;
+                for (uint32_t ms = 0U; ms <= section.duration_ms; ms += 25U) {
+                    section.elapsed_ms = ms;
+                    building_clock_falling_brick_t frame[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+                    expect_true(building_clock_falling_bricks(envelope, catch_area, &section, frame) == count, "sampling preserves the installed masonry prefix throughout collapse");
+                    for (uint8_t brick = 0U; brick < count; brick++) {
+                        expect_true(frame[brick].bounds.y >= previous_y[brick], "successive visual samples never lift a falling brick");
+                        expect_true(frame[brick].angle_degrees >= -30 && frame[brick].angle_degrees <= 30, "individual tilt stays subtle and bounded");
+                        expect_true((frame[brick].detached && !frame[brick].settled) || frame[brick].angle_degrees == 0, "seated and settled bricks do not rotate");
+                        saw_tilt |= frame[brick].angle_degrees != 0;
+                        previous_y[brick] = frame[brick].bounds.y;
+                    }
+                }
+                expect_true(saw_tilt, "falling bricks visibly tilt without independent angular state");
                 section.elapsed_ms = 150U;
                 building_clock_falling_brick_t moving[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
                 (void)building_clock_falling_bricks(envelope, catch_area, &section, moving);
@@ -431,9 +449,9 @@ static void test_individual_brick_collapse(void) {
                         dx = dx < 0 ? -dx : dx;
                         dy = dy < 0 ? -dy : dy;
                         if (dx <= 11 && dy <= 12) {
-                            int32_t delay = (int32_t)moving[brick].detach_delay_ms - (int32_t)moving[other].detach_delay_ms;
+                            int32_t delay = (int32_t)moving[brick].release_per_mille - (int32_t)moving[other].release_per_mille;
                             delay = delay < 0 ? -delay : delay;
-                            const int32_t maximum_delay = maximum_distance > 0U ? (dx + dy) * 300 / (int32_t)maximum_distance + 1 : 0;
+                            const int32_t maximum_delay = maximum_distance > 0U ? (dx + dy) * 333 / (int32_t)maximum_distance + 1 : 0;
                             expect_true(delay <= maximum_delay, "failure spreads spatially to adjacent bricks, not by construction-array order");
                         }
                     }
@@ -444,11 +462,10 @@ static void test_individual_brick_collapse(void) {
                 (void)building_clock_falling_bricks(envelope, catch_area, &section, landed);
                 (void)building_clock_falling_bricks(envelope, catch_area, &section, replay);
                 const building_clock_debris_t debris = {
-                    .section_kind = kind,
+                    .section_kind = (uint8_t)kind,
                     .source_numeral = numeral,
-                    .failure_brick_id = section.failure_brick_id,
                     .masonry_progress_per_mille = installed,
-                    .horizontal_drift = 2,
+                    .position = section.landing_position,
                 };
                 building_clock_rect_t pile[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
                 expect_true(building_clock_debris_bricks(envelope, catch_area, &debris, pile) == count, "landed rubble preserves every installed brick");
@@ -460,12 +477,88 @@ static void test_individual_brick_collapse(void) {
                                 "whole landed bricks remain inside their own digit's catch geometry");
                     expect_true(points_equal(building_clock_rect_center(landed[brick].bounds), landed[brick].landing_position), "each brick reaches its own fixed landing position");
                     expect_true(memcmp(&landed[brick].bounds, &pile[brick], sizeof(pile[brick])) == 0, "settlement does not relocate or replace landed bricks");
-                    expect_true(memcmp(&landed[brick].bounds, &replay[brick].bounds, sizeof(landed[brick].bounds)) == 0 && landed[brick].detach_delay_ms == replay[brick].detach_delay_ms,
+                    expect_true(memcmp(&landed[brick].bounds, &replay[brick].bounds, sizeof(landed[brick].bounds)) == 0 && landed[brick].release_per_mille == replay[brick].release_per_mille,
                                 "brick paths are deterministic without consuming random values during sampling");
                 }
             }
         }
     }
+}
+
+static void test_falling_visuals_survive_new_target(void) {
+    static const uint64_t seeds[] = {UINT64_C(0x6a09e667f3bcc909), UINT64_C(0x02ce5c58e42372d7), UINT64_C(0x7bac433ee14d632b), UINT64_C(0xaf4a0846691a0e44), UINT64_C(0xf9fd2ded6d5b25c6)};
+    static const uint8_t times[][4] = {{14, 37, 14, 38}, {14, 59, 15, 0}, {23, 59, 0, 0}};
+    for (unsigned root = 0U; root < sizeof(seeds) / sizeof(seeds[0]); root++) {
+        building_clock_world_t world;
+        select_test_world(&world, seeds[root]);
+        for (unsigned scenario = 0U; scenario < sizeof(times) / sizeof(times[0]); scenario++) {
+            building_clock_simulation_t simulation;
+            prepare_transition(&simulation, &world, times[scenario][0], times[scenario][1], times[scenario][2], times[scenario][3], 6U);
+            for (uint32_t ms = 0U; ms < TRANSITION_TIMEOUT_MS && simulation.state.falling_section_count == 0U; ms += 50U) {
+                (void)building_clock_simulation_step(&simulation, &world, 50U);
+            }
+            expect_true(simulation.state.falling_section_count > 0U, "generated-world interruption catches an actual collapse");
+            if (simulation.state.falling_section_count == 0U) {
+                continue;
+            }
+            (void)building_clock_simulation_step(&simulation, &world, 150U);
+            const building_clock_simulation_t before = simulation;
+            const uint16_t minute = (uint16_t)(((uint16_t)times[scenario][2] * 60U + times[scenario][3] + 1U) % 1440U);
+            expect_true(building_clock_simulation_set_time(&simulation, &world, (uint8_t)(minute / 60U), (uint8_t)(minute % 60U)) == BUILDING_CLOCK_SIMULATION_OK,
+                        "the next minute is accepted during individual-brick collapse");
+            expect_true(simulation.state.falling_section_count == before.state.falling_section_count &&
+                            memcmp(simulation.state.falling_sections, before.state.falling_sections, sizeof(simulation.state.falling_sections)) == 0,
+                        "new targets retain the physical outgoing sections, failure seeds and collapse clocks");
+            for (uint8_t id = 0U; id < before.state.falling_section_count; id++) {
+                const building_clock_falling_section_t* section = &simulation.state.falling_sections[id];
+                const building_clock_digit_work_area_t* area = &world.digit_work_areas[section->source_digit_id];
+                building_clock_falling_brick_t old_frame[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+                building_clock_falling_brick_t new_frame[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+                const uint8_t count = building_clock_falling_bricks(area->envelope, area->collapse_catch_area, &before.state.falling_sections[id], old_frame);
+                expect_true(building_clock_falling_bricks(area->envelope, area->collapse_catch_area, section, new_frame) == count, "rollover does not invent or discard falling visual bricks");
+                for (uint8_t brick = 0U; brick < count; brick++) {
+                    expect_true(memcmp(&old_frame[brick].bounds, &new_frame[brick].bounds, sizeof(old_frame[brick].bounds)) == 0 && old_frame[brick].angle_degrees == new_frame[brick].angle_degrees,
+                                "new target digits cannot change old bricks' sampled positions or tilt");
+                }
+            }
+            building_clock_simulation_t replay = simulation;
+            for (uint32_t ms = 0U; ms < FULL_TRANSITION_TIMEOUT_MS && building_clock_simulation_transition_active(&simulation); ms += 50U) {
+                (void)building_clock_simulation_step(&simulation, &world, 50U);
+                (void)building_clock_simulation_step(&replay, &world, 50U);
+            }
+            expect_true(!building_clock_simulation_transition_active(&simulation) && transition_resources_clean(&simulation),
+                        "interrupted collapse and latest-target rebuilding clean up all resources");
+            expect_true(memcmp(&simulation, &replay, sizeof(simulation)) == 0 && simulation.metrics.evacuation_failures == 0U, "interrupted-collapse replay and worker safety remain deterministic");
+        }
+    }
+}
+
+static void test_brick_sampler_duration_bounds(void) {
+    const building_clock_rect_t envelope = {40, 170, 78, 144};
+    const building_clock_rect_t catch_area = {44, 322, 70, 14};
+    building_clock_falling_section_t section = {
+        .section_kind = BUILDING_CLOCK_SECTION_TOP_BEAM,
+        .source_numeral = 8U,
+        .masonry_progress_per_mille = 1000U,
+        .duration_ms = UINT32_MAX,
+        .elapsed_ms = UINT32_MAX / 2U,
+        .start_position = building_clock_rect_center(building_clock_section_bounds(envelope, BUILDING_CLOCK_SECTION_TOP_BEAM)),
+        .landing_position = {80, 332},
+    };
+    building_clock_falling_brick_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
+    const uint8_t count = building_clock_falling_bricks(envelope, catch_area, &section, bricks);
+    expect_true(count > 0U, "normalized collapse sampling supports the full uint32 duration range");
+    section.elapsed_ms = UINT32_MAX;
+    expect_true(building_clock_falling_bricks(envelope, catch_area, &section, bricks) == count, "maximum-duration endpoint preserves the brick prefix");
+    for (uint8_t brick = 0U; brick < count; brick++) {
+        expect_true(bricks[brick].settled && bricks[brick].angle_degrees == 0, "maximum-duration collapse terminates in the same flat pile");
+    }
+    section.duration_ms = 0U;
+    expect_true(building_clock_falling_bricks(envelope, catch_area, &section, bricks) == 0U, "zero-duration sampling cannot divide by zero");
+    section.duration_ms = 1U;
+    expect_true(building_clock_falling_bricks(envelope, catch_area, &section, bricks) == count, "minimum nonzero duration also terminates safely");
+    section.masonry_progress_per_mille = 1001U;
+    expect_true(building_clock_falling_bricks(envelope, catch_area, &section, bricks) == 0U, "invalid masonry prefixes cannot overrun transient output");
 }
 
 static uint16_t required_capability(building_clock_job_kind_t kind) {
@@ -1175,6 +1268,8 @@ int main(void) {
     test_multi_digit_and_midnight();
     test_falling_sections_land_coherently();
     test_individual_brick_collapse();
+    test_falling_visuals_survive_new_target();
+    test_brick_sampler_duration_bounds();
     test_worker_interruption();
     test_long_run_transition_batch();
     test_complete_reconstruction_cycle();

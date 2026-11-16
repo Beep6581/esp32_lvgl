@@ -4,6 +4,7 @@
 
 _Static_assert(BUILDING_CLOCK_DIGIT_COUNT <= 8, "digit masks store one bit per digit");
 _Static_assert(BUILDING_CLOCK_MAX_DIGIT_SECTIONS <= 16, "section dependency masks are 16 bits");
+_Static_assert(BUILDING_CLOCK_SECTION_FINISHING_OR_INFILL <= UINT8_MAX, "rubble masonry recipes store an 8-bit section kind");
 _Static_assert(BUILDING_CLOCK_MAX_PLATFORM_SPANS <= 32, "major-support platform masks are 32 bits");
 _Static_assert(BUILDING_CLOCK_MAX_MAJOR_SUPPORTS <= 32, "platform support masks are 32 bits");
 _Static_assert(BUILDING_CLOCK_MAX_WORKERS <= 16, "worker occupancy masks are 16 bits");

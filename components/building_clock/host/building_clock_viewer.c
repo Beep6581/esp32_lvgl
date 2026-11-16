@@ -371,6 +371,73 @@ static void draw_masonry_brick(SDL_Renderer* renderer, building_clock_rect_t bri
     (void)SDL_RenderDrawLine(renderer, brick.x + 1, brick.y + 1, brick.x + (int)brick.width - 2, brick.y + 1);
 }
 
+static void draw_falling_brick(SDL_Renderer* renderer, const building_clock_falling_brick_t* brick) {
+    int angle = brick->angle_degrees;
+    const bool mirror = angle < 0;
+    if (mirror) {
+        angle = -angle;
+    }
+    unsigned pose = (unsigned)(angle + 5) / 10U;
+    if (pose == 0U || brick->bounds.width != 9U || brick->bounds.height != 10U) {
+        draw_masonry_brick(renderer, brick->bounds, COLOR_MASONRY);
+        return;
+    }
+    if (pose > 3U) {
+        pose = 3U;
+    }
+    /* Three pre-rasterized 9x10 brick poses in a 14x14 cell: high nibble
+     * is the left margin, low nibble the filled span. 42 read-only bytes,
+     * no per-frame trigonometry, texture objects or pixel collision work.
+     * Equal neighboring spans are one filled rectangle. */
+    static const uint8_t spans[3][14] = {
+        {0x00, 0x31, 0x37, 0x39, 0x2a, 0x29, 0x29, 0x29, 0x29, 0x1a, 0x19, 0x37, 0x91, 0x00}, /* 10 degrees */
+        {0x00, 0x42, 0x36, 0x39, 0x39, 0x2a, 0x29, 0x29, 0x1a, 0x19, 0x19, 0x46, 0x72, 0x00}, /* 20 degrees */
+        {0x00, 0x43, 0x45, 0x37, 0x39, 0x2b, 0x2a, 0x1a, 0x0b, 0x19, 0x37, 0x45, 0x63, 0x00}, /* 30 degrees */
+    };
+    const int x = brick->bounds.x + (int)brick->bounds.width / 2 - 6;
+    const int y = brick->bounds.y + (int)brick->bounds.height / 2 - 7;
+    SDL_Rect rectangles[14];
+    int rectangle_count = 0;
+    int top_row = -1;
+    int bottom_row = -1;
+    for (unsigned row = 0U; row < 14U;) {
+        const uint8_t span = spans[pose - 1U][row];
+        const int width = span & 15U;
+        if (width == 0) {
+            row++;
+            continue;
+        }
+        int left = span >> 4U;
+        if (mirror) {
+            left = 13 - left - width;
+        }
+        unsigned end = row + 1U;
+        while (end < 14U && spans[pose - 1U][end] == span) {
+            end++;
+        }
+        rectangles[rectangle_count++] = (SDL_Rect){x + left, y + (int)row, width, (int)(end - row)};
+        if (width >= 3) {
+            if (top_row < 0) {
+                top_row = (int)row;
+            }
+            bottom_row = (int)end - 1;
+        }
+        row = end;
+    }
+    set_color(renderer, COLOR_MASONRY);
+    (void)SDL_RenderFillRects(renderer, rectangles, rectangle_count);
+    for (unsigned edge = 0U; edge < 2U; edge++) {
+        const int row = edge == 0U ? top_row : bottom_row;
+        if (row < 0) {
+            continue;
+        }
+        const uint8_t span = spans[pose - 1U][row];
+        const int width = span & 15U;
+        const int left = mirror ? 13 - (span >> 4U) - width : span >> 4U;
+        fill_rect(renderer, x + left + 1, y + row, width - 2, 1, edge == 0U ? COLOR_MASONRY_LIGHT : COLOR_MASONRY_DARK);
+    }
+}
+
 static void draw_section_at_position(SDL_Renderer* renderer, building_clock_rect_t envelope, uint8_t numeral, building_clock_section_kind_t kind, building_clock_point_t center,
                                      uint16_t progress_per_mille, SDL_Color color) {
     building_clock_rect_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
@@ -496,7 +563,7 @@ static void draw_falling_and_debris(SDL_Renderer* renderer, const building_clock
         building_clock_falling_brick_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION];
         const uint8_t count = building_clock_falling_bricks(envelope, scene->world->digit_work_areas[section->source_digit_id].collapse_catch_area, section, bricks);
         for (uint8_t brick = 0U; brick < count; brick++) {
-            draw_masonry_brick(renderer, bricks[brick].bounds, COLOR_MASONRY);
+            draw_falling_brick(renderer, &bricks[brick]);
         }
     }
     for (uint8_t index = 0U; index < BUILDING_CLOCK_MAX_DEBRIS_PIECES; index++) {

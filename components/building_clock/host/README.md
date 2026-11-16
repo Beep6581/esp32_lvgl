@@ -98,6 +98,21 @@ Output includes activity-time percentages, navigation/rope-lane waits,
 paired deliveries, continued rope sections, relief use and peak job/load slots.
 Optional tending is reported separately and excluded from productive counts;
 simultaneous masonry work and aggregate stable-within-60s results are included.
+
+Collapse-only CPU and drawing benchmarks (host measurements, not ESP32 FPS):
+
+```sh
+cmake --build build/building_clock_tests --target building_clock_collapse_benchmark
+build/building_clock_tests/building_clock_collapse_benchmark
+cmake --build build/building_clock_viewer --target building_clock_render_benchmark
+SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_render_benchmark
+```
+
+Both optional targets use `-O2` and print three process-CPU-time repetitions.
+The geometry benchmark samples all numeral/section fixtures, including partial
+construction; the draw benchmark saturates falling/pile capacities on an SDL
+software canvas. They do not save PNGs or time file compression. The default
+10,000 geometry rounds / 5,000 draw frames can be overridden by one argument.
 See `docs/building_clock_throughput.md` for measured limits and remaining issues.
 
 ## Motion review and character checks

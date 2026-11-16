@@ -1,8 +1,8 @@
 # Building Clock Simulation Specification
 
 Status: approved design direction plus current implementation notes.
-Reviewed against the uncommitted site-interaction pass after `80e70cb` on
-`buildclock`, 2026-11-15.
+Reviewed against the uncommitted collapse-sampling refinement after `274ab1a`
+on `buildclock`, 2026-11-16.
 
 ## Current implementation and ChatGPT handoff
 
@@ -757,7 +757,14 @@ accelerates downward and settles within the digit's catch geometry. Drift remain
 limited and neighboring bricks remain seated until failure reaches them.
 Settling retains one semantic debris record per section, including the masonry
 recipe. `building_clock_debris_bricks()` reproduces exactly those final brick
-positions until a worker bags the pile. The debris-bay association identifies
+positions until a worker bags the pile. The settled helper now computes those
+positions directly, rather than sampling a completed fall. Its saved recipe is
+only section kind, numeral and installed prefix (four bytes): drift follows the
+semantic pile position, and the initial failure brick is irrelevant after landing.
+Transient samples use normalized release phases and Q8 gravity, with one wide
+division per section rather than repeated wide division per brick. Small derived
+tilts return flat at settlement; no independent angular state is stored.
+The debris-bay association identifies
 later worker transport, not a remote destination for falling masonry. Collapse
 timing limits and entity capacities are unchanged; whole-section rotation is gone.
 

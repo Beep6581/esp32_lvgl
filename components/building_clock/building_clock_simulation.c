@@ -2565,11 +2565,9 @@ static bool create_settled_debris(building_clock_simulation_t* simulation, const
         .source_section_id = falling->source_section_id,
         .debris_bay_id = falling->target_debris_bay_id,
         .reserved_worker_id = BUILDING_CLOCK_INVALID_ID,
-        .section_kind = falling->section_kind,
+        .section_kind = (uint8_t)falling->section_kind,
         .source_numeral = falling->source_numeral,
-        .failure_brick_id = falling->failure_brick_id,
         .masonry_progress_per_mille = falling->masonry_progress_per_mille,
-        .horizontal_drift = (int8_t)(falling->landing_position.x - falling->start_position.x),
     };
     simulation->state.used_debris_slot_count++;
     simulation->metrics.debris_created++;

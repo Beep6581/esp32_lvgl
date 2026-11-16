@@ -235,3 +235,11 @@ target_compile_features(building_clock_bottleneck_trace PRIVATE c_std_11)
 target_compile_options(building_clock_bottleneck_trace PRIVATE -Wall -Wextra -Werror)
 add_test(NAME building_clock_bottleneck_single COMMAND building_clock_bottleneck_trace single)
 add_test(NAME building_clock_bottleneck_rollover COMMAND building_clock_bottleneck_trace rollover)
+
+add_executable(building_clock_collapse_benchmark EXCLUDE_FROM_ALL
+    "benchmark_building_clock_collapse.c"
+    "../building_clock_geometry.c"
+)
+target_include_directories(building_clock_collapse_benchmark PRIVATE "../include")
+target_compile_features(building_clock_collapse_benchmark PRIVATE c_std_11)
+target_compile_options(building_clock_collapse_benchmark PRIVATE -O2 -Wall -Wextra -Werror)

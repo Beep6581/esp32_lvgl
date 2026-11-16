@@ -1,7 +1,7 @@
 # Clock - Builders visual/gameplay status
 
-Current implementation: uncommitted site-interaction pass after `80e70cb` on
-`buildclock`; reviewed 2026-11-15.
+Current implementation: uncommitted collapse-sampling refinement after `274ab1a`
+on `buildclock`; reviewed 2026-11-16.
 The character/site overhaul was committed in `4ccb755`; independent ropes,
 logistics and crane/date color corrections followed in `035220d`. This file
 describes the current viewer, not the superseded mandatory-tender model.
@@ -11,6 +11,16 @@ Hardware/display configuration, generator version 5, clock scale, traversal
 speeds and construction action durations are unchanged by these refinements.
 
 ## What is different
+
+The collapse review preserves section-authoritative simulation and adds only
+transient per-brick tilts. Failure still spreads spatially from one brick per
+section; unreleased bricks stay seated. Moving bricks tilt by at most 30 degrees
+and return flat in the same local pile. A first 60-degree preview lost the tiny
+brick silhouettes and was reduced. Three pre-rasterized poses, mirrored as
+needed, avoid runtime trigonometry and keep the coarse C64 appearance. The
+settled helper now draws the pile directly, without recomputing its flight.
+There are no per-brick physics entities, collision tests, reservations or heap
+allocations. Timing, recovery accounting and throughput are unchanged.
 
 The latest pass connects visible rubble clearing to actual site logistics:
 workers bag and carry rubble, drop sacks into generated bays, hand-haul them
@@ -91,7 +101,7 @@ ambient scheduler.
 
 Depots are little stocked racks, staging areas have timber skids, and debris
 service bays are open bins rather than filled UI rectangles. The parked crane
-has a trussed tower/jib and cab, now dark purple with deeper purple shadows
+has a trussed tower/jib and cab, now muted blue-purple with darker shadows
 rather than yellow, so pale workers/hard hats remain readable against it.
 Ladders remain yellow/cream. Its short idle jib is folded/parked; this is
 scenery/layout preparation, not crane delivery or lift behavior. Functional
@@ -117,6 +127,18 @@ read-only effects, not particle entities, renderer callbacks or extra physics.
 Old events can be overwritten without affecting simulation correctness.
 
 ## Inspection and artifacts
+
+Current review artifacts are in ignored `build/builders_collapse_review/`:
+`before-after.png`, `final-brick-strip.png`, `midnight-collapse.mp4`, and five
+`<seed>-story.png` sheets. Each sheet has single/rollover/midnight rows and
+columns at 0, 1.5, 2, 2.5, 3.5 and 12 seconds. The `sequences/` directory holds
+all 15 complete twelve-second sequences at 50 ms intervals, spanning all five
+topology families. Inspection used ordered frames and consecutive-frame strips,
+not real-time playback. The brief wave of tilted bricks reads as independent
+falling masonry rather than rigid rotating strokes; multi-digit staggering
+remains legible and settlement does not relocate the pieces. Piles remain
+deliberately shallow/overlapping, and there is no collision or bounce simulation.
+See the throughput report for measured savings and the small draw-cost tradeoff.
 
 The latest collapse review is in ignored `build/builders_brick_collapse/`:
 `brick-wave-strip.png` shows consecutive 50 ms samples, `single-contact.png`

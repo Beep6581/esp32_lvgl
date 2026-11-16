@@ -1,13 +1,90 @@
 # Builders throughput measurements
 
-Current implementation: uncommitted site-interaction pass after `80e70cb` on
-`buildclock`; reviewed 2026-11-15.
+Current implementation: uncommitted collapse-sampling refinement after `274ab1a`
+on `buildclock`; reviewed 2026-11-16.
 This file owns measured performance, diagnostic reproduction and remaining
 bottlenecks. The [specification](building_clock_simulation.md) owns architecture
 and planned behavior; the [visual overview](building_clock_visual_overhaul.md)
 owns presentation status. Older numbers below are explicitly historical.
 
-## Current check: individual-brick collapse
+## Current check: collapse sampling and drawing
+
+The committed approach was already correct architecturally: simulation updates
+section groups, never individual bricks. This refinement retains that approach,
+the same fall-duration limits, and the same random draws. Bricks remain transient
+geometry; neither their identities nor physics are maintained between frames.
+
+The full 480-run throughput log is identical to `274ab1a`, excluding the size
+line: **88/96 (91.7%)** single-digit runs stable within 60 seconds, no timeouts or
+evacuation failures. The following completion-time table remains current.
+
+### Measured cost
+
+Isolated host tests use GCC 16.2.1, `-O2`, no LTO and process CPU time. Values
+are medians of three repetitions, not ESP32 frame timings. Geometry uses 49
+occupied numeral/section fixtures, including partial masonry, 10,000 rounds
+(490,000 calls per mode per repetition). Draw stress tests use SDL software
+rendering at 480x480, 5,000 frames: either 20 falling groups or 32 settled piles.
+They include clear/present and collapse drawing, not the rest of the game.
+
+| Measurement | Committed | Revised | Difference |
+| --- | ---: | ---: | ---: |
+| Simulation context | 10,792 B | 10,536 B | -256 B |
+| Mutable state | 9,920 B | 9,664 B | -256 B |
+| One semantic debris record | 32 B | 24 B | -8 B |
+| One falling section | 36 B | 36 B | unchanged |
+| One transient brick sample | 20 B | 20 B | unchanged |
+| Active geometry, ns/section | 255.0 | 256.0 | essentially unchanged |
+| End-of-fall geometry, ns/section | 225.9 | 237.5 | +5.1% |
+| Static rubble geometry, ns/section | 236.0 | 198.0 | -16.1% |
+| Active draw stress, us/frame | 164.2 | 169.9 | +3.5% |
+| Static rubble draw stress, us/frame | 218.5 | 215.8 | -1.2% |
+
+The context and state rows describe the same saving, not additive savings.
+A separately retained scene snapshot also copies 256 fewer bytes. No heap or
+entity-capacity changes were made. Dynamic samples still reuse one 24-entry
+array; a saturated scene does not allocate one array per section.
+
+Cross-compilation with the installed ESP32-S3 GCC 15.2.0 at `-O2` confirms the
+same type sizes. Compiler-reported geometry stack frames shrink from 400 to
+304 bytes for the falling sampler and 576 to 80 bytes for the settled sampler.
+The latter no longer calls the falling sampler or allocates its 480-byte output.
+These are individual function frames, not total task stack measurements.
+The target assembly removes up to three `__udivdi3` calls per active brick,
+replacing them with at most one per section before the brick loop. The isolated
+geometry object text is 1,994 -> 1,922 bytes; this is not a whole-firmware size
+comparison. No on-device cycle/FPS measurement is claimed.
+
+The small draw regression buys independent subtle tilts, not a physics system.
+The SDL implementation uses a 42-byte read-only span atlas and one batched
+body draw per tilted brick; an initial unbatched version was about 70% slower
+in the active draw stress and was discarded. Batching requires a bounded
+14-rectangle (224-byte) temporary on the host. Host `-Os` frame inspection shows
+the inlined draw function growing 592 -> 848 bytes; this SDL-specific tradeoff
+is separate from the smaller target geometry frames and persistent-state saving.
+Future firmware can blit the same tiny poses directly instead of adopting SDL
+rectangles or renderer resources.
+
+Normalized phase/Q8 arithmetic is deliberately not pixel-identical mid-flight.
+576,640 old/new brick-position comparisons across all numerals, occupied
+sections, full/40%-installed prefixes and every millisecond of a 900 ms fall
+found at most 1 horizontal and 2 vertical design-pixel differences. Final pile
+positions are identical. The maximum populated section in those shapes is 20
+bricks, below the 24-entry safety capacity.
+
+Verification includes all existing host tests plus full-duration angle/position
+checks, full uint32 duration boundaries and 15 actual generated-world cases
+where a new minute interrupts an active collapse. Outgoing geometry and timing
+stay unchanged, and the latest target finishes with deterministic replay and
+no leaked transition resources. All 14 tests pass normally and under ASan/UBSan;
+the viewer test, strict runtime compilation and firmware build also pass.
+
+Artifacts: `build/builders_collapse_review/` contains `before-cost-final.txt`,
+`after-cost-final.txt`, `render-{before,after}-final.txt`, target assembly/stack
+reports, `path-delta.txt`, `throughput.txt` and test/build logs. See the visual
+overview for the ordered sequences and screenshots.
+
+## Committed baseline: individual-brick collapse
 
 The same 480-run benchmark was rerun after replacing rigid section rotation
 with spatially spreading individual-brick falls. Adaptive six plus relief:
@@ -225,7 +302,8 @@ Detailed former traces and reports remain recoverable from Git history.
 | November 14 refinement, included in `4ccb755` | 5 | 83/96 (86.5%) | Spaced ladders, route-time dispatch and connected roofs |
 | Visual overhaul `4ccb755` | 5 | 78/96 (81.3%) | Character/site improvements with physical winch setup |
 | Independent ropes `035220d` | 5 | 93/96 (96.9%) | Previous benchmark and behavior above |
-| Site recovery (worktree) | 5 | 89/96 (92.7%) | Current physical-handling tradeoff above |
+| Site recovery, before brick collapse | 5 | 89/96 (92.7%) | Physical-handling tradeoff above |
+| Individual bricks `274ab1a` | 5 | 88/96 (91.7%) | Current timing baseline; sampling review preserves it |
 
 The version-4 to version-5 comparison changed world grammar as well as
 scheduling, so it was not a controlled scheduling-only A/B. The same root may

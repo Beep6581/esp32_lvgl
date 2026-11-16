@@ -684,12 +684,11 @@ typedef struct {
     uint8_t source_section_id;
     uint8_t debris_bay_id;
     uint8_t reserved_worker_id;
-    /* Retain the landed brick pile until a worker bags this section's rubble. */
-    building_clock_section_kind_t section_kind;
+    /* Retain a compact pile recipe until bagging. section_kind stores a
+     * building_clock_section_kind_t; drift follows position.x, not extra state. */
+    uint8_t section_kind;
     uint8_t source_numeral;
-    uint8_t failure_brick_id;
     uint16_t masonry_progress_per_mille;
-    int8_t horizontal_drift;
 } building_clock_debris_t;
 
 typedef struct {

@@ -22,7 +22,9 @@ uint8_t building_clock_section_visible_bricks(building_clock_rect_t envelope, ui
 typedef struct {
     building_clock_rect_t bounds;
     building_clock_point_t landing_position;
-    uint32_t detach_delay_ms;
+    /* Release phase is independent of the section's chosen millisecond duration. */
+    uint16_t release_per_mille;
+    int16_t angle_degrees;
     uint16_t progress_per_mille;
     bool detached;
     bool settled;
@@ -30,7 +32,9 @@ typedef struct {
 
 /* Read-only, integer trajectories: failure spreads outward from one brick.
  * Sections remain bounded cleanup groups, not rigid moving objects. Sampling
- * at duration_ms also reconstructs the final pile without per-brick entities. */
+ * at duration_ms also reconstructs the final pile without per-brick entities.
+ * Bounds describe the current upright brick footprint; angle is a transient
+ * presentation tilt, not a collision shape or persistent rotation state. */
 uint8_t building_clock_falling_bricks(building_clock_rect_t envelope, building_clock_rect_t catch_area, const building_clock_falling_section_t* section,
                                       building_clock_falling_brick_t bricks[BUILDING_CLOCK_MAX_VISIBLE_BRICKS_PER_SECTION]);
 uint8_t building_clock_debris_bricks(building_clock_rect_t envelope, building_clock_rect_t catch_area, const building_clock_debris_t* debris,
