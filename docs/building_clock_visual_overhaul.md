@@ -1,7 +1,8 @@
 # Clock - Builders visual/gameplay status
 
-Current implementation: uncommitted living-site and functional-crane refinement after `3ead7c4`
-on `buildclock`; reviewed 2026-11-16.
+Current baseline: living-site and reusable-crane implementation committed in
+`4465587` on `buildclock`. The uncommitted smoking/drinking refinement below was
+reviewed 2026-11-17.
 The character/site overhaul was committed in `4ccb755`; independent ropes,
 logistics and crane/date color corrections followed in `035220d`. This file
 describes the current viewer, not the superseded mandatory-tender model.
@@ -9,6 +10,84 @@ See [the specification](building_clock_simulation.md) for architecture/design
 and [throughput](building_clock_throughput.md) for measurements and diagnostics.
 Hardware/display configuration, clock scale, traversal speeds and construction
 action durations are unchanged. Generator version 6 removes vertical supports.
+
+## Smoking and bottle breaks
+
+The SDL viewer now samples complete gestures from each worker's existing break
+timer rather than looping one raised-hand pose. Smoking has two bent-arm draws,
+a five-pixel cigarette with a two-pixel red ember, and two exhalations that each
+release three distinct puffs. The puffs rise, drift, expand and darken into the
+background. Drinking raises a dark-green bottle with a matching green tip and
+blue label, bends the elbow, tips the
+head/hard hat backward and draws a short intermittent liquid stream. A windup
+and over-the-shoulder release lead into a tumbling gravity arc and impact.
+Normal-size arms gesture independently of the nearby bottle, rather
+than stretching to reach its pouring/throwing position. Eight rotation masks
+retain a chunky bottle body (20-23 visible pixels in every orientation). Four
+separate red liquid pixels travel across the wider bottle-to-mouth gap. On
+impact the bottle becomes five green/blue pixels, rolling four to eight units
+in the throw direction over 750 ms, then disappearing. There is no explosion
+or upward spray. The worker's arm
+returns to neutral after release.
+
+Bottle landing is derived read-only from actual platform spans and surfaces.
+Throwing near an edge can miss the current platform and hit a lower one. The
+descending trajectory uses at most eleven integer bisections per platform to
+find its first impact, not frame-by-frame physics or stored collision state.
+No fake platform is added if the bottle falls out of the world. Social tea
+retains its existing cup/flask animation and does not throw reusable cups.
+
+Normal gestures last four seconds. The existing initial idle delay leaves only
+three seconds in a worker's first ambient slot; presentation fits the full
+gesture into that slot, rather than starting halfway through the drinking
+pose. No scheduling, traversal, construction or break durations changed.
+Interruptions immediately discard held break-only props. A released bottle now
+finishes independently: previously root `6a09e667f3bcc909` worker 5 started useful
+work at 3.0 seconds, hiding its shatter after only one frame. A last-release
+record retains the real origin, facing and elapsed timestamp (2613 ms in that
+case), without simulating a bottle or its fragments. The real-world regression
+now observes 15 rolling-fragment frames after work resumes. Such releases do not
+own jobs, consume material inventory or obstruct evacuation; reset clears them.
+
+Visual review used consecutive 50 ms, native-size frames in two generated
+worlds (`6a09e667f3bcc909` and `f9fd2ded6d5b25c6`) and a four-worker fixture with
+both facing directions. The white cigarette, red tip and separated smoke
+puffs read more clearly than before. The upturned head/bottle and over-shoulder
+throw are distinct; the edge fixture visibly hits the lower girder rather than
+snapping back to the original platform. The smoke and bottle remain deliberately
+small relative to the established workers, not enlarged UI symbols.
+
+Evidence (generated and ignored) is in `build/break_animations/`:
+`breaks_after.gif`, `comparison.mp4`, `gestures_native.png`, and
+`stable_default.gif`. Follow-up corrections are in `corrected.gif`,
+`corrected_gestures.png`, `corrected/` and `corrected_stable/`, inspected against
+the user's root screenshots `building_clock_20261117_225338.png`,
+`building_clock_20261117_225341.png`, and `building_clock_20261117_225446.png`.
+`before/` and `after/` contain the initial full 480x480 frame sequences;
+`stable_default/` and `stable_other/` contain actual quiet-site sequences.
+The fixture is a render review, not duplicated simulation behavior.
+Latest color/ground-roll evidence is `rolling.gif`, `rolling_stable.gif`,
+`ground_roll_frames.png`, `rolling/` and `rolling_stable/`.
+
+Four-worker software-canvas rendering measured about 100 us/frame before,
+103 after the initial pass, 102 after the arm corrections and 100 after the
+ground-roll fix, including clear, platform
+drawing and presentation. This is a host CPU measurement, not ESP32 timing.
+Worker memory remains 308 B. Fixed release history adds 144 B globally: simulation
+state 10160 B and snapshot 10952 B (previously 10016/10808 B). Smoke is bounded to
+six samples and fragments to five samples per active release; no heap objects,
+PRNG consumption or particle/physics updates were added. The simulation writes
+one release record when the existing drinking gesture crosses its release time;
+it makes no scheduling, speed or construction changes.
+
+All 16 simulation tests and four viewer tests pass. Focused checks cover both
+facing directions, gesture phases, gravity/landing, deterministic frame hashes,
+read-only drawing, bounded arm reach, bottle thickness through eight rotations,
+travelling drops, visible shattering, cycle repetition, tea distinction and real useful-job
+interruption during both breaks, including continued fall/roll after interruption.
+Firmware build in the first pass was attempted but stopped
+before compilation when the component manager tried to write its read-only
+cache outside the repository. Hardware/display configuration is unchanged.
 
 ## Functional crane: current visual review
 

@@ -58,6 +58,14 @@ target_link_libraries(building_clock_render_benchmark PRIVATE PkgConfig::SDL2 Pk
 # simulation sources so there is no separate host-only behavior implementation.
 get_target_property(VIEWER_SOURCES building_clock_viewer SOURCES)
 list(REMOVE_ITEM VIEWER_SOURCES "building_clock_viewer.c")
+add_executable(building_clock_break_animation_tests "test_building_clock_break_animation.c" ${VIEWER_SOURCES})
+target_include_directories(building_clock_break_animation_tests PRIVATE "${BUILDING_CLOCK_DIR}/include" "../../display/include")
+target_compile_features(building_clock_break_animation_tests PRIVATE c_std_11)
+target_compile_options(building_clock_break_animation_tests PRIVATE -Wall -Wextra -Werror)
+target_link_libraries(building_clock_break_animation_tests PRIVATE PkgConfig::SDL2 PkgConfig::PNG)
+add_test(NAME building_clock_break_animation COMMAND building_clock_break_animation_tests)
+set_tests_properties(building_clock_break_animation PROPERTIES ENVIRONMENT "SDL_VIDEODRIVER=dummy")
+
 add_executable(building_clock_living_trace EXCLUDE_FROM_ALL "trace_building_clock_living.c" ${VIEWER_SOURCES})
 target_include_directories(building_clock_living_trace PRIVATE "${BUILDING_CLOCK_DIR}/include" "../../display/include")
 target_compile_features(building_clock_living_trace PRIVATE c_std_11)

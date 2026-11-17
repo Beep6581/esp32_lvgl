@@ -873,6 +873,15 @@ typedef struct {
     uint8_t digit_id;
 } building_clock_site_event_t;
 
+/* One last physical release per worker, not an independently simulated bottle.
+ * Keeping the origin/time lets a renderer finish the fall after the worker
+ * resumes useful work. A zero direction means no release has occurred. */
+typedef struct {
+    uint64_t elapsed_ms;
+    building_clock_point_t origin;
+    int8_t direction; /* Facing at release: -1 left, +1 right; throw goes behind. */
+} building_clock_bottle_throw_t;
+
 /* Mutable runtime state. It owns no generated-world geometry. */
 typedef struct {
     uint64_t elapsed_ms;
@@ -890,6 +899,7 @@ typedef struct {
     /* Workers form a fixed dense roster; their array indices are stable IDs. */
     uint8_t worker_count;
     building_clock_worker_t workers[BUILDING_CLOCK_MAX_WORKERS];
+    building_clock_bottle_throw_t bottle_throws[BUILDING_CLOCK_MAX_WORKERS];
     /* Slots mirror platform IDs; disabled slots do not own equipment. */
     building_clock_upkeep_station_t upkeep[BUILDING_CLOCK_MAX_PLATFORM_SPANS];
 

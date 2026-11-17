@@ -179,6 +179,35 @@ synthetic pose review, not a simulated gameplay sequence. See
 `docs/building_clock_visual_overhaul.md` for captures, tradeoffs and remaining
 limitations. `--animation-check` runs the same checks without writing a sheet.
 
+Smoking now has two hand-to-mouth draws, a red ember and six rising/fading smoke
+puffs. Bottle breaks raise and tilt the bottle, tip the head back, show a short
+pour, then throw the bottle over the shoulder. Normal-size arms gesture without
+stretching to meet the bottle. Its body retains its thickness through eight
+rotation poses. The bottle and tip are dark green, the label blue and the four
+moving liquid pixels red. It
+follows a gravity arc, smashes on the first platform it reaches (possibly a
+lower one), and separates into five pixels which roll four to eight units in
+the throw direction before disappearing after 750 ms.
+The shared tea activity still uses a reusable cup, not a discarded bottle.
+Useful work can interrupt any pose; an already released bottle finishes its
+fall/ground roll independently. The simulation records one fixed 16-byte
+release origin/time/direction per worker (144 bytes total), with no particle
+objects or physics updates. Replay/reset clears that history.
+
+Native 480x480 synthetic sequences and a draw-cost measurement can be reproduced
+with the test executable (the four-worker fixture includes both facing directions
+and a bottle falling from an edge to a lower platform):
+
+```sh
+mkdir -p build/builders_breaks
+SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_break_animation_tests build/builders_breaks
+SDL_VIDEODRIVER=dummy build/building_clock_viewer/building_clock_break_animation_tests --benchmark
+```
+
+It exports one PNG every 50 ms across a complete four-second gesture. With no
+argument it runs timing, landing, deterministic rendering, non-mutation and
+useful-work interruption checks, also included in the viewer's CTest suite.
+
 Detailed read-only construction traces, using the same host test build:
 
 ```sh

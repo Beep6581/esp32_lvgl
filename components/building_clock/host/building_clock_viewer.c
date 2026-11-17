@@ -77,6 +77,9 @@ static const SDL_Color COLOR_TEXT = {213, 220, 232, 255};
 static const SDL_Color COLOR_ROPE = {157, 104, 57, 255};
 static const SDL_Color COLOR_SKIN = {226, 169, 116, 255};
 static const SDL_Color COLOR_BOOTS = {87, 57, 48, 255};
+static const SDL_Color COLOR_BOTTLE = {42, 146, 76, 255};
+static const SDL_Color COLOR_BOTTLE_LABEL = {68, 126, 228, 255};
+static const SDL_Color COLOR_DRINK = {236, 55, 65, 255};
 
 static const char* topology_name(building_clock_topology_family_t topology) {
     switch (topology) {
@@ -769,6 +772,215 @@ static void draw_upkeep_stations(SDL_Renderer* renderer, const building_clock_sc
     }
 }
 
+/* Breaks already occupy four seconds in the simulation. Sample that clock,
+ * not wall time: redraws neither create particles nor advance a gesture. Tea
+ * at the shared bench uses a reusable cup and keeps its separate animation. */
+typedef struct {
+    int hand_x, hand_y;
+    int elbow_x, elbow_y;
+} break_pose_t;
+
+static uint32_t break_elapsed_ms(const building_clock_worker_t* worker) {
+    /* The first ambient slot starts after the existing one-second idle delay.
+     * Fit the gesture into that three-second slot instead of skipping its
+     * opening motion. Later slots retain their normal four-second timing. */
+    if (worker->behavior_timer_ms < 4000U)
+        return worker->behavior_timer_ms < 1000U ? 0U : (worker->behavior_timer_ms - 1000U) * 4U / 3U;
+    return worker->behavior_timer_ms % 4000U;
+}
+
+static break_pose_t blend_break_pose(break_pose_t from, break_pose_t to, uint32_t elapsed, uint32_t duration) {
+    const int t = (int)elapsed, end = (int)duration;
+    return (break_pose_t){from.hand_x + (to.hand_x - from.hand_x) * t / end, from.hand_y + (to.hand_y - from.hand_y) * t / end, from.elbow_x + (to.elbow_x - from.elbow_x) * t / end,
+                          from.elbow_y + (to.elbow_y - from.elbow_y) * t / end};
+}
+
+static break_pose_t break_pose(building_clock_worker_state_kind_t state, uint32_t ms) {
+    /* Normal-size little arms gesture near the body. The bottle has its own
+     * nearby position: never stretch the forearm to meet the prop. */
+    const break_pose_t lowered = {6, -6, 5, -6};
+    const break_pose_t raised = {7, -12, 7, -8};
+    const break_pose_t windup = {3, -17, 5, -13};
+    const break_pose_t released = {-4, -10, -1, -9};
+    if (state == BUILDING_CLOCK_WORKER_SMOKE) {
+        const uint32_t puff = ms < 2000U ? ms : ms - 1750U;
+        const uint32_t lift = puff < 350U ? 0U : puff < 650U ? puff - 350U : puff < 1050U ? 300U : puff < 1400U ? (1400U - puff) * 300U / 350U : 0U;
+        return blend_break_pose(lowered, (break_pose_t){5, -11, 7, -8}, lift, 300U);
+    }
+    if (ms < 500U)
+        return blend_break_pose(lowered, raised, ms, 500U);
+    if (ms < 1400U)
+        return raised;
+    if (ms < 1650U)
+        return blend_break_pose(raised, lowered, ms - 1400U, 250U);
+    if (ms < 1950U)
+        return blend_break_pose(lowered, windup, ms - 1650U, 300U);
+    if (ms < BUILDING_CLOCK_BOTTLE_RELEASE_MS)
+        return blend_break_pose(windup, released, ms - 1950U, 200U);
+    if (ms < 2600U)
+        return blend_break_pose(released, lowered, ms - BUILDING_CLOCK_BOTTLE_RELEASE_MS, 450U);
+    return lowered;
+}
+
+static building_clock_point_t held_bottle_position(uint32_t ms) {
+    int x = 6, y = -6;
+    if (ms < 500U) {
+        x += (int)ms * 8 / 500;
+        y -= (int)ms * 12 / 500;
+    } else if (ms < 1400U) {
+        x = 14;
+        y = -18;
+    } else if (ms < 1650U) {
+        x = 14 - (int)(ms - 1400U) * 8 / 250;
+        y = -18 + (int)(ms - 1400U) * 12 / 250;
+    } else if (ms < 1950U) {
+        x -= (int)(ms - 1650U) * 4 / 300;
+        y -= (int)(ms - 1650U) * 16 / 300;
+    } else {
+        x = 2 - (int)(ms - 1950U) * 12 / 200;
+        y = -22 + (int)(ms - 1950U) * 5 / 200;
+    }
+    return (building_clock_point_t){(int16_t)x, (int16_t)y};
+}
+
+static building_clock_point_t tossed_bottle_position(building_clock_point_t origin, int direction, uint32_t ms) {
+    /* A small over-the-shoulder throw, followed by gravity. Inputs are bounded
+     * to 0..1400 ms, so all products fit signed 32-bit arithmetic. */
+    const int t = (int)ms;
+    return (building_clock_point_t){(int16_t)(origin.x - direction * (10 + t * 40 / 1000)), (int16_t)(origin.y - 17 + (t * t * 300 - t * 90000) / 1000000)};
+}
+
+typedef struct {
+    uint16_t elapsed_ms;
+    building_clock_point_t position;
+    bool hit;
+    uint8_t platform_id;
+} bottle_landing_t;
+
+static bottle_landing_t tossed_bottle_landing(const building_clock_world_t* world, building_clock_point_t origin, int direction) {
+    bottle_landing_t landing = {.elapsed_ms = 1400U};
+    for (uint8_t id = 0U; id < world->platform_count; id++) {
+        const building_clock_platform_t* platform = &world->platforms[id];
+        /* After the 150 ms apex the path is monotonic. At most eleven cheap
+         * integer bisections per platform replace per-frame collision state.
+         * Missing an edge really can land the bottle on a lower platform. */
+        if (platform->surface_y < tossed_bottle_position(origin, direction, 150U).y + 3 || platform->surface_y > tossed_bottle_position(origin, direction, landing.elapsed_ms).y + 3)
+            continue;
+        uint32_t low = 150U, high = landing.elapsed_ms;
+        while (low < high) {
+            const uint32_t middle = (low + high) / 2U;
+            if (tossed_bottle_position(origin, direction, middle).y + 3 < platform->surface_y)
+                low = middle + 1U;
+            else
+                high = middle;
+        }
+        const building_clock_point_t point = tossed_bottle_position(origin, direction, low);
+        if (point.x >= platform->x_start - 1 && point.x <= platform->x_end + 1) {
+            landing = (bottle_landing_t){.elapsed_ms = (uint16_t)low, .position = {point.x, (int16_t)(platform->surface_y - 3)}, .hit = true, .platform_id = id};
+        }
+    }
+    return landing;
+}
+
+static void draw_bottle(SDL_Renderer* renderer, int x, int y, unsigned pose, int direction) {
+    static const int8_t necks[8][2] = {{0, -1}, {-1, -1}, {-1, 0}, {-1, 1}, {0, 1}, {1, 1}, {1, 0}, {1, -1}};
+    const int dx = necks[pose % 8U][0] * direction, dy = necks[pose % 8U][1];
+    if (dx == 0) {
+        fill_rect(renderer, x - 1, y - 3, 3, 6, COLOR_BOTTLE);
+        fill_rect(renderer, x, y + dy * 4 - (dy < 0 ? 1 : 0), 1, 2, COLOR_BOTTLE);
+        fill_rect(renderer, x - 1, y, 3, 2, COLOR_BOTTLE_LABEL);
+    } else if (dy == 0) {
+        fill_rect(renderer, x - 3, y - 1, 6, 3, COLOR_BOTTLE);
+        fill_rect(renderer, x + dx * 4 - (dx < 0 ? 1 : 0), y, 2, 1, COLOR_BOTTLE);
+        fill_rect(renderer, x, y - 1, 2, 3, COLOR_BOTTLE_LABEL);
+    } else {
+        /* Overlapping 3x3 blocks preserve the bottle's cross-section at 45
+         * degrees. A thin line makes it look like a disappearing matchstick. */
+        for (int part = -1; part <= 1; part++)
+            fill_rect(renderer, x + dx * part - 1, y + dy * part - 1, 3, 3, COLOR_BOTTLE);
+        fill_rect(renderer, x + dx * 3 - (dx < 0 ? 1 : 0), y + dy * 3 - (dy < 0 ? 1 : 0), 2, 2, COLOR_BOTTLE);
+        fill_rect(renderer, x, y, 2, 2, COLOR_BOTTLE_LABEL);
+    }
+}
+
+static building_clock_point_t pouring_drop_position(uint32_t elapsed_ms, unsigned drop, int direction) {
+    const int t = (int)((elapsed_ms + drop * 90U) % 360U);
+    return (building_clock_point_t){(int16_t)(direction * (10 - (t * 7 + 180) / 360)), (int16_t)(-14 + (t * 3 + 180) / 360)};
+}
+
+static building_clock_point_t rolling_bottle_fragment(building_clock_point_t landing, int direction, uint32_t elapsed_ms, unsigned fragment) {
+    const int age = (int)elapsed_ms;
+    /* Short, slowing roll in the direction of the throw. No stored particles
+     * or collision updates; each fragment moves only four to eight units. */
+    const int travel = (4 + (int)fragment) * age * (1500 - age) / (750 * 750);
+    return (building_clock_point_t){(int16_t)(landing.x - direction * ((int)fragment * 2 - 4 + travel)), (int16_t)(landing.y + 2 - (age < 180 ? ((int)fragment + age / 60) % 2 : 0))};
+}
+
+static void draw_bottle_smash(SDL_Renderer* renderer, building_clock_point_t landing, const building_clock_platform_t* platform, int direction, uint32_t elapsed_ms) {
+    if (elapsed_ms >= 750U)
+        return;
+    for (unsigned fragment = 0U; fragment < 5U; fragment++) {
+        building_clock_point_t point = rolling_bottle_fragment(landing, direction, elapsed_ms, fragment);
+        if (point.x < platform->x_start)
+            point.x = platform->x_start;
+        if (point.x > platform->x_end)
+            point.x = platform->x_end;
+        fill_rect(renderer, point.x, point.y, 1, 1, fragment == 2U ? COLOR_BOTTLE_LABEL : COLOR_BOTTLE);
+    }
+}
+
+static void draw_bottle_throws(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene) {
+    for (uint8_t id = 0U; id < scene->state.worker_count; id++) {
+        const building_clock_bottle_throw_t* bottle = &scene->state.bottle_throws[id];
+        if (bottle->direction == 0 || scene->state.elapsed_ms < bottle->elapsed_ms || scene->state.elapsed_ms - bottle->elapsed_ms >= 1400U + 750U)
+            continue;
+        const uint32_t age = (uint32_t)(scene->state.elapsed_ms - bottle->elapsed_ms);
+        const bottle_landing_t landing = tossed_bottle_landing(scene->world, bottle->origin, bottle->direction);
+        if (age < landing.elapsed_ms) {
+            const building_clock_point_t point = tossed_bottle_position(bottle->origin, bottle->direction, age);
+            draw_bottle(renderer, point.x, point.y, age / 100U, bottle->direction);
+        } else if (landing.hit)
+            draw_bottle_smash(renderer, landing.position, &scene->world->platforms[landing.platform_id], bottle->direction, age - landing.elapsed_ms);
+    }
+}
+
+static void draw_break_props(SDL_Renderer* renderer, const building_clock_worker_t* worker, int x, int y, int direction, break_pose_t pose) {
+    const uint32_t ms = break_elapsed_ms(worker);
+    if (worker->state == BUILDING_CLOCK_WORKER_SMOKE) {
+        const bool inhaling = (ms >= 650U && ms < 1050U) || (ms >= 2400U && ms < 2800U);
+        const int hand_x = x + direction * pose.hand_x, hand_y = y + pose.hand_y;
+        fill_rect(renderer, hand_x + (direction > 0 ? 1 : -5), hand_y - 1, 5, 2, COLOR_WORKER);
+        fill_rect(renderer, hand_x + (direction > 0 ? 6 : -7), hand_y - 1, 2, 2, (SDL_Color){inhaling ? 255 : 188, 49, 42, 255});
+        /* Two exhalations, each breaking into three distinct, fading puffs. */
+        for (uint32_t puff = 0U; puff < 6U; puff++) {
+            const uint32_t released = (puff < 3U ? 1050U : 2800U) + (puff % 3U) * 150U;
+            if (ms < released || ms - released >= 900U)
+                continue;
+            const int age = (int)(ms - released);
+            const int px = x + direction * (7 + age / 140) + (int)(puff % 2U);
+            const int py = y - 13 - age / 65;
+            const int size = 2 + age / 300;
+            const SDL_Color smoke = age < 300 ? (SDL_Color){205, 208, 220, 255} : age < 600 ? (SDL_Color){129, 139, 166, 255} : (SDL_Color){58, 65, 88, 255};
+            fill_rect(renderer, px, py, size, 1, smoke);
+            fill_rect(renderer, px + 1, py - 1, size - 1, 3, smoke);
+            if (age > 450)
+                fill_rect(renderer, px + size + 1, py - 2, 1, 1, smoke);
+        }
+    } else if (ms < BUILDING_CLOCK_BOTTLE_RELEASE_MS) {
+        const bool pouring = ms >= 500U && ms < 1400U;
+        const building_clock_point_t bottle = held_bottle_position(ms);
+        draw_bottle(renderer, x + direction * bottle.x, y + bottle.y, pouring ? 3U : 0U, direction);
+        if (pouring) {
+            /* Four separate drops advance from the neck into the mouth.
+             * There is no static stream or single blinking chin pixel. */
+            for (unsigned drop = 0U; drop < 4U; drop++) {
+                const building_clock_point_t pixel = pouring_drop_position(ms - 500U, drop, direction);
+                fill_rect(renderer, x + pixel.x, y + pixel.y, 1, 1, COLOR_DRINK);
+            }
+        }
+    }
+}
+
 static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snapshot_t* scene, uint8_t worker_id, bool show_id) {
     static const int stride[8] = {-3, -2, 0, 2, 3, 2, 0, -2};
     static const SDL_Color uniforms[3] = {{92, 104, 191, 255}, {74, 143, 151, 255}, {139, 88, 136, 255}};
@@ -777,6 +989,11 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     const unsigned frame = worker_frame(scene, worker, worker_id);
     const int x = scene->worker_presentation_positions[worker_id].x, y = scene->worker_presentation_positions[worker_id].y;
     const int direction = worker->facing == BUILDING_CLOCK_FACING_LEFT ? -1 : 1;
+    const bool bottle_break = worker->state == BUILDING_CLOCK_WORKER_DRINK && worker->site_activity == BUILDING_CLOCK_UPKEEP_NONE;
+    const bool smoking = worker->state == BUILDING_CLOCK_WORKER_SMOKE;
+    const uint32_t break_ms = break_elapsed_ms(worker);
+    const break_pose_t break_gesture = bottle_break || smoking ? break_pose(worker->state, break_ms) : (break_pose_t){0};
+    const bool head_tilt = bottle_break && break_ms >= 500U && break_ms < 1400U;
     const bool climbing = worker->state == BUILDING_CLOCK_WORKER_CLIMB;
     const bool moving = worker->state == BUILDING_CLOCK_WORKER_WALK || worker->state == BUILDING_CLOCK_WORKER_PUSH ||
                         (worker->reserved_edge_id < scene->world->navigation.edge_count && worker->state != BUILDING_CLOCK_WORKER_WAIT);
@@ -796,12 +1013,23 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
     draw_rope_equipment(renderer, scene, worker_id);
     /* Hard hat, shaded face, nose and tiny moustache distinguish these workers
      * from pale markers even when backed by orange masonry. */
-    fill_rect(renderer, x - 4, head_y - 1, 8, 4, COLOR_BOOTS);
-    fill_rect(renderer, x - 3, head_y - 2, 6, 3, helmet);
-    fill_rect(renderer, x - 5, head_y + 1, 11, 2, helmet);
-    fill_rect(renderer, x - 2, head_y + 3, 5, 4, COLOR_SKIN);
-    fill_rect(renderer, x + direction * 3, head_y + 4, 2, 2, COLOR_SKIN);
-    fill_rect(renderer, x + direction, head_y + 3, 1, 1, COLOR_BACKGROUND);
+    if (head_tilt) {
+        /* Turn the whole head and brim, not just the bottle. */
+        fill_rect(renderer, x - 3, head_y + 1, 6, 6, COLOR_SKIN);
+        fill_rect(renderer, x + direction * 3, head_y + 1, 2, 2, COLOR_SKIN);
+        fill_rect(renderer, x + direction, head_y + 2, 1, 1, COLOR_BACKGROUND);
+        fill_rect(renderer, x - 3, head_y - 2, 6, 3, COLOR_BOOTS);
+        fill_rect(renderer, x - direction * 2 - 1, head_y - 3, 5, 3, helmet);
+        draw_limb(renderer, x - direction * 5, head_y + 3, x + direction * 4, head_y - 1, helmet);
+        fill_rect(renderer, x + direction * 3, head_y + 4, 2, 2, COLOR_BACKGROUND);
+    } else {
+        fill_rect(renderer, x - 4, head_y - 1, 8, 4, COLOR_BOOTS);
+        fill_rect(renderer, x - 3, head_y - 2, 6, 3, helmet);
+        fill_rect(renderer, x - 5, head_y + 1, 11, 2, helmet);
+        fill_rect(renderer, x - 2, head_y + 3, 5, 4, COLOR_SKIN);
+        fill_rect(renderer, x + direction * 3, head_y + 4, 2, 2, COLOR_SKIN);
+        fill_rect(renderer, x + direction, head_y + 3, 1, 1, COLOR_BACKGROUND);
+    }
     if (sitting && frame == 0U)
         fill_rect(renderer, x + direction, head_y + 3, 2, 1, COLOR_BOOTS);
     if ((worker_id & 1U) == 0U)
@@ -956,17 +1184,9 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         right_x = x + 6;
         left_y = y - 16 - (int)(frame % 3U);
         right_y = y - 18 + (int)(frame % 3U);
-    } else if (worker->state == BUILDING_CLOCK_WORKER_DRINK) {
-        right_x = x + direction * 5;
-        right_y = frame < 4U ? head_y + 6 : y - 6;
-        fill_rect(renderer, right_x - 1, right_y - 3, 4, 4, COLOR_WORKER);
-        fill_rect(renderer, right_x + 3, right_y - 2, 2, 2, COLOR_BOOTS);
-    } else if (worker->state == BUILDING_CLOCK_WORKER_SMOKE) {
-        right_x = x + direction * 5;
-        right_y = head_y + 6;
-        fill_rect(renderer, right_x, right_y, direction * 3 < 0 ? 1 : 3, 1, COLOR_WORKER);
-        fill_rect(renderer, right_x + direction * 3, right_y, 1, 1, COLOR_MASONRY_LIGHT);
-        fill_rect(renderer, right_x + direction * (4 + (int)frame / 3), right_y - 3 - (int)frame, 2, 2, COLOR_STEEL_DARK);
+    } else if (bottle_break || smoking) {
+        right_x = x + direction * break_gesture.hand_x;
+        right_y = y + break_gesture.hand_y;
     } else if (sitting) {
         fill_rect(renderer, x - 5, y - 3, 11, 3, COLOR_BOOTS);
         right_x = x + 4;
@@ -1004,9 +1224,17 @@ static void draw_worker(SDL_Renderer* renderer, const building_clock_scene_snaps
         right_y = head_y + 2;
     }
     draw_limb(renderer, x - 2, y - 9 + crouch, left_x, left_y, COLOR_WORKER);
-    draw_limb(renderer, x + 2, y - 9 + crouch, right_x, right_y, COLOR_WORKER);
+    if (bottle_break || smoking) {
+        const int elbow_x = x + direction * break_gesture.elbow_x, elbow_y = y + break_gesture.elbow_y;
+        draw_limb(renderer, x + direction * 2, y - 9, elbow_x, elbow_y, uniform);
+        draw_limb(renderer, elbow_x, elbow_y, right_x, right_y, COLOR_WORKER);
+    } else {
+        draw_limb(renderer, x + 2, y - 9 + crouch, right_x, right_y, COLOR_WORKER);
+    }
     fill_rect(renderer, left_x, left_y, 2, 2, COLOR_SKIN);
     fill_rect(renderer, right_x, right_y, 2, 2, COLOR_SKIN);
+    if (bottle_break || smoking)
+        draw_break_props(renderer, worker, x, y, direction, break_gesture);
     if (carrying && !climbing) {
         fill_rect(renderer, x - 5, y - 5, 11, 2, COLOR_ROPE);
         fill_rect(renderer, x - 5, y - 9, 1, 4, COLOR_ROPE);
@@ -1152,6 +1380,7 @@ static void render_scene(SDL_Renderer* renderer, viewer_t* viewer) {
             }
         }
     }
+    draw_bottle_throws(renderer, &viewer->scene);
     draw_date(renderer, &viewer->scene);
     if (viewer->overlays.status) {
         draw_status(renderer, viewer);
@@ -1546,6 +1775,7 @@ static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canva
             viewer->scene.state.workers[1].rope.moved_vertically = true;
             viewer->scene.state.jobs[0].kind = BUILDING_CLOCK_JOB_STAGE_MATERIAL;
             viewer->scene.state.elapsed_ms = frame * 110U;
+            worker->behavior_timer_ms = frame * 500U;
             viewer->scene.worker_presentation_positions[0] = (building_clock_point_t){240, 240};
             draw_worker(renderer, &viewer->scene, 0U, false);
             SDL_RenderPresent(renderer);
@@ -1562,7 +1792,8 @@ static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canva
         }
         animated += changed ? 1U : 0U;
         if ((state == BUILDING_CLOCK_WORKER_WALK || state == BUILDING_CLOCK_WORKER_CLIMB || state == BUILDING_CLOCK_WORKER_CARRY || state == BUILDING_CLOCK_WORKER_HAMMER ||
-             state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY || state == BUILDING_CLOCK_WORKER_CLEAR_DEBRIS || state == BUILDING_CLOCK_WORKER_INSPECT || state == BUILDING_CLOCK_WORKER_FINISH_JOB) &&
+             state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY || state == BUILDING_CLOCK_WORKER_CLEAR_DEBRIS || state == BUILDING_CLOCK_WORKER_INSPECT || state == BUILDING_CLOCK_WORKER_FINISH_JOB ||
+             state == BUILDING_CLOCK_WORKER_SMOKE || state == BUILDING_CLOCK_WORKER_DRINK) &&
             !changed) {
             fprintf(stderr, "No visible animation for %s\n", names[state]);
             return false;
@@ -1582,6 +1813,7 @@ static bool check_character_animation(SDL_Renderer* renderer, SDL_Surface* canva
                 worker->tended_builder_id = state == BUILDING_CLOCK_WORKER_OPERATE_MACHINERY ? 1U : BUILDING_CLOCK_INVALID_ID;
                 worker->carried_load_id = state == BUILDING_CLOCK_WORKER_CARRY ? 0U : BUILDING_CLOCK_INVALID_ID;
                 viewer->scene.state.elapsed_ms = frame * 110U;
+                worker->behavior_timer_ms = frame * 500U;
                 viewer->scene.worker_presentation_positions[0] = (building_clock_point_t){(int16_t)(135 + frame * 42U), (int16_t)(21 + state * 23U)};
                 draw_worker(renderer, &viewer->scene, 0U, false);
             }

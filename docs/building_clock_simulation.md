@@ -1041,6 +1041,8 @@ semantic objects:
 - per-digit phase and structural-section states;
 - temporary structures;
 - worker positions, facing, action, and carried items;
+- last bottle-release origin, facing and timestamp per worker, so an already
+  thrown bottle can finish independently after work/evacuation interrupts a break;
 - deterministic broad-area worker presentation positions;
 - debris positions and motion state;
 - carts, crane, lift, and suspended loads;
@@ -1053,6 +1055,12 @@ simulation state, navigation reservations, and diagnostic metrics are copied so
 the consumer sees one coherent scene and cannot mutate simulation ownership by
 editing its copy. Snapshot storage is supplied by the caller; capture performs
 no allocation.
+
+Bottle releases are fixed 16-byte records (144 bytes for nine worker slots), not
+entities with per-frame physics. They are written only on release and reset
+with the simulation. Presentation derives the flight, impact and short rolling
+fragments from that initial condition and semantic elapsed time. They do not
+participate in material/debris accounting, reservations or job scheduling.
 
 The snapshot does not contain pixels, draw callbacks, sprite formats, tile
 indices, framebuffer pointers, or dirty regions. A later presentation layer may

@@ -2081,6 +2081,7 @@ static void advance_worker(building_clock_simulation_t* simulation, const buildi
                 (void)advance_platform_activity(simulation, world, worker_id, remaining_ms);
                 return;
             }
+            const uint32_t previous_behavior_ms = worker->behavior_timer_ms;
             worker->behavior_timer_ms += remaining_ms;
             if (simulation->state.clock_initialized && worker->behavior_timer_ms >= 1000U) {
                 if (building_clock_upkeep_start(simulation, world, worker_id)) {
@@ -2101,6 +2102,20 @@ static void advance_worker(building_clock_simulation_t* simulation, const buildi
                 };
                 worker->state = activities[(worker_id + worker->behavior_timer_ms / 4000U) % 4U];
                 worker->action_phase = (uint8_t)((worker->behavior_timer_ms / 300U) % 4U);
+                if (worker->state == BUILDING_CLOCK_WORKER_DRINK) {
+                    const uint32_t slot_start = previous_behavior_ms / 4000U * 4000U;
+                    /* The first slot has a 1000 ms idle lead-in; its remaining
+                     * three seconds contain the same full gesture. Record only
+                     * the actual release, not tea or an interrupted windup. */
+                    const uint32_t release_ms = slot_start == 0U ? 1000U + (BUILDING_CLOCK_BOTTLE_RELEASE_MS * 3U + 3U) / 4U : slot_start + BUILDING_CLOCK_BOTTLE_RELEASE_MS;
+                    if (previous_behavior_ms < release_ms && worker->behavior_timer_ms >= release_ms) {
+                        simulation->state.bottle_throws[worker_id] = (building_clock_bottle_throw_t){
+                            .elapsed_ms = simulation->state.elapsed_ms - (worker->behavior_timer_ms - release_ms),
+                            .origin = worker->position,
+                            .direction = worker->facing == BUILDING_CLOCK_FACING_LEFT ? -1 : 1,
+                        };
+                    }
+                }
             }
             return;
         }
